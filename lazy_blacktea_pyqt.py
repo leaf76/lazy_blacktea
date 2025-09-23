@@ -20,12 +20,13 @@ from PyQt6.QtWidgets import (
     QInputDialog, QListWidget, QDialog, QTreeWidget, QTreeWidgetItem
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, pyqtSignal, QMutex, QMutexLocker
+    Qt, QTimer, pyqtSignal, QMutex, QMutexLocker, QPoint
 )
 from PyQt6.QtGui import (
     QFont, QTextCursor, QAction, QIcon, QGuiApplication,
-    QPainter, QPen, QColor, QBrush, QPixmap
+    QPainter, QPen, QColor, QBrush, QPixmap, QCursor
 )
+from PyQt6.QtWidgets import QToolTip
 
 from utils import adb_models
 from utils import adb_tools
@@ -1053,6 +1054,22 @@ class WindowMain(QMainWindow):
         # Set application icon
         self.set_app_icon()
 
+        # Set global tooltip styling for better positioning and appearance
+        self.setStyleSheet(self.styleSheet() + '''
+            QToolTip {
+                background-color: rgba(45, 45, 45, 0.95);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 11px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                max-width: 350px;
+            }
+        ''')
+
+        # Remove the problematic attribute setting as it's not needed for tooltip positioning
+
         # Create central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -1612,16 +1629,20 @@ class WindowMain(QMainWindow):
                 operation_status = self._get_device_operation_status(serial)
                 recording_status = self._get_device_recording_status(serial)
 
+                # Format GMS version for display
+                gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+
                 device_text = (
-                    f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
-                    f'🆔 {device.device_serial_num[:8]}... | '
-                    f'🤖 Android {device.android_ver} (API {device.android_api_level}) | '
-                    f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on)} | '
+                    f'{operation_status}{recording_status}📱 {device.device_model:<15} | '
+                    f'🆔 {device.device_serial_num:<15} | '
+                    f'🤖 Android {device.android_ver:<2} (API {device.android_api_level:<2}) | '
+                    f'🎯 GMS: {gms_display:<12} | '
+                    f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
                     f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
                 )
                 checkbox = QCheckBox(device_text)
                 checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                checkbox.customContextMenuRequested.connect(lambda pos, serial=serial: self.show_device_context_menu(pos, serial, checkbox))
+                checkbox.customContextMenuRequested.connect(lambda pos, serial=serial, cb=checkbox: self.show_device_context_menu(pos, serial, cb))
 
                 # Get additional device information in background
                 def create_enhanced_tooltip(device, serial):
@@ -1660,15 +1681,24 @@ class WindowMain(QMainWindow):
                         return base_tooltip
 
                 tooltip_text = create_enhanced_tooltip(device, serial)
-                checkbox.setToolTip(tooltip_text)
+
+                # Use custom tooltip positioning instead of default
+                checkbox.setToolTip("")  # Clear default tooltip
+                checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
+                checkbox.leaveEvent = lambda event: QToolTip.hideText()
+
                 checkbox.setFont(QFont('Segoe UI', 10))  # Modern font for better readability
+
+                # Add visual selection indicator styling
+                self._apply_device_checkbox_style(checkbox)
 
                 # Restore checked state if it was previously checked
                 if serial in checked_serials:
                     checkbox.setChecked(True)
 
-                # Connect to update selection count
+                # Connect to update selection count and visual feedback
                 checkbox.stateChanged.connect(self.update_selection_count)
+                checkbox.stateChanged.connect(lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state))
 
                 self.check_devices[serial] = checkbox
                 # Insert before the stretch item (which is always the last item)
@@ -1684,11 +1714,15 @@ class WindowMain(QMainWindow):
                 operation_status = self._get_device_operation_status(serial)
                 recording_status = self._get_device_recording_status(serial)
 
+                # Format GMS version for display
+                gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+
                 device_text = (
-                    f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
-                    f'🆔 {device.device_serial_num[:8]}... | '
-                    f'🤖 Android {device.android_ver} (API {device.android_api_level}) | '
-                    f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on)} | '
+                    f'{operation_status}{recording_status}📱 {device.device_model:<15} | '
+                    f'🆔 {device.device_serial_num:<15} | '
+                    f'🤖 Android {device.android_ver:<2} (API {device.android_api_level:<2}) | '
+                    f'🎯 GMS: {gms_display:<12} | '
+                    f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
                     f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
                 )
                 checkbox.setText(device_text)
@@ -1716,7 +1750,14 @@ class WindowMain(QMainWindow):
                     return base_tooltip
 
                 tooltip_text = create_enhanced_tooltip_update(device, serial)
-                checkbox.setToolTip(tooltip_text)
+
+                # Update custom tooltip positioning for existing checkboxes
+                checkbox.setToolTip("")  # Clear default tooltip
+                checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
+                checkbox.leaveEvent = lambda event: QToolTip.hideText()
+
+                # Apply visual styling to existing checkboxes
+                self._apply_device_checkbox_style(checkbox)
 
         # Update title with device count
         device_count = len(device_dict)
@@ -2056,6 +2097,78 @@ class WindowMain(QMainWindow):
                 'battery_level': 'Unknown',
                 'cpu_arch': 'Unknown'
             }
+
+    def _apply_device_checkbox_style(self, checkbox):
+        """Apply visual styling to device checkbox for better selection feedback."""
+        checkbox.setStyleSheet('''
+            QCheckBox {
+                padding: 8px;
+                border: 2px solid transparent;
+                border-radius: 6px;
+                background-color: rgba(240, 240, 240, 0.3);
+                margin: 2px;
+            }
+            QCheckBox:hover {
+                background-color: rgba(200, 220, 255, 0.5);
+                border: 2px solid rgba(100, 150, 255, 0.3);
+            }
+            QCheckBox:checked {
+                background-color: rgba(100, 200, 100, 0.2);
+                border: 2px solid rgba(50, 150, 50, 0.6);
+                font-weight: bold;
+            }
+            QCheckBox:checked:hover {
+                background-color: rgba(100, 200, 100, 0.3);
+                border: 2px solid rgba(50, 150, 50, 0.8);
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 2px solid #666;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4CAF50;
+                border: 2px solid #4CAF50;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAiIGhlaWdodD0iNyIgdmlld0JveD0iMCAwIDEwIDciIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik04LjUgMUwzLjUgNkwxLjUgNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHN2Zz4K);
+            }
+            QCheckBox::indicator:hover {
+                border: 2px solid #2196F3;
+            }
+        ''')
+
+    def _update_checkbox_visual_state(self, checkbox, state):
+        """Update visual state of checkbox when selection changes."""
+        # The styling is handled by CSS, but we can add additional visual feedback here if needed
+        if state == 2:  # Checked state
+            # Add selected visual indicator (handled by CSS)
+            pass
+        else:  # Unchecked state
+            # Remove selected visual indicator (handled by CSS)
+            pass
+
+    def _create_custom_tooltip_checkbox(self, device_text, tooltip_text):
+        """Create a checkbox with custom tooltip positioning."""
+        checkbox = QCheckBox(device_text)
+
+        # Remove default tooltip and add custom event handling
+        checkbox.setToolTip("")  # Clear default tooltip
+        checkbox.enterEvent = lambda event: self._show_custom_tooltip(checkbox, tooltip_text, event)
+        checkbox.leaveEvent = lambda event: QToolTip.hideText()
+
+        return checkbox
+
+    def _show_custom_tooltip(self, widget, tooltip_text, event):
+        """Show custom positioned tooltip near cursor."""
+        # Get global cursor position
+        cursor_pos = QCursor.pos()
+
+        # Offset tooltip very close to cursor (5px right, 5px down)
+        tooltip_pos = QPoint(cursor_pos.x() + 5, cursor_pos.y() + 5)
+
+        # Show tooltip at custom position
+        QToolTip.showText(tooltip_pos, tooltip_text, widget)
 
     def _check_scrcpy_available(self):
         """Check if scrcpy is available in the system and get version info."""
