@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QSplitter, QTabWidget, QScrollArea, QTextEdit,
     QCheckBox, QPushButton, QLabel,
-    QLineEdit, QGroupBox, QFileDialog,
+    QLineEdit, QGroupBox, QFileDialog, QComboBox,
     QMessageBox, QMenu, QStatusBar, QProgressBar,
     QInputDialog, QListWidget, QListWidgetItem, QDialog, QTreeWidget, QTreeWidgetItem
 )
@@ -372,6 +372,766 @@ class ClickableScreenshotLabel(QLabel):
         text_width = 120
         painter.drawRect(self.width() - text_width - 10, 10, text_width, 20)
         painter.drawText(self.width() - text_width - 5, 25, f"📱 {element_count} elements")
+
+
+class PerformanceSettingsDialog(QDialog):
+    """Performance settings dialog for Logcat viewer."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.init_ui()
+
+    def init_ui(self):
+        """Initialize the performance settings dialog UI."""
+        self.setWindowTitle('Performance Settings')
+        self.setFixedSize(350, 250)
+        self.setModal(True)
+
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
+
+        # Title
+        title = QLabel('Performance Settings')
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
+        main_layout.addWidget(title)
+
+        # Settings section
+        settings_layout = QVBoxLayout()
+
+        # Max Lines
+        max_lines_layout = QHBoxLayout()
+        max_lines_label = QLabel('Max Lines:')
+        max_lines_label.setFixedWidth(120)
+        max_lines_layout.addWidget(max_lines_label)
+        self.max_lines_spin = QLineEdit(str(self.parent_window.max_lines if self.parent_window else '1000'))
+        self.max_lines_spin.setFixedWidth(80)
+        max_lines_layout.addWidget(self.max_lines_spin)
+        max_lines_layout.addStretch()
+        settings_layout.addLayout(max_lines_layout)
+
+        # Update Interval
+        interval_layout = QHBoxLayout()
+        interval_label = QLabel('Update Interval (ms):')
+        interval_label.setFixedWidth(120)
+        interval_layout.addWidget(interval_label)
+        self.update_interval_spin = QLineEdit(str(self.parent_window.update_interval_ms if self.parent_window else '200'))
+        self.update_interval_spin.setFixedWidth(80)
+        interval_layout.addWidget(self.update_interval_spin)
+        interval_layout.addStretch()
+        settings_layout.addLayout(interval_layout)
+
+        # Lines per Update
+        lines_update_layout = QHBoxLayout()
+        lines_update_label = QLabel('Lines per Update:')
+        lines_update_label.setFixedWidth(120)
+        lines_update_layout.addWidget(lines_update_label)
+        self.lines_per_update_spin = QLineEdit(str(self.parent_window.max_lines_per_update if self.parent_window else '50'))
+        self.lines_per_update_spin.setFixedWidth(80)
+        lines_update_layout.addWidget(self.lines_per_update_spin)
+        lines_update_layout.addStretch()
+        settings_layout.addLayout(lines_update_layout)
+
+        main_layout.addLayout(settings_layout)
+
+        # Help text
+        help_text = QLabel("Tips: Higher values = more memory/CPU usage")
+        help_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        help_text.setStyleSheet("color: gray; font-size: 11px; margin: 5px;")
+        main_layout.addWidget(help_text)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        cancel_btn = QPushButton('Cancel')
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+
+        apply_btn = QPushButton('Apply')
+        apply_btn.clicked.connect(self.apply_settings)
+        apply_btn.setStyleSheet("background-color: #007bff; color: white; border: none; padding: 5px 15px; border-radius: 3px;")
+        button_layout.addWidget(apply_btn)
+
+        main_layout.addLayout(button_layout)
+
+    def apply_settings(self):
+        """Apply the performance settings to the parent window."""
+        if self.parent_window:
+            try:
+                # Update max lines
+                max_lines = max(100, int(self.max_lines_spin.text()))
+                self.parent_window.max_lines = max_lines
+
+                # Update interval
+                interval = max(50, int(self.update_interval_spin.text()))
+                self.parent_window.update_interval_ms = interval
+
+                # Update lines per update
+                lines_per_update = max(10, int(self.lines_per_update_spin.text()))
+                self.parent_window.max_lines_per_update = lines_per_update
+
+                self.accept()
+            except ValueError:
+                # Show error message for invalid values
+                from PyQt6.QtWidgets import QMessageBox, QFormLayout
+                QMessageBox.warning(self, 'Invalid Input', 'Please enter valid numeric values.')
+
+
+class LogcatWindow(QDialog):
+    """Logcat viewer window with real-time streaming and filtering capabilities."""
+
+    def __init__(self, device, parent=None):
+        super().__init__(parent)
+        self.device = device
+        self.logcat_process = None
+        self.is_running = False
+        self.max_lines = 1000  # Performance optimization: limit log lines
+        self.filters = {}  # Store named filters
+        self.current_filter = None
+
+        # Performance optimization: buffering and throttling
+        self.log_buffer = []  # Buffer for incoming log lines
+        self.max_buffer_size = 100  # Maximum lines to buffer before processing
+        self.update_timer = QTimer()  # Timer for throttled UI updates
+        self.update_timer.timeout.connect(self.process_buffered_logs)
+        self.update_timer.setSingleShot(True)
+        self.update_interval_ms = 200  # Update UI every 200ms max
+
+        # Additional performance settings
+        self.max_lines_per_update = 50  # Maximum lines to add to UI per update
+        self.last_update_time = 0
+
+        # Real-time filtering
+        self.current_live_filter = None
+        self.all_logs = []  # Store all logs for re-filtering
+
+        self.init_ui()
+        self.load_filters()
+
+    def init_ui(self):
+        """Initialize the logcat window UI."""
+        self.setWindowTitle(f'Logcat Viewer - {self.device.device_model} ({self.device.device_serial_num[:8]}...)')
+        self.setGeometry(100, 100, 1200, 800)
+
+        # Main layout
+        layout = QVBoxLayout(self)
+
+        # Control panel
+        control_layout = self.create_control_panel()
+        layout.addLayout(control_layout)
+
+        # Filter panel
+        filter_layout = self.create_filter_panel()
+        layout.addLayout(filter_layout)
+
+        # Log display
+        self.log_display = QTextEdit()
+        self.log_display.setFont(QFont('Consolas', 10))
+        self.log_display.setReadOnly(True)
+        self.log_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #3e3e3e;
+            }
+        """)
+        layout.addWidget(self.log_display)
+
+        # Status bar
+        self.status_label = QLabel('Ready to start logcat...')
+        layout.addWidget(self.status_label)
+
+    def create_control_panel(self):
+        """Create the control panel with start/stop buttons."""
+        layout = QHBoxLayout()
+
+        # Start/Stop buttons
+        self.start_btn = QPushButton('▶️ Start Logcat')
+        self.start_btn.clicked.connect(self.start_logcat)
+        layout.addWidget(self.start_btn)
+
+        self.stop_btn = QPushButton('⏹️ Stop')
+        self.stop_btn.clicked.connect(self.stop_logcat)
+        self.stop_btn.setEnabled(False)
+        layout.addWidget(self.stop_btn)
+
+        # Clear button
+        clear_btn = QPushButton('🗑️ Clear')
+        clear_btn.clicked.connect(self.clear_logs)
+        layout.addWidget(clear_btn)
+
+        # Performance settings button
+        settings_btn = QPushButton('⚙️ Settings')
+        settings_btn.clicked.connect(self.open_performance_settings)
+        settings_btn.setToolTip('Open performance settings')
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #545b62;
+            }
+        """)
+        layout.addWidget(settings_btn)
+
+        # Log level selector - simplified
+        level_group = QGroupBox('Log Levels')
+        level_layout = QHBoxLayout(level_group)
+
+        # Level checkboxes - simple style
+        self.level_checkboxes = {}
+        levels = ['V', 'D', 'I', 'W', 'E', 'F']
+
+        for level in levels:
+            checkbox = QCheckBox(level)
+            checkbox.setChecked(True)
+            checkbox.stateChanged.connect(self.update_log_levels)
+            self.level_checkboxes[level] = checkbox
+            level_layout.addWidget(checkbox)
+
+        level_layout.addStretch()
+
+        # Simple control buttons
+        all_btn = QPushButton('All')
+        all_btn.clicked.connect(self.select_all_levels)
+        level_layout.addWidget(all_btn)
+
+        none_btn = QPushButton('None')
+        none_btn.clicked.connect(self.select_no_levels)
+        level_layout.addWidget(none_btn)
+
+        layout.addWidget(level_group)
+
+        # Tag filter - simplified
+        tag_group = QGroupBox('Tag Filter')
+        tag_layout = QHBoxLayout(tag_group)
+
+        self.tag_filter = QLineEdit()
+        self.tag_filter.setPlaceholderText('e.g., MyApp:D, System:I, *:W (optional)')
+        tag_layout.addWidget(self.tag_filter)
+
+        help_btn = QPushButton('?')
+        help_btn.setMaximumWidth(25)
+        help_btn.clicked.connect(self.show_tag_help)
+        tag_layout.addWidget(help_btn)
+
+        layout.addWidget(tag_group)
+
+        layout.addStretch()
+        return layout
+
+    def create_filter_panel(self):
+        """Create the filter panel with real-time regex filtering and multiple filter support."""
+        layout = QVBoxLayout()
+
+        # Live filter input - applies immediately
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel('Live Filter (Regex):'))
+
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText('Type to filter logs in real-time...')
+        self.filter_input.textChanged.connect(self.apply_live_filter)  # Real-time filtering
+        filter_layout.addWidget(self.filter_input)
+
+        # Save current filter button
+        save_filter_btn = QPushButton('Save')
+        save_filter_btn.setMaximumWidth(60)
+        save_filter_btn.clicked.connect(self.save_current_filter)
+        save_filter_btn.setToolTip('Save current filter pattern')
+        filter_layout.addWidget(save_filter_btn)
+
+        layout.addLayout(filter_layout)
+
+        # Saved filters management
+        saved_layout = QHBoxLayout()
+        saved_layout.addWidget(QLabel('Saved Filters:'))
+
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItem('-- Select Saved Filter --')
+        self.filter_combo.currentTextChanged.connect(self.load_saved_filter)
+        saved_layout.addWidget(self.filter_combo)
+
+        # Quick apply button
+        apply_btn = QPushButton('Apply')
+        apply_btn.setMaximumWidth(60)
+        apply_btn.clicked.connect(self.apply_selected_filter)
+        apply_btn.setToolTip('Apply selected filter to live filter')
+        saved_layout.addWidget(apply_btn)
+
+        # Delete saved filter button
+        delete_btn = QPushButton('Delete')
+        delete_btn.setMaximumWidth(60)
+        delete_btn.clicked.connect(self.delete_saved_filter)
+        delete_btn.setToolTip('Delete selected saved filter')
+        saved_layout.addWidget(delete_btn)
+
+        saved_layout.addStretch()
+        layout.addLayout(saved_layout)
+
+        return layout
+
+    def start_logcat(self):
+        """Start the logcat streaming process."""
+        if self.is_running:
+            return
+
+        try:
+            # Import subprocess and QProcess for real-time streaming
+            from PyQt6.QtCore import QProcess, QIODevice
+
+            # Create QProcess for real-time output
+            self.logcat_process = QProcess()
+            self.logcat_process.readyReadStandardOutput.connect(self.read_logcat_output)
+            self.logcat_process.finished.connect(self.on_logcat_finished)
+
+            # Build logcat command with level filtering
+            command = ['adb', '-s', self.device.device_serial_num, 'logcat']
+
+            # Add level filters
+            level_args = self.build_level_arguments()
+            command.extend(level_args)
+
+            # Start the process
+            self.logcat_process.start(command[0], command[1:])
+
+            if self.logcat_process.waitForStarted():
+                self.is_running = True
+                self.start_btn.setEnabled(False)
+                self.stop_btn.setEnabled(True)
+                self.status_label.setText(f'🟢 Logcat running for {self.device.device_model}...')
+            else:
+                self.show_error('Failed to start logcat process')
+
+        except Exception as e:
+            self.show_error(f'Error starting logcat: {str(e)}')
+
+    def read_logcat_output(self):
+        """Read logcat output and buffer it for throttled UI updates."""
+        if not self.logcat_process:
+            return
+
+        data = self.logcat_process.readAllStandardOutput()
+        text = bytes(data).decode('utf-8', errors='ignore')
+
+        if not text.strip():
+            return
+
+        # Split into individual lines and process
+        lines = text.strip().split('\n')
+        new_lines = [line for line in lines if line.strip()]
+
+        # Store all logs for re-filtering
+        self.all_logs.extend(new_lines)
+
+        # Use different buffer sizes based on filtering needs
+        if self.current_live_filter:
+            # When filtering is active, keep more logs to provide richer filter results
+            filter_buffer_size = self.max_lines * 5  # Keep 5x more logs for filtering
+            if len(self.all_logs) > filter_buffer_size:
+                self.all_logs = self.all_logs[-filter_buffer_size:]
+        else:
+            # When not filtering, use rolling window of max_lines for performance
+            if len(self.all_logs) > self.max_lines:
+                self.all_logs = self.all_logs[-self.max_lines:]
+
+        # For live filtering, we need to update the entire display
+        # instead of just appending new lines
+        if self.current_live_filter:
+            # Re-filter and update entire display
+            self.refilter_display()
+        else:
+            # No filter active, just append new lines as before
+            self.log_buffer.extend(new_lines)
+            # Start throttled update timer if not already running
+            if not self.update_timer.isActive():
+                self.update_timer.start(self.update_interval_ms)
+
+        # If buffer gets too large, process immediately to prevent memory issues
+        if len(self.log_buffer) > self.max_buffer_size * 2:
+            self.process_buffered_logs()
+
+    def process_buffered_logs(self):
+        """Process buffered logs with throttling and filtering."""
+        if not self.log_buffer:
+            return
+
+        import time
+        current_time = time.time() * 1000  # Convert to milliseconds
+
+        # Limit the number of lines processed per update
+        lines_to_process = self.log_buffer[:self.max_lines_per_update]
+        self.log_buffer = self.log_buffer[self.max_lines_per_update:]
+
+        # Lines are already filtered in read_logcat_output, no need to filter again
+
+        # Add lines to display (only when not using live filter)
+        if lines_to_process:
+            text_to_add = '\n'.join(lines_to_process)
+            self.log_display.append(text_to_add)
+
+            # Performance optimization: limit total lines (only in non-filtered mode)
+            if not self.current_live_filter:
+                self.limit_log_lines()
+
+            # Auto-scroll to bottom (but only if user hasn't scrolled up)
+            scrollbar = self.log_display.verticalScrollBar()
+            at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+            if at_bottom:
+                cursor = self.log_display.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                self.log_display.setTextCursor(cursor)
+
+        # Update status with buffer info (only when no live filter is active)
+        if not self.current_live_filter:
+            buffer_size = len(self.log_buffer)
+            if buffer_size > 0:
+                self.status_label.setText(f'🟢 Logcat running... (buffered: {buffer_size} lines)')
+            else:
+                total_logs = len(self.all_logs)
+                self.status_label.setText(f'🟢 Logcat running... ({total_logs} lines)')
+
+        # Continue processing if there are more lines in buffer
+        if self.log_buffer and not self.update_timer.isActive():
+            self.update_timer.start(self.update_interval_ms)
+
+    def limit_log_lines(self):
+        """Limit the number of lines in the log display for performance."""
+        doc = self.log_display.document()
+        if doc.lineCount() > self.max_lines:
+            # More efficient: remove text in blocks rather than line by line
+            cursor = self.log_display.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+
+            # Calculate how many lines to remove (remove 1/3 when limit reached)
+            lines_to_remove = self.max_lines // 3
+
+            # Move cursor to the position after lines to remove
+            for _ in range(lines_to_remove):
+                cursor.movePosition(QTextCursor.MoveOperation.Down)
+
+            # Select and remove all text from start to this position
+            cursor.setPosition(0, QTextCursor.MoveMode.MoveAnchor)
+            end_pos = cursor.position()
+            for _ in range(lines_to_remove):
+                cursor.movePosition(QTextCursor.MoveOperation.Down)
+            cursor.setPosition(cursor.position(), QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+
+    def stop_logcat(self):
+        """Stop the logcat streaming process."""
+        if self.logcat_process and self.is_running:
+            self.logcat_process.kill()
+            self.logcat_process.waitForFinished(3000)
+
+        # Clean up performance optimization resources
+        self.update_timer.stop()
+        self.log_buffer.clear()
+
+        self.is_running = False
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        # Update status to show paused state with line counts
+        self.refilter_display()
+
+    def on_logcat_finished(self):
+        """Handle logcat process completion."""
+        # Clean up performance optimization resources
+        self.update_timer.stop()
+        self.log_buffer.clear()
+
+        self.is_running = False
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        # Update status to show paused state with line counts
+        self.refilter_display()
+
+    def clear_logs(self):
+        """Clear the log display."""
+        self.log_display.clear()
+        # Also clear buffers for better performance
+        self.log_buffer.clear()
+        self.all_logs.clear()
+        self.status_label.setText('🗑️ Logs cleared')
+
+    def apply_live_filter(self, pattern):
+        """Apply live regex filter to logs in real-time."""
+        self.current_live_filter = pattern.strip() if pattern.strip() else None
+        # Re-filter and update display immediately
+        self.refilter_display()
+
+    def refilter_display(self):
+        """Re-filter all logs and update display."""
+        if not self.all_logs:
+            return
+
+        # Clear current display
+        self.log_display.clear()
+
+        if self.current_live_filter:
+            # FILTERED MODE: Show filtered results without any max_lines limit
+            filtered_logs = self.filter_lines(self.all_logs)
+
+            if filtered_logs:
+                # Show ALL filtered results - no truncation
+                # The filter itself naturally limits the results
+                all_filtered_text = '\n'.join(filtered_logs)
+                self.log_display.setPlainText(all_filtered_text)
+
+                # Scroll to bottom
+                scrollbar = self.log_display.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+            else:
+                # No filtered results
+                self.log_display.setPlainText('No logs match the current filter.')
+
+            # Update status for filtered mode
+            total_logs = len(self.all_logs)
+            filtered_count = len(filtered_logs)
+
+            if self.is_running:
+                status_prefix = '🟢'
+            else:
+                status_prefix = '⏸️'
+
+            self.status_label.setText(f'{status_prefix} Filtered: {filtered_count}/{total_logs} lines')
+
+        else:
+            # UNFILTERED MODE: Show all logs (buffer management already applied)
+            logs_to_display = self.all_logs
+
+            if logs_to_display:
+                all_text = '\n'.join(logs_to_display)
+                self.log_display.setPlainText(all_text)
+
+                # Scroll to bottom
+                scrollbar = self.log_display.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+
+            # Update status for unfiltered mode
+            total_logs = len(self.all_logs)
+
+            if self.is_running:
+                status_prefix = '🟢'
+            else:
+                status_prefix = '⏸️'
+
+            # In unfiltered mode, all_logs is already limited, so just show total
+            self.status_label.setText(f'{status_prefix} Total: {total_logs} lines')
+
+    def filter_lines(self, lines):
+        """Filter lines based on current live filter."""
+        if not self.current_live_filter:
+            return lines
+
+        import re
+        try:
+            pattern = re.compile(self.current_live_filter, re.IGNORECASE)
+            return [line for line in lines if pattern.search(line)]
+        except re.error:
+            # Invalid regex, return all lines
+            return lines
+
+    def load_saved_filter(self, filter_name):
+        """Update preview when saved filter is selected."""
+        # Just update the selection, don't auto-apply
+        pass
+
+    def apply_selected_filter(self):
+        """Apply the selected saved filter to live filter."""
+        filter_name = self.filter_combo.currentText()
+        if filter_name != '-- Select Saved Filter --' and filter_name in self.filters:
+            self.filter_input.setText(self.filters[filter_name])
+            # The textChanged signal will automatically trigger apply_live_filter
+
+    def open_performance_settings(self):
+        """Open the performance settings dialog."""
+        dialog = PerformanceSettingsDialog(self)
+        dialog.exec()
+
+    def update_log_levels(self):
+        """Handle log level checkbox changes."""
+        pass
+
+
+    def create_vertical_separator(self):
+        """Create a vertical separator line."""
+        separator = QWidget()
+        separator.setFixedWidth(2)
+        separator.setStyleSheet("""
+            QWidget {
+                background-color: #ddd;
+                margin: 5px 0px;
+            }
+        """)
+        return separator
+
+    def select_all_levels(self):
+        """Select all log levels."""
+        for checkbox in self.level_checkboxes.values():
+            checkbox.setChecked(True)
+
+    def select_no_levels(self):
+        """Deselect all log levels."""
+        for checkbox in self.level_checkboxes.values():
+            checkbox.setChecked(False)
+
+    def show_tag_help(self):
+        """Show help dialog for tag filter syntax."""
+        help_text = """
+<h3>🏷️ Tag Filter Syntax Help</h3>
+
+<p><b>Basic Format:</b> <code>tag:level</code></p>
+
+<p><b>Examples:</b></p>
+<ul>
+<li><code>*:V</code> - Show all tags at Verbose level and above</li>
+<li><code>*:W</code> - Show all tags at Warning level and above</li>
+<li><code>MyApp:D</code> - Show MyApp tag at Debug level and above</li>
+<li><code>System:I</code> - Show System tag at Info level and above</li>
+</ul>
+
+<p><b>Multiple Filters:</b></p>
+<ul>
+<li><code>MyApp:D, System:I</code> - Multiple tag filters</li>
+<li><code>*:W, MyApp:D</code> - Global filter + specific tag</li>
+</ul>
+
+<p><b>Log Levels (priority order):</b></p>
+<ul>
+<li><code>V</code> - Verbose (lowest priority)</li>
+<li><code>D</code> - Debug</li>
+<li><code>I</code> - Info</li>
+<li><code>W</code> - Warning</li>
+<li><code>E</code> - Error</li>
+<li><code>F</code> - Fatal (highest priority)</li>
+</ul>
+
+<p><b>Tips:</b></p>
+<ul>
+<li>Higher level filters include all lower levels</li>
+<li>Leave empty to use checkbox selections</li>
+<li>Use <code>*:E</code> for errors from all sources</li>
+</ul>
+        """
+
+        from PyQt6.QtWidgets import QMessageBox
+        msg = QMessageBox()
+        msg.setWindowTitle('Tag Filter Help')
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(help_text)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.exec()
+
+    def build_level_arguments(self):
+        """Build logcat level arguments based on checkbox selections."""
+        level_args = []
+
+        # Get enabled levels
+        enabled_levels = [code for code, checkbox in self.level_checkboxes.items()
+                         if checkbox.isChecked()]
+
+        if not enabled_levels:
+            # If no levels selected, default to all
+            level_args.append('*:V')
+        else:
+            # Custom tag filters from text input
+            custom_tags = self.tag_filter.text().strip()
+            if custom_tags:
+                # User provided custom tag:level pairs
+                level_args.append(custom_tags)
+            else:
+                # Build level filter from checkboxes
+                if len(enabled_levels) == 6:  # All levels enabled
+                    level_args.append('*:V')
+                else:
+                    # Create filter for minimum level
+                    # Android logcat levels: V=2, D=3, I=4, W=5, E=6, F=7
+                    level_priority = {'V': 2, 'D': 3, 'I': 4, 'W': 5, 'E': 6, 'F': 7}
+                    min_level = min(level_priority[level] for level in enabled_levels)
+                    min_level_char = next(level for level, priority in level_priority.items()
+                                        if priority == min_level)
+                    level_args.append(f'*:{min_level_char}')
+
+        return level_args
+
+    def save_current_filter(self):
+        """Save the current filter with a name."""
+        pattern = self.filter_input.text().strip()
+        if not pattern:
+            self.show_error('Please enter a filter pattern first')
+            return
+
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, 'Save Filter', 'Filter name:')
+        if ok and name.strip():
+            self.filters[name.strip()] = pattern
+            self.update_filter_combo()
+            self.save_filters()
+
+    def load_selected_filter(self, filter_name):
+        """Load the selected filter."""
+        if filter_name in self.filters:
+            self.filter_input.setText(self.filters[filter_name])
+
+    def delete_saved_filter(self):
+        """Delete the selected saved filter."""
+        filter_name = self.filter_combo.currentText()
+        if filter_name != '-- Select Saved Filter --' and filter_name in self.filters:
+            # Confirm deletion
+            from PyQt6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(self, 'Delete Filter',
+                                       f'Delete saved filter "{filter_name}"?',
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                del self.filters[filter_name]
+                self.update_filter_combo()
+                self.save_filters()
+
+    def update_filter_combo(self):
+        """Update the filter combo box with saved filters."""
+        self.filter_combo.clear()
+        self.filter_combo.addItem('-- Select Saved Filter --')
+        for name in sorted(self.filters.keys()):
+            self.filter_combo.addItem(name)
+
+    def load_filters(self):
+        """Load saved filters from configuration."""
+        try:
+            import json
+            config_path = os.path.expanduser('~/.lazy_blacktea_logcat_filters.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    self.filters = json.load(f)
+                self.update_filter_combo()
+        except Exception:
+            pass  # Ignore errors loading filters
+
+    def save_filters(self):
+        """Save filters to configuration."""
+        try:
+            import json
+            config_path = os.path.expanduser('~/.lazy_blacktea_logcat_filters.json')
+            with open(config_path, 'w') as f:
+                json.dump(self.filters, f, indent=2)
+        except Exception:
+            pass  # Ignore errors saving filters
+
+    def show_error(self, message):
+        """Show error message."""
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, 'Error', message)
+
+    def closeEvent(self, event):
+        """Handle window close event."""
+        self.stop_logcat()
+        super().closeEvent(event)
 
 
 class UIInspectorDialog(QDialog):
@@ -1203,6 +1963,11 @@ class WindowMain(QMainWindow):
             tooltip='Generate Android bug report'
         )
         logcat_layout.addWidget(bug_report_btn, 0, 1)
+
+        # View Logcat button
+        view_logcat_btn = QPushButton('👁️ View Logcat')
+        view_logcat_btn.clicked.connect(lambda: self.show_logcat())
+        logcat_layout.addWidget(view_logcat_btn, 1, 0)
 
         layout.addWidget(logcat_group)
 
@@ -3334,6 +4099,24 @@ Build Fingerprint: {device.build_fingerprint}'''
     def clear_logcat(self):
         """Clear logcat on selected devices using logging manager."""
         self.logging_manager.logcat_manager.clear_logcat_selected_devices()
+
+    @ensure_devices_selected
+    def show_logcat(self):
+        """Show logcat viewer for selected device."""
+        selected_devices = self.get_checked_devices()
+        if not selected_devices:
+            self.show_error('Error', 'Please select a device.')
+            return
+
+        # For now, only support single device
+        if len(selected_devices) > 1:
+            self.show_error('Error', 'Please select only one device for logcat viewing.')
+            return
+
+        device = selected_devices[0]
+        # Create and show logcat window
+        self.logcat_window = LogcatWindow(device, self)
+        self.logcat_window.show()
 
     # Shell commands
     @ensure_devices_selected
