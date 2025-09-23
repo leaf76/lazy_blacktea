@@ -56,8 +56,8 @@ jobs:
 
     - name: Verify installation
       run: |
-        python -c "import PyQt6; print(f'PyQt6 version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
-        python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets imported successfully')"
+        python -c "from PyQt6 import QtCore; print(f'PyQt6 version: {QtCore.PYQT_VERSION_STR}')"
+        python -c "from PyQt6 import QtWidgets; print('PyQt6.QtWidgets imported successfully')"
 
     - name: Set up display (Linux)
       if: matrix.platform == 'linux'

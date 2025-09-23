@@ -109,7 +109,7 @@ find . -name "*.pyc" -delete
 ### Check Dependencies
 ```bash
 # Check PyQt6
-python -c "import PyQt6; print('PyQt6 OK')"
+python -c "from PyQt6 import QtCore; print('PyQt6 OK')"
 
 # Check PyInstaller
 python -c "import PyInstaller; print('PyInstaller OK')"
