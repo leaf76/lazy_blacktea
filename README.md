@@ -1,6 +1,29 @@
 # 🍵 Lazy Blacktea - Android ADB GUI Tool
 
+[![Build Status](https://github.com/yourusername/lazy_blacktea/workflows/build/badge.svg)](https://github.com/yourusername/lazy_blacktea/actions)
+[![Test Status](https://github.com/yourusername/lazy_blacktea/workflows/test/badge.svg)](https://github.com/yourusername/lazy_blacktea/actions)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![PyQt6](https://img.shields.io/badge/PyQt6-6.4+-green.svg)](https://pypi.org/project/PyQt6/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A powerful and user-friendly GUI application for Android debugging and automation tasks using ADB (Android Debug Bridge).
+
+## 📖 Table of Contents
+
+- [Features](#-features)
+- [Screenshots](#-screenshots)
+- [Getting Started](#-getting-started)
+- [Installation](#-installation)
+- [Development Setup](#-development-setup)
+- [Project Structure](#-project-structure)
+- [Usage](#-usage)
+- [API Documentation](#-api-documentation)
+- [Contributing](#-contributing)
+- [Testing](#-testing)
+- [Troubleshooting](#-troubleshooting)
+- [Changelog](#-changelog)
+- [License](#-license)
+- [Support](#-support)
 
 ## ✨ Features
 
@@ -28,6 +51,10 @@ A powerful and user-friendly GUI application for Android debugging and automatio
 - **Test Automation**: Run SASS (System Automation Script Suite) tests
 - **Batch Processing**: Execute tests across multiple devices
 - **Configuration Management**: Handle test configurations and cases
+
+## 📷 Screenshots
+
+> **Note**: Screenshots will be added soon to showcase the application interface and key features.
 
 ## 🚀 Getting Started
 
@@ -93,6 +120,85 @@ bash build_linux.sh
    # Or directly:
    python3 lazy_blacktea_pyqt.py
    ```
+
+## 🛠️ Development Setup
+
+### Prerequisites for Development
+- **Python 3.8+**
+- **Git**
+- **ADB (Android Debug Bridge)**
+
+### Setting up Development Environment
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/lazy_blacktea.git
+   cd lazy_blacktea
+   ```
+
+2. **Create virtual environment** (recommended):
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Run the application**:
+   ```bash
+   python3 lazy_blacktea_pyqt.py
+   ```
+
+### Development Dependencies
+- **PyQt6 >= 6.4.0**: GUI framework
+- **PyInstaller >= 5.13.0**: For building executables
+- **setuptools >= 65.0.0**: Build tools
+
+## 📁 Project Structure
+
+```
+lazy_blacktea/
+├── 📄 lazy_blacktea_pyqt.py       # Main application entry point
+├── 📁 config/                     # Configuration management
+│   ├── config_manager.py          # Application settings manager
+│   └── constants.py               # Application constants
+├── 📁 ui/                         # User interface modules
+│   ├── command_executor.py        # Command execution logic
+│   ├── device_manager.py          # Device operations management
+│   ├── error_handler.py           # Error handling utilities
+│   └── panels_manager.py          # UI panel management
+├── 📁 utils/                      # Utility modules
+│   ├── adb_commands.py            # ADB command implementations
+│   ├── adb_models.py              # Data models for ADB operations
+│   ├── adb_tools.py               # ADB utility functions
+│   ├── common.py                  # Common utilities
+│   ├── debounced_refresh.py       # Performance optimization
+│   ├── dump_device_ui.py          # UI hierarchy extraction
+│   ├── file_generation_utils.py   # File generation utilities
+│   ├── json_utils.py              # JSON processing utilities
+│   ├── recording_utils.py         # Screen recording utilities
+│   ├── screenshot_utils.py        # Screenshot utilities
+│   ├── ui_inspector_utils.py      # UI inspection tools
+│   └── ui_widgets.py              # Custom UI widgets
+├── 📁 build-scripts/              # Build automation
+│   ├── build.py                   # Cross-platform builder
+│   ├── build_linux.sh            # Linux build script
+│   ├── build_macos.sh            # macOS build script
+│   └── *.spec                     # PyInstaller specifications
+├── 📁 tests/                      # Test suite
+│   ├── test_*.py                  # Unit and integration tests
+│   └── run_tests.py               # Test runner
+├── 📁 assets/                     # Application resources
+│   └── icons/                     # Application icons
+├── 📁 .github/                    # GitHub workflows
+│   └── workflows/                 # CI/CD configurations
+├── 📄 requirements.txt            # Python dependencies
+├── 📄 README.md                   # Project documentation
+└── 📄 start_lazy_blacktea.sh      # Launch script
+```
 
 ## 🎨 UI Improvements & Performance (v2.0)
 
@@ -175,6 +281,77 @@ The bottom panel shows real-time logs and command output with:
 - **Copy functionality**: Right-click to copy logs
 - **Timestamp tracking**: All operations are timestamped
 
+## 📚 API Documentation
+
+### Core Modules
+
+#### `config.config_manager.ConfigManager`
+Manages application configuration and settings.
+
+```python
+from config.config_manager import ConfigManager
+
+config = ConfigManager()
+config.get_setting('ui_scale')
+config.set_setting('output_path', '/path/to/output')
+```
+
+#### `utils.adb_tools`
+Core ADB utilities and device management.
+
+```python
+from utils.adb_tools import get_connected_devices, execute_adb_command
+
+devices = get_connected_devices()
+result = execute_adb_command(device_id, 'shell getprop ro.build.version.release')
+```
+
+#### `ui.device_manager.DeviceManager`
+High-level device operations and state management.
+
+```python
+from ui.device_manager import DeviceManager
+
+device_manager = DeviceManager()
+device_manager.refresh_devices()
+device_manager.install_apk(device_id, apk_path)
+```
+
+### Extension Points
+
+The application supports extensions through:
+- **Custom commands**: Add new ADB commands in `utils/adb_commands.py`
+- **UI panels**: Create new UI panels using the panels manager
+- **Device operations**: Extend device operations in the device manager
+
+## 📋 Changelog
+
+### Version 2.0.0 (Current)
+#### 🚀 Major Features
+- **Complete UI/UX overhaul** with modern design
+- **Modular architecture** for better maintainability
+- **Performance optimizations** with debounced refresh
+- **Enhanced error handling** with user-friendly messages
+- **Cross-platform build system** with automatic detection
+
+#### 🔧 Technical Improvements
+- **Type hints** throughout the codebase
+- **Centralized configuration** management
+- **Memory optimizations** with proper widget cleanup
+- **Thread-safe operations** with proper signal-slot patterns
+- **Comprehensive test suite** with multiple test categories
+
+#### 🐛 Bug Fixes
+- Fixed memory leaks in device list updates
+- Improved ADB detection on various platforms
+- Resolved UI freezing during long operations
+- Fixed inconsistent device state management
+
+### Version 1.0.0
+- Initial release with basic ADB GUI functionality
+- Device management and basic operations
+- Simple UI with essential features
+
 ## 🛠️ Troubleshooting
 
 ### ADB Not Found
@@ -207,13 +384,120 @@ The application includes **Smart ADB Detection** that automatically searches com
 - Some operations require device to be rooted
 - Enable "USB Debugging (Security settings)" for system-level changes
 
-## 📄 License
+## 🧪 Testing
 
-This project is for Android automation and debugging purposes.
+### Running Tests
+
+Run the test suite to ensure everything works correctly:
+
+```bash
+# Run all tests
+python tests/run_tests.py
+
+# Run specific test categories
+python tests/test_config_manager.py
+python tests/test_functional.py
+python tests/test_integration.py
+```
+
+### Test Structure
+- **Unit Tests**: Test individual components and functions
+- **Integration Tests**: Test component interactions
+- **Functional Tests**: Test complete user workflows
+- **All Functions Test**: Comprehensive test coverage
 
 ## 🤝 Contributing
 
-Feel free to submit issues, feature requests, or pull requests to improve the application.
+We welcome contributions from the community! Here's how you can help:
+
+### 🐛 Reporting Bugs
+
+1. **Check existing issues** to avoid duplicates
+2. **Use the bug report template** when creating new issues
+3. **Include system information**:
+   - OS version
+   - Python version
+   - ADB version
+   - Application version
+4. **Provide steps to reproduce** the issue
+5. **Include screenshots** if applicable
+
+### 🚀 Feature Requests
+
+1. **Check existing feature requests** to avoid duplicates
+2. **Describe the feature** and its use case
+3. **Explain why it would be valuable** to other users
+4. **Consider implementation complexity**
+
+### 💻 Code Contributions
+
+1. **Fork the repository**
+2. **Create a feature branch**:
+   ```bash
+   git checkout -b feature/amazing-feature
+   ```
+3. **Follow coding standards**:
+   - Use type hints
+   - Follow PEP 8 style guide
+   - Add docstrings to functions
+   - Include unit tests for new features
+4. **Test your changes**:
+   ```bash
+   python tests/run_tests.py
+   ```
+5. **Commit your changes**:
+   ```bash
+   git commit -m "Add amazing feature"
+   ```
+6. **Push to your fork**:
+   ```bash
+   git push origin feature/amazing-feature
+   ```
+7. **Open a Pull Request**
+
+### 📋 Development Guidelines
+
+- **Code Style**: Follow PEP 8 and use type hints
+- **Testing**: Add tests for new features and bug fixes
+- **Documentation**: Update README and docstrings as needed
+- **Commit Messages**: Use clear, descriptive commit messages
+- **Branch Naming**: Use descriptive branch names (feature/, bugfix/, hotfix/)
+
+### 🔍 Code Review Process
+
+1. All PRs require review before merging
+2. Ensure CI tests pass
+3. Address reviewer feedback
+4. Maintain backwards compatibility when possible
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Licenses
+
+This project uses the following open-source libraries:
+- **PyQt6**: GPLv3 License
+- **PyInstaller**: GPLv2 License with exception
+
+## 📞 Support
+
+### Getting Help
+
+- 📖 **Documentation**: Check this README and inline code documentation
+- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/lazy_blacktea/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/lazy_blacktea/discussions)
+
+### Community
+
+- **Be respectful** and inclusive
+- **Help others** when you can
+- **Share your experience** and improvements
+- **Follow the Code of Conduct**
+
+### Reporting Security Vulnerabilities
+
+If you discover a security vulnerability, please report it privately by emailing [security@yourdomain.com](mailto:security@yourdomain.com) instead of opening a public issue.
 
 ---
 
