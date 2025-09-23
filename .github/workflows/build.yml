@@ -287,9 +287,27 @@ jobs:
         ### macOS
         1. Download the appropriate \`.dmg\` file for your Mac (Intel or Apple Silicon)
         2. Open the \`.dmg\` file and drag Lazy Blacktea to Applications
-        3. **Important**: Right-click and "Open" on first launch (due to Gatekeeper security)
-           - The app is signed with ad-hoc signature but not notarized by Apple
-           - This is safe to use - it's just not distributed through the App Store
+        3. **Important**: macOS will show security warnings on first launch
+
+        #### If you see "Cannot verify the app is free of malware":
+        **Method 1 - Right-click to Open:**
+        - Right-click on LazyBlacktea.app
+        - Select "Open" from context menu
+        - Click "Open" again when prompted
+
+        **Method 2 - System Preferences:**
+        - Try to open the app normally (it will be blocked)
+        - Go to System Preferences → Security & Privacy → General
+        - Click "Open Anyway" button next to the LazyBlacktea message
+
+        **Method 3 - Terminal (if app crashes immediately):**
+        \`\`\`bash
+        # Remove quarantine and re-sign the app
+        xattr -rd com.apple.quarantine /Applications/LazyBlacktea.app
+        codesign --force --deep --sign - /Applications/LazyBlacktea.app
+        \`\`\`
+
+        > **Note**: The app is signed with ad-hoc signature but not notarized by Apple. This is safe to use - it's just not distributed through the App Store.
 
         ### Linux
         - **AppImage**: Download and run \`chmod +x LazyBlacktea-linux-x86_64.AppImage && ./LazyBlacktea-linux-x86_64.AppImage\`
@@ -299,12 +317,20 @@ jobs:
 
         Built from commit: \`${{ github.sha }}\`
 
-        ## 🔒 Security Note
+        ## 🔒 Security Note & Troubleshooting
 
-        **macOS Apps**: These applications are signed with ad-hoc signatures for security but are not notarized by Apple. This means:
+        **macOS Apps**: These applications are signed with ad-hoc signatures for security but are not notarized by Apple.
+
+        ### Common Issues:
+        1. **"Cannot verify the app is free of malware"** - Use methods above ✅
+        2. **App opens then immediately closes** - Use Method 3 (Terminal commands) ⚠️
+        3. **Code signature error in terminal** - The app bundle needs re-signing 🔧
+
+        ### Why these issues occur:
         - ✅ The apps are properly signed and safe to use
-        - ⚠️ You may see a security warning on first launch
-        - 💡 Right-click → "Open" to bypass the warning
+        - ⚠️ macOS Gatekeeper blocks apps not notarized by Apple
+        - 🔧 Downloaded apps may have mismatched signatures between components
+        - 💡 Our ad-hoc signing resolves internal signature conflicts
 
         For production releases, consider upgrading to Apple Developer Program for full notarization.
 
