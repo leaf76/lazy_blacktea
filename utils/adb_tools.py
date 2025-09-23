@@ -832,15 +832,16 @@ def get_additional_device_info(serial_num: str) -> dict:
     # Get full battery information
     cmd = adb_commands.cmd_adb_shell(serial_num, 'dumpsys battery')
     result = common.run_command(cmd)
-    if result and result[0]:
-      battery_output = result[0]
-
-      # Parse battery level
-      for line in battery_output.split('\n'):
+    if result:
+      # result is a list of lines, not a single string
+      # Parse battery level (specifically look for "level:" but not "Capacity level:")
+      for line in result:
         line = line.strip()
-        if 'level:' in line:
+        if line.startswith('level:') and 'Capacity level' not in line:
           battery_level = line.split(':')[-1].strip()
-          additional_info['battery_level'] = f'{battery_level}%'
+          if battery_level.isdigit():
+            additional_info['battery_level'] = f'{battery_level}%'
+            break  # Stop after finding the first (correct) battery level
         elif 'scale:' in line and 'level:' not in line:
           # Battery capacity in mAh (sometimes available in scale)
           scale_value = line.split(':')[-1].strip()
@@ -892,6 +893,8 @@ def get_additional_device_info(serial_num: str) -> dict:
     additional_info['battery_level'] = 'Unknown'
 
   # Set defaults for missing battery info
+  if 'battery_level' not in additional_info:
+    additional_info['battery_level'] = 'Unknown'
   if 'battery_capacity_mah' not in additional_info:
     additional_info['battery_capacity_mah'] = 'Unknown'
   if 'battery_mas' not in additional_info:

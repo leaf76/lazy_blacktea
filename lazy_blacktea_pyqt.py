@@ -1661,48 +1661,8 @@ class WindowMain(QMainWindow):
                 checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 checkbox.customContextMenuRequested.connect(lambda pos, serial=serial, cb=checkbox: self.show_device_context_menu(pos, serial, cb))
 
-                # Get additional device information in background
-                def create_enhanced_tooltip(device, serial):
-                    """Create enhanced tooltip with additional device info."""
-                    base_tooltip = (
-                        f'📱 Device Information\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'Model: {device.device_model}\n'
-                        f'Serial: {device.device_serial_num}\n'
-                        f'Android: {device.android_ver} (API Level {device.android_api_level})\n'
-                        f'GMS Version: {device.gms_version}\n'
-                        f'Product: {device.device_prod}\n'
-                        f'USB: {device.device_usb}\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'📡 Connectivity\n'
-                        f'WiFi: {self._get_on_off_status(device.wifi_is_on)}\n'
-                        f'Bluetooth: {self._get_on_off_status(device.bt_is_on)}\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'🔧 Build Information\n'
-                        f'Build Fingerprint: {device.build_fingerprint[:50]}...'
-                    )
-
-                    # Try to get additional info, but don't block UI for it
-                    try:
-                        additional_info = self._get_additional_device_info(serial)
-                        extended_tooltip = base_tooltip + (
-                            f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                            f'🖥️ Hardware Information\n'
-                            f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
-                            f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
-                            f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
-                            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                            f'🔋 Battery Information\n'
-                            f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
-                            f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
-                            f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
-                            f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
-                        )
-                        return extended_tooltip
-                    except:
-                        return base_tooltip
-
-                tooltip_text = create_enhanced_tooltip(device, serial)
+                # Get enhanced tooltip using unified method
+                tooltip_text = self._create_device_tooltip(device, serial)
 
                 # Use custom tooltip positioning instead of default
                 checkbox.setToolTip("")  # Clear default tooltip
@@ -1749,29 +1709,8 @@ class WindowMain(QMainWindow):
                 )
                 checkbox.setText(device_text)
 
-                # Update tooltip with enhanced information
-                def create_enhanced_tooltip_update(device, serial):
-                    """Create enhanced tooltip for existing device."""
-                    base_tooltip = (
-                        f'📱 Device Information\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'Model: {device.device_model}\n'
-                        f'Serial: {device.device_serial_num}\n'
-                        f'Android: {device.android_ver} (API Level {device.android_api_level})\n'
-                        f'GMS Version: {device.gms_version}\n'
-                        f'Product: {device.device_prod}\n'
-                        f'USB: {device.device_usb}\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'📡 Connectivity\n'
-                        f'WiFi: {self._get_on_off_status(device.wifi_is_on)}\n'
-                        f'Bluetooth: {self._get_on_off_status(device.bt_is_on)}\n'
-                        f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                        f'🔧 Build Information\n'
-                        f'Build Fingerprint: {device.build_fingerprint[:50]}...'
-                    )
-                    return base_tooltip
-
-                tooltip_text = create_enhanced_tooltip_update(device, serial)
+                # Update tooltip using unified method
+                tooltip_text = self._create_device_tooltip(device, serial)
 
                 # Update custom tooltip positioning for existing checkboxes
                 checkbox.setToolTip("")  # Clear default tooltip
@@ -2110,6 +2049,46 @@ class WindowMain(QMainWindow):
             self.device_recordings[serial].get('active', False)):
             return '🔴 REC | '
         return ''
+
+    def _create_device_tooltip(self, device, serial):
+        """Create enhanced tooltip with device information - unified method."""
+        base_tooltip = (
+            f'📱 Device Information\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'Model: {device.device_model}\n'
+            f'Serial: {device.device_serial_num}\n'
+            f'Android: {device.android_ver} (API Level {device.android_api_level})\n'
+            f'GMS Version: {device.gms_version}\n'
+            f'Product: {device.device_prod}\n'
+            f'USB: {device.device_usb}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'📡 Connectivity\n'
+            f'WiFi: {self._get_on_off_status(device.wifi_is_on)}\n'
+            f'Bluetooth: {self._get_on_off_status(device.bt_is_on)}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'🔧 Build Information\n'
+            f'Build Fingerprint: {device.build_fingerprint[:50]}...'
+        )
+
+        # Try to get additional info, but don't block UI for it
+        try:
+            additional_info = self._get_additional_device_info(serial)
+            extended_tooltip = base_tooltip + (
+                f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🖥️ Hardware Information\n'
+                f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
+                f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
+                f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
+                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🔋 Battery Information\n'
+                f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
+                f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
+                f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
+                f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
+            )
+            return extended_tooltip
+        except:
+            return base_tooltip
 
     def _get_additional_device_info(self, serial_num):
         """Get additional device information for enhanced display."""
