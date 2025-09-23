@@ -1,0 +1,281 @@
+name: Build Multi-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - os: macos-13
+            platform: macos-intel
+            arch: x86_64
+            runner_arch: x64
+          # macOS Apple Silicon
+          - os: macos-14
+            platform: macos-arm64
+            arch: arm64
+            runner_arch: arm64
+          # Linux x86_64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+            runner_arch: x64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        architecture: ${{ matrix.runner_arch }}
+
+    - name: Install system dependencies (Linux)
+      if: matrix.platform == 'linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3-pyqt6 \
+          python3-pyqt6.qtwidgets \
+          python3-dev \
+          build-essential \
+          libgl1-mesa-dev \
+          libxkbcommon-x11-0 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-xinerama0 \
+          libxcb-xfixes0
+
+    - name: Install system dependencies (macOS)
+      if: startsWith(matrix.platform, 'macos')
+      run: |
+        # Install Homebrew if not present (for self-hosted runners)
+        if ! command -v brew &> /dev/null; then
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        # Update Homebrew
+        brew update
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Verify PyQt6 installation
+      run: |
+        python -c "import PyQt6; print(f'PyQt6 version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
+        python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets imported successfully')"
+
+    - name: Set up display (Linux)
+      if: matrix.platform == 'linux'
+      run: |
+        export DISPLAY=:99
+        sudo Xvfb -ac :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &
+        sleep 3
+
+    - name: Test application startup (quick smoke test)
+      run: |
+        timeout 30s python lazy_blacktea_pyqt.py --version || true
+      env:
+        QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
+
+    - name: Clean previous builds
+      run: |
+        rm -rf build/ dist/ __pycache__/
+        find . -name "*.pyc" -delete
+
+    - name: Build application
+      run: |
+        python build-scripts/build.py
+      env:
+        # Ensure we're building for the correct architecture
+        ARCHFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
+        CFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
+        LDFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
+
+    - name: Verify build artifacts
+      run: |
+        ls -la dist/
+        if [ "${{ matrix.platform }}" = "linux" ]; then
+          # Verify Linux build
+          [ -d "dist/lazyblacktea" ] && echo "✅ Linux executable found" || (echo "❌ Linux executable missing" && exit 1)
+          [ -f "dist/lazyblacktea-linux.tar.gz" ] && echo "✅ Linux tarball found" || echo "⚠️  Linux tarball missing"
+          [ -f "dist/LazyBlacktea-x86_64.AppImage" ] && echo "✅ AppImage found" || echo "⚠️  AppImage missing"
+        else
+          # Verify macOS build
+          [ -d "dist/LazyBlacktea.app" ] && echo "✅ macOS app bundle found" || (echo "❌ macOS app bundle missing" && exit 1)
+          [ -f "dist/LazyBlacktea.dmg" ] && echo "✅ macOS DMG found" || echo "⚠️  macOS DMG missing"
+        fi
+
+    - name: Test built application (quick smoke test)
+      run: |
+        if [ "${{ matrix.platform }}" = "linux" ]; then
+          timeout 30s ./dist/lazyblacktea/lazyblacktea --version || true
+        else
+          timeout 30s ./dist/LazyBlacktea.app/Contents/MacOS/LazyBlacktea --version || true
+        fi
+      env:
+        QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
+
+    - name: Prepare artifacts
+      run: |
+        mkdir -p artifacts
+        if [ "${{ matrix.platform }}" = "linux" ]; then
+          # Copy Linux artifacts
+          [ -f "dist/lazyblacktea-linux.tar.gz" ] && cp "dist/lazyblacktea-linux.tar.gz" "artifacts/lazyblacktea-linux-${{ matrix.arch }}.tar.gz"
+          [ -f "dist/LazyBlacktea-x86_64.AppImage" ] && cp "dist/LazyBlacktea-x86_64.AppImage" "artifacts/LazyBlacktea-linux-${{ matrix.arch }}.AppImage"
+        else
+          # Copy macOS artifacts
+          [ -f "dist/LazyBlacktea.dmg" ] && cp "dist/LazyBlacktea.dmg" "artifacts/LazyBlacktea-${{ matrix.platform }}.dmg"
+          # Also create a zip of the app bundle as fallback
+          if [ -d "dist/LazyBlacktea.app" ]; then
+            cd dist && zip -r "../artifacts/LazyBlacktea-${{ matrix.platform }}.zip" LazyBlacktea.app && cd ..
+          fi
+        fi
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-${{ matrix.platform }}
+        path: artifacts/*
+        retention-days: 30
+        if-no-files-found: error
+
+    - name: Upload build logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs-${{ matrix.platform }}-${{ github.run_number }}
+        path: |
+          build/
+          *.log
+        retention-days: 7
+        if-no-files-found: ignore
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+
+        # Copy all build artifacts to release assets
+        find artifacts/ -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" \) -exec cp {} release-assets/ \;
+
+        # List all release assets
+        echo "Release assets:"
+        ls -la release-assets/
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        # Extract version from tag
+        if [[ "${{ github.ref }}" =~ refs/tags/v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+          VERSION="${BASH_REMATCH[1]}"
+        else
+          VERSION="development-$(date +%Y%m%d-%H%M%S)"
+        fi
+
+        # Generate release notes
+        cat > release-notes.md << EOF
+        # Lazy Blacktea ${VERSION}
+
+        ## 📦 Downloads
+
+        ### macOS
+        - **macOS Intel (x86_64)**: \`LazyBlacktea-macos-intel.dmg\` or \`LazyBlacktea-macos-intel.zip\`
+        - **macOS Apple Silicon (ARM64)**: \`LazyBlacktea-macos-arm64.dmg\` or \`LazyBlacktea-macos-arm64.zip\`
+
+        ### Linux
+        - **Linux x86_64**: \`lazyblacktea-linux-x86_64.tar.gz\` or \`LazyBlacktea-linux-x86_64.AppImage\`
+
+        ## 🚀 Installation
+
+        ### macOS
+        1. Download the appropriate \`.dmg\` file for your Mac (Intel or Apple Silicon)
+        2. Open the \`.dmg\` file and drag Lazy Blacktea to Applications
+        3. Right-click and "Open" on first launch (due to Gatekeeper)
+
+        ### Linux
+        - **AppImage**: Download and run \`chmod +x LazyBlacktea-linux-x86_64.AppImage && ./LazyBlacktea-linux-x86_64.AppImage\`
+        - **Tarball**: Extract and run \`tar -xzf lazyblacktea-linux-x86_64.tar.gz && ./lazyblacktea/lazyblacktea\`
+
+        ## 📝 Changes
+
+        Built from commit: \`${{ github.sha }}\`
+
+        ---
+
+        **Note**: This is an automated release built with GitHub Actions.
+        EOF
+
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.release_notes.outputs.VERSION) }}
+        name: Lazy Blacktea ${{ steps.release_notes.outputs.VERSION }}
+        body_path: release-notes.md
+        files: release-assets/*
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Build Status Notification
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Report build status
+      run: |
+        if [ "${{ needs.build.result }}" = "success" ]; then
+          echo "✅ All builds completed successfully!"
+        else
+          echo "❌ Some builds failed. Check the build logs for details."
+          exit 1
+        fi
