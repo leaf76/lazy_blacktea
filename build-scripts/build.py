@@ -155,12 +155,18 @@ def build_application():
     with open(spec_file, 'r') as f:
         spec_content = f.read()
 
-    # Replace relative paths with absolute paths
+    # Replace relative paths with absolute paths, handling both old and new formats
+    spec_content = spec_content.replace("['../lazy_blacktea_pyqt.py']", f"['{os.path.join(project_root, 'lazy_blacktea_pyqt.py')}']")
     spec_content = spec_content.replace("['lazy_blacktea_pyqt.py']", f"['{os.path.join(project_root, 'lazy_blacktea_pyqt.py')}']")
+    spec_content = spec_content.replace("('../assets'", f"('{os.path.join(project_root, 'assets')}'")
     spec_content = spec_content.replace("('assets'", f"('{os.path.join(project_root, 'assets')}'")
+    spec_content = spec_content.replace("('../config'", f"('{os.path.join(project_root, 'config')}'")
     spec_content = spec_content.replace("('config'", f"('{os.path.join(project_root, 'config')}'")
+    spec_content = spec_content.replace("('../ui'", f"('{os.path.join(project_root, 'ui')}'")
     spec_content = spec_content.replace("('ui'", f"('{os.path.join(project_root, 'ui')}'")
+    spec_content = spec_content.replace("('../utils'", f"('{os.path.join(project_root, 'utils')}'")
     spec_content = spec_content.replace("('utils'", f"('{os.path.join(project_root, 'utils')}'")
+    spec_content = spec_content.replace("'../assets/icons/", f"'{os.path.join(project_root, 'assets', 'icons')}{'/' if not os.path.join(project_root, 'assets', 'icons').endswith('/') else ''}")
     spec_content = spec_content.replace("'assets/icons/", f"'{os.path.join(project_root, 'assets', 'icons')}{'/' if not os.path.join(project_root, 'assets', 'icons').endswith('/') else ''}")
 
     # Create temp spec file

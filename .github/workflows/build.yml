@@ -287,7 +287,9 @@ jobs:
         ### macOS
         1. Download the appropriate \`.dmg\` file for your Mac (Intel or Apple Silicon)
         2. Open the \`.dmg\` file and drag Lazy Blacktea to Applications
-        3. Right-click and "Open" on first launch (due to Gatekeeper)
+        3. **Important**: Right-click and "Open" on first launch (due to Gatekeeper security)
+           - The app is signed with ad-hoc signature but not notarized by Apple
+           - This is safe to use - it's just not distributed through the App Store
 
         ### Linux
         - **AppImage**: Download and run \`chmod +x LazyBlacktea-linux-x86_64.AppImage && ./LazyBlacktea-linux-x86_64.AppImage\`
@@ -297,6 +299,15 @@ jobs:
 
         Built from commit: \`${{ github.sha }}\`
 
+        ## 🔒 Security Note
+
+        **macOS Apps**: These applications are signed with ad-hoc signatures for security but are not notarized by Apple. This means:
+        - ✅ The apps are properly signed and safe to use
+        - ⚠️ You may see a security warning on first launch
+        - 💡 Right-click → "Open" to bypass the warning
+
+        For production releases, consider upgrading to Apple Developer Program for full notarization.
+
         ---
 
         **Note**: This is an automated release built with GitHub Actions.
@@ -305,7 +316,7 @@ jobs:
         echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.release_notes.outputs.VERSION) }}
         name: Lazy Blacktea ${{ steps.release_notes.outputs.VERSION }}

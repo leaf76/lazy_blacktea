@@ -3,14 +3,14 @@
 block_cipher = None
 
 a = Analysis(
-    ['lazy_blacktea_pyqt.py'],
+    ['../lazy_blacktea_pyqt.py'],
     pathex=[],
     binaries=[],
     datas=[
-        ('assets', 'assets'),
-        ('config', 'config'),
-        ('ui', 'ui'),
-        ('utils', 'utils'),
+        ('../assets', 'assets'),
+        ('../config', 'config'),
+        ('../ui', 'ui'),
+        ('../utils', 'utils'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
@@ -45,9 +45,9 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=None,
+    codesign_identity='-',
     entitlements_file=None,
-    icon='assets/icons/AppIcon.icns',
+    icon='../assets/icons/AppIcon.icns',
 )
 
 coll = COLLECT(
@@ -64,7 +64,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='LazyBlacktea.app',
-    icon='assets/icons/AppIcon.icns',
+    icon='../assets/icons/AppIcon.icns',
     bundle_identifier='com.lazyblacktea.app',
     version='1.0.0',
     info_plist={
