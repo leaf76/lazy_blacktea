@@ -1,7 +1,7 @@
 # 🍵 Lazy Blacktea - Android ADB GUI Tool
 
-[![Build Status](https://github.com/yourusername/lazy_blacktea/workflows/build/badge.svg)](https://github.com/yourusername/lazy_blacktea/actions)
-[![Test Status](https://github.com/yourusername/lazy_blacktea/workflows/test/badge.svg)](https://github.com/yourusername/lazy_blacktea/actions)
+[![Build Status](https://github.com/cy76/lazy_blacktea/workflows/build/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
+[![Test Status](https://github.com/cy76/lazy_blacktea/workflows/test/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.4+-green.svg)](https://pypi.org/project/PyQt6/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -132,7 +132,7 @@ bash build_linux.sh
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/lazy_blacktea.git
+   git clone https://github.com/cy76/lazy_blacktea.git
    cd lazy_blacktea
    ```
 
@@ -485,8 +485,8 @@ This project uses the following open-source libraries:
 ### Getting Help
 
 - 📖 **Documentation**: Check this README and inline code documentation
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/lazy_blacktea/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/lazy_blacktea/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/cy76/lazy_blacktea/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/cy76/lazy_blacktea/discussions)
 
 ### Community
 
@@ -497,7 +497,7 @@ This project uses the following open-source libraries:
 
 ### Reporting Security Vulnerabilities
 
-If you discover a security vulnerability, please report it privately by emailing [security@yourdomain.com](mailto:security@yourdomain.com) instead of opening a public issue.
+If you discover a security vulnerability, please report it privately through GitHub's security advisory feature instead of opening a public issue.
 
 ---
 

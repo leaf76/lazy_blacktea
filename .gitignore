@@ -133,3 +133,15 @@ Thumbs.db
 logs/
 temp/
 .claude/
+
+# User configuration files (contain personal paths and settings)
+.lazy_blacktea_config.json
+.lazy_blacktea_logs/
+
+# Build artifacts
+*.dmg
+*.app
+*.AppImage
+*.tar.gz
+*.deb
+*.rpm
