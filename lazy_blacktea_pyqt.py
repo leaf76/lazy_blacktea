@@ -1633,8 +1633,8 @@ class WindowMain(QMainWindow):
                 gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
                 device_text = (
-                    f'{operation_status}{recording_status}📱 {device.device_model:<15} | '
-                    f'🆔 {device.device_serial_num:<15} | '
+                    f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
+                    f'🆔 {device.device_serial_num:<20} | '
                     f'🤖 Android {device.android_ver:<2} (API {device.android_api_level:<2}) | '
                     f'🎯 GMS: {gms_display:<12} | '
                     f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
