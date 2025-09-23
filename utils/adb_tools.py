@@ -827,15 +827,77 @@ def get_additional_device_info(serial_num: str) -> dict:
   except Exception:
     additional_info['screen_size'] = 'Unknown'
 
-  # Battery level
+  # Battery information - comprehensive battery data
   try:
-    cmd = adb_commands.cmd_adb_shell(serial_num, 'dumpsys battery | grep level')
+    # Get full battery information
+    cmd = adb_commands.cmd_adb_shell(serial_num, 'dumpsys battery')
     result = common.run_command(cmd)
     if result and result[0]:
-      battery = result[0].strip().split(':')[-1].strip()
-      additional_info['battery_level'] = f'{battery}%'
+      battery_output = result[0]
+
+      # Parse battery level
+      for line in battery_output.split('\n'):
+        line = line.strip()
+        if 'level:' in line:
+          battery_level = line.split(':')[-1].strip()
+          additional_info['battery_level'] = f'{battery_level}%'
+        elif 'scale:' in line and 'level:' not in line:
+          # Battery capacity in mAh (sometimes available in scale)
+          scale_value = line.split(':')[-1].strip()
+          if scale_value.isdigit() and int(scale_value) > 100:
+            additional_info['battery_capacity_mah'] = f'{scale_value} mAh'
+
+      # Try to get battery capacity from other sources
+      if 'battery_capacity_mah' not in additional_info:
+        try:
+          capacity_cmd = adb_commands.cmd_adb_shell(serial_num, 'cat /sys/class/power_supply/battery/capacity')
+          capacity_result = common.run_command(capacity_cmd)
+          if capacity_result and capacity_result[0]:
+            # Try to get actual mAh capacity
+            mah_cmd = adb_commands.cmd_adb_shell(serial_num, 'cat /sys/class/power_supply/battery/charge_full_design')
+            mah_result = common.run_command(mah_cmd)
+            if mah_result and mah_result[0]:
+              mah_value = int(mah_result[0].strip()) // 1000  # Convert from μAh to mAh
+              additional_info['battery_capacity_mah'] = f'{mah_value} mAh'
+        except:
+          pass
+
+      # Calculate Battery mAs (milliamp seconds) - theoretical
+      try:
+        if 'battery_capacity_mah' in additional_info:
+          mah_str = additional_info['battery_capacity_mah'].replace(' mAh', '')
+          if mah_str.isdigit():
+            mah = int(mah_str)
+            mas = mah * 3600  # Convert mAh to mAs (1 hour = 3600 seconds)
+            additional_info['battery_mas'] = f'{mas:,} mAs'
+      except:
+        pass
+
+      # Calculate DOU (Days Of Use) hours - estimated based on typical usage
+      try:
+        if 'battery_capacity_mah' in additional_info and additional_info['battery_level'] != 'Unknown':
+          mah_str = additional_info['battery_capacity_mah'].replace(' mAh', '')
+          level_str = additional_info['battery_level'].replace('%', '')
+          if mah_str.isdigit() and level_str.isdigit():
+            mah = int(mah_str)
+            level = int(level_str)
+            current_charge = (mah * level) / 100
+            # Estimate usage time based on average 200mA consumption (typical smartphone usage)
+            estimated_hours = current_charge / 200
+            additional_info['battery_dou_hours'] = f'{estimated_hours:.1f} hours'
+      except:
+        pass
+
   except Exception:
     additional_info['battery_level'] = 'Unknown'
+
+  # Set defaults for missing battery info
+  if 'battery_capacity_mah' not in additional_info:
+    additional_info['battery_capacity_mah'] = 'Unknown'
+  if 'battery_mas' not in additional_info:
+    additional_info['battery_mas'] = 'Unknown'
+  if 'battery_dou_hours' not in additional_info:
+    additional_info['battery_dou_hours'] = 'Unknown'
 
   # CPU architecture
   try:

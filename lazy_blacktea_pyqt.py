@@ -1221,6 +1221,23 @@ class WindowMain(QMainWindow):
         # Screenshot button
         self.screenshot_btn = QPushButton('📷 Take Screenshot')
         self.screenshot_btn.clicked.connect(lambda: self.take_screenshot())
+        # Set initial default style
+        self.screenshot_btn.setStyleSheet('''
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        ''')
         capture_layout.addWidget(self.screenshot_btn, 0, 0)
 
         # Recording buttons
@@ -1674,7 +1691,12 @@ class WindowMain(QMainWindow):
                             f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
                             f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
                             f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
-                            f'Battery Level: {additional_info.get("battery_level", "Unknown")}'
+                            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                            f'🔋 Battery Information\n'
+                            f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
+                            f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
+                            f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
+                            f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
                         )
                         return extended_tooltip
                     except:
@@ -2006,7 +2028,12 @@ class WindowMain(QMainWindow):
                 device_info.append(f"Screen Size: {additional_info.get('screen_size', 'Unknown')}")
                 device_info.append(f"Screen Density: {additional_info.get('screen_density', 'Unknown')}")
                 device_info.append(f"CPU Architecture: {additional_info.get('cpu_arch', 'Unknown')}")
+                device_info.append("")
+                device_info.append("BATTERY INFORMATION:")
                 device_info.append(f"Battery Level: {additional_info.get('battery_level', 'Unknown')}")
+                device_info.append(f"Battery Capacity: {additional_info.get('battery_capacity_mah', 'Unknown')}")
+                device_info.append(f"Battery mAs: {additional_info.get('battery_mas', 'Unknown')}")
+                device_info.append(f"Estimated DOU: {additional_info.get('battery_dou_hours', 'Unknown')}")
             except Exception as e:
                 device_info.append("HARDWARE INFORMATION:")
                 device_info.append("Hardware information unavailable")
@@ -2095,6 +2122,9 @@ class WindowMain(QMainWindow):
                 'screen_density': 'Unknown',
                 'screen_size': 'Unknown',
                 'battery_level': 'Unknown',
+                'battery_capacity_mah': 'Unknown',
+                'battery_mas': 'Unknown',
+                'battery_dou_hours': 'Unknown',
                 'cpu_arch': 'Unknown'
             }
 
@@ -2554,16 +2584,7 @@ Build Fingerprint: {device.build_fingerprint}'''
         # Update UI state
         self._update_screenshot_button_state(True)
 
-        # Show progress notification
-        device_list = ', '.join(device_models[:2])
-        if len(device_models) > 2:
-            device_list += f' +{len(device_models) - 2} more'
-
-        self.error_handler.show_info('📷 Screenshot in Progress',
-                                   f'Capturing screenshots from {device_count} device(s)...\n\n'
-                                   f'📱 Devices: {device_list}\n'
-                                   f'📁 Saving to: {validated_path}\n\n'
-                                   f'Please wait...')
+        # Remove the progress notification - user will see the completion notification only
 
         # Use new screenshot utils with callback
         def screenshot_callback(output_path, device_count, device_models):
@@ -2571,13 +2592,15 @@ Build Fingerprint: {device.build_fingerprint}'''
             # Use signal emission to safely execute in main thread instead of QTimer
             logger.info(f'🔧 [CALLBACK RECEIVED] About to emit screenshot_completed_signal')
             try:
+                # Only use the signal to avoid duplicate notifications
                 self.screenshot_completed_signal.emit(output_path, device_count, device_models)
                 logger.info(f'🔧 [CALLBACK RECEIVED] screenshot_completed_signal emitted successfully')
-                # Also directly call the completion handler as backup
-                self._handle_screenshot_completion(output_path, device_count, device_models, devices)
-                logger.info(f'🔧 [CALLBACK RECEIVED] Direct completion handler called successfully')
+                # Clean up device operation status
+                for device in devices:
+                    self.device_manager.clear_device_operation_status(device.device_serial_num)
+                self.refresh_device_list()
             except Exception as signal_error:
-                logger.error(f'🔧 [CALLBACK RECEIVED] Signal/handler execution failed: {signal_error}')
+                logger.error(f'🔧 [CALLBACK RECEIVED] Signal emission failed: {signal_error}')
                 import traceback
                 logger.error(f'🔧 [CALLBACK RECEIVED] Traceback: {traceback.format_exc()}')
 
@@ -2668,91 +2691,18 @@ Build Fingerprint: {device.build_fingerprint}'''
         if len(device_models) > 3:
             device_list += f' and {len(device_models) - 3} more'
 
-        # Create a custom success dialog with more information
-        dialog = QDialog(self)
-        dialog.setWindowTitle('📷 Screenshots Completed')
-        dialog.setModal(True)
-        dialog.resize(400, 200)
+        # Show a simple success notification instead of modal dialog
+        self.show_info('📷 Screenshots Completed',
+                      f'✅ Successfully captured {device_count} screenshot(s)\n'
+                      f'📱 Devices: {device_list}\n'
+                      f'📁 Location: {output_path}')
 
-        layout = QVBoxLayout(dialog)
+        # Restore screenshot button state
+        self._update_screenshot_button_state(False)
 
-        # Success message
-        success_label = QLabel(f'✅ Successfully captured {device_count} screenshot(s)')
-        success_label.setStyleSheet('font-weight: bold; color: #2E7D32; font-size: 14px;')
-        layout.addWidget(success_label)
+        logger.info(f'📷 [SIGNAL] _on_screenshot_completed notification shown')
+        return  # Skip the dialog creation
 
-        # Device info
-        device_label = QLabel(f'📱 Devices: {device_list}')
-        device_label.setStyleSheet('color: #424242; margin: 10px 0px;')
-        layout.addWidget(device_label)
-
-        # Path info
-        path_label = QLabel(f'📁 Location: {output_path}')
-        path_label.setStyleSheet('color: #424242; word-wrap: break-word;')
-        path_label.setWordWrap(True)
-        layout.addWidget(path_label)
-
-        # Button layout
-        button_layout = QHBoxLayout()
-
-        # Open folder button
-        open_folder_btn = QPushButton('🗂️ Open Folder')
-        open_folder_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #1976D2;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1565C0;
-            }
-        ''')
-        open_folder_btn.clicked.connect(lambda: self._open_folder(output_path))
-        button_layout.addWidget(open_folder_btn)
-
-        # Quick Actions button
-        quick_actions_btn = QPushButton('⚡ Quick Actions')
-        quick_actions_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #388E3C;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2E7D32;
-            }
-        ''')
-        quick_actions_btn.clicked.connect(lambda: self._show_screenshot_quick_actions(output_path, device_models))
-        button_layout.addWidget(quick_actions_btn)
-
-        # Close button
-        close_btn = QPushButton('Close')
-        close_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #757575;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #616161;
-            }
-        ''')
-        close_btn.clicked.connect(dialog.accept)
-        button_layout.addWidget(close_btn)
-
-        layout.addWidget(QLabel())  # Spacer
-        layout.addLayout(button_layout)
-
-        dialog.exec()
-        logger.info(f'📷 [SIGNAL] _on_screenshot_completed dialog closed')
 
     def _open_folder(self, path):
         """Open the specified folder in system file manager."""
@@ -2918,7 +2868,23 @@ Build Fingerprint: {device.build_fingerprint}'''
             logger.info(f'🔧 [BUTTON STATE] Resetting screenshot button to default state')
             self.screenshot_btn.setText('📷 Take Screenshot')
             self.screenshot_btn.setEnabled(True)
-            self.screenshot_btn.setStyleSheet('')  # Reset to default style
+            # Set proper default style
+            self.screenshot_btn.setStyleSheet('''
+                QPushButton {
+                    background-color: #4CAF50;
+                    color: white;
+                    border: none;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #45a049;
+                }
+                QPushButton:pressed {
+                    background-color: #3d8b40;
+                }
+            ''')
             logger.info('📷 [BUTTON STATE] Screenshot button reset to default state successfully')
 
     def _on_file_generation_completed(self, operation_name, output_path, device_count, icon):
@@ -3073,7 +3039,14 @@ Build Fingerprint: {device.build_fingerprint}'''
             # Trigger device list refresh to update status
             QTimer.singleShot(1000, self.refresh_device_list)
 
-        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'enable Bluetooth')
+        # Disable progress dialog, only show completion notification
+        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'enable Bluetooth', show_progress=False)
+
+        # Show completion notification immediately
+        devices = self.get_checked_devices()
+        device_count = len(devices)
+        self.show_info('🔵 Enable Bluetooth Complete',
+                      f'✅ Successfully enabled Bluetooth on {device_count} device(s)')
 
     @ensure_devices_selected
     def disable_bluetooth(self):
@@ -3083,7 +3056,14 @@ Build Fingerprint: {device.build_fingerprint}'''
             # Trigger device list refresh to update status
             QTimer.singleShot(1000, self.refresh_device_list)
 
-        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'disable Bluetooth')
+        # Disable progress dialog, only show completion notification
+        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'disable Bluetooth', show_progress=False)
+
+        # Show completion notification immediately
+        devices = self.get_checked_devices()
+        device_count = len(devices)
+        self.show_info('🔴 Disable Bluetooth Complete',
+                      f'✅ Successfully disabled Bluetooth on {device_count} device(s)')
 
     @ensure_devices_selected
     def clear_logcat(self):
@@ -3660,11 +3640,35 @@ After installation, restart lazy blacktea to use device mirroring functionality.
                                    f'📁 Saving to: {validated_path}\n\n'
                                    f'Please wait, this may take a while...')
 
-        # Use file generation utils with callback
+        # Enhanced callback with error handling for Samsung and other device issues
         def bug_report_callback(operation_name, output_path, device_count, icon):
             self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
 
-        generate_bug_report_batch(devices, validated_path, bug_report_callback)
+        # Enhanced error-aware generation
+        def generation_wrapper():
+            try:
+                generate_bug_report_batch(devices, validated_path, bug_report_callback)
+            except Exception as e:
+                # Handle Samsung and other device-specific failures
+                QTimer.singleShot(0, lambda: self.show_error(
+                    '🐛 Bug Report Generation Failed',
+                    f'Failed to generate bug reports for some devices.\n\n'
+                    f'Error: {str(e)}\n\n'
+                    f'Common causes:\n'
+                    f'• Samsung devices may require special permissions\n'
+                    f'• Device may not support bug report generation\n'
+                    f'• Insufficient storage space on device\n'
+                    f'• Device disconnected during process\n'
+                    f'• Root access required for some devices\n\n'
+                    f'Please check:\n'
+                    f'1. Enable "USB debugging (Security settings)"\n'
+                    f'2. Grant all requested permissions\n'
+                    f'3. Ensure device has sufficient storage\n'
+                    f'4. Try with individual devices if multiple selected'
+                ))
+
+        # Run in background thread with error handling
+        threading.Thread(target=generation_wrapper, daemon=True).start()
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):

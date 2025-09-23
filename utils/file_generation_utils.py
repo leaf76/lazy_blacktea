@@ -29,7 +29,7 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
             # Generate reports for each device with progress
             for index, device in enumerate(devices, 1):
                 try:
-                    filename = f"bugreport_{device.device_model}_{device.device_serial_num}_{timestamp}.txt"
+                    filename = f"bugreport_{device.device_model}_{device.device_serial_num}_{timestamp}"
                     filepath = os.path.join(output_path, filename)
 
                     # Progress callback if provided
@@ -42,7 +42,11 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                     logger.info(f'Bug report generated for {device.device_model}: {filename}')
 
                 except Exception as e:
-                    logger.error(f'Bug report failed for {device.device_serial_num}: {e}')
+                    logger.error(f'Bug report failed for {device.device_model} ({device.device_serial_num}): {e}')
+                    # Log specific Samsung device issues
+                    if 'samsung' in device.device_model.lower():
+                        logger.warning(f'Samsung device {device.device_model} may require special permissions for bug reports')
+                    # Don't break the loop, continue with other devices
 
             # Call callback if provided
             if callback:
