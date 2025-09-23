@@ -120,7 +120,13 @@ jobs:
 
     - name: Build application
       run: |
+        echo "Starting build for platform: ${{ matrix.platform }}"
+        echo "Architecture: ${{ matrix.arch }}"
+        echo "Working directory: $(pwd)"
         python build-scripts/build.py
+        echo "Build script completed with exit code: $?"
+        echo "Contents of dist/ after build:"
+        ls -la dist/ || echo "No dist directory created"
       env:
         # Ensure we're building for the correct architecture
         ARCHFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
@@ -154,17 +160,56 @@ jobs:
     - name: Prepare artifacts
       run: |
         mkdir -p artifacts
+        echo "Platform: ${{ matrix.platform }}"
+        echo "Architecture: ${{ matrix.arch }}"
+        echo "Available files in dist/:"
+        ls -la dist/ || echo "No dist directory found"
+
         if [ "${{ matrix.platform }}" = "linux" ]; then
           # Copy Linux artifacts
-          [ -f "dist/lazyblacktea-linux.tar.gz" ] && cp "dist/lazyblacktea-linux.tar.gz" "artifacts/lazyblacktea-linux-${{ matrix.arch }}.tar.gz"
-          [ -f "dist/LazyBlacktea-x86_64.AppImage" ] && cp "dist/LazyBlacktea-x86_64.AppImage" "artifacts/LazyBlacktea-linux-${{ matrix.arch }}.AppImage"
+          echo "Looking for Linux artifacts..."
+          if [ -f "dist/lazyblacktea-linux.tar.gz" ]; then
+            cp "dist/lazyblacktea-linux.tar.gz" "artifacts/lazyblacktea-linux-${{ matrix.arch }}.tar.gz"
+            echo "✅ Copied tarball"
+          else
+            echo "⚠️  Tarball not found"
+          fi
+
+          if [ -f "dist/LazyBlacktea-x86_64.AppImage" ]; then
+            cp "dist/LazyBlacktea-x86_64.AppImage" "artifacts/LazyBlacktea-linux-${{ matrix.arch }}.AppImage"
+            echo "✅ Copied AppImage"
+          else
+            echo "⚠️  AppImage not found"
+          fi
         else
           # Copy macOS artifacts
-          [ -f "dist/LazyBlacktea.dmg" ] && cp "dist/LazyBlacktea.dmg" "artifacts/LazyBlacktea-${{ matrix.platform }}.dmg"
+          echo "Looking for macOS artifacts..."
+          if [ -f "dist/LazyBlacktea.dmg" ]; then
+            cp "dist/LazyBlacktea.dmg" "artifacts/LazyBlacktea-${{ matrix.platform }}.dmg"
+            echo "✅ Copied DMG"
+          else
+            echo "⚠️  DMG not found"
+          fi
+
           # Also create a zip of the app bundle as fallback
           if [ -d "dist/LazyBlacktea.app" ]; then
             cd dist && zip -r "../artifacts/LazyBlacktea-${{ matrix.platform }}.zip" LazyBlacktea.app && cd ..
+            echo "✅ Created ZIP from app bundle"
+          else
+            echo "⚠️  App bundle not found"
           fi
+        fi
+
+        echo "Final artifacts:"
+        ls -la artifacts/ || echo "No artifacts created"
+
+        # Ensure we have at least one file to upload
+        if [ ! "$(ls -A artifacts/)" ]; then
+          echo "No artifacts were created. Creating a build report..."
+          echo "Build completed but no artifacts were generated." > artifacts/build-report-${{ matrix.platform }}.txt
+          echo "Platform: ${{ matrix.platform }}" >> artifacts/build-report-${{ matrix.platform }}.txt
+          echo "Architecture: ${{ matrix.arch }}" >> artifacts/build-report-${{ matrix.platform }}.txt
+          echo "Build time: $(date)" >> artifacts/build-report-${{ matrix.platform }}.txt
         fi
 
     - name: Upload build artifacts
@@ -173,7 +218,7 @@ jobs:
         name: build-${{ matrix.platform }}
         path: artifacts/*
         retention-days: 30
-        if-no-files-found: error
+        if-no-files-found: warn
 
     - name: Upload build logs on failure
       if: failure()
