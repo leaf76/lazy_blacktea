@@ -95,7 +95,7 @@ def install_dependencies():
         if not run_command("sudo apt-get update"):
             print_warning("Failed to update package list (continuing anyway)")
 
-        if not run_command("sudo apt-get install -y python3-pyqt6 python3-pyqt6.qtwidgets python3-dev build-essential"):
+        if not run_command("sudo apt-get install -y python3-dev build-essential libgl1-mesa-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0"):
             print_warning("Failed to install system dependencies (continuing anyway)")
 
     # Install Python dependencies

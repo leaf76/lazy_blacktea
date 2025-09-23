@@ -125,10 +125,11 @@ All dependencies are automatically installed by the workflows:
 - setuptools >= 65.0.0
 
 **System (Linux)**:
-- python3-pyqt6
-- python3-pyqt6.qtwidgets
+- python3-dev
 - build-essential
-- Various X11 libraries for GUI support
+- libgl1-mesa-dev
+- Various X11/XCB libraries for GUI support
+- PyQt6 installed via pip (not apt)
 
 **System (macOS)**:
 - Xcode command line tools (automatically available on GitHub runners)

@@ -27,7 +27,18 @@ pip install -r requirements.txt
 # Install additional Linux dependencies
 echo "📥 Installing Linux-specific dependencies..."
 sudo apt-get update
-sudo apt-get install -y python3-pyqt6 python3-pyqt6.qtwidgets python3-dev build-essential
+sudo apt-get install -y \
+  python3-dev \
+  build-essential \
+  libgl1-mesa-dev \
+  libxkbcommon-x11-0 \
+  libxcb-icccm4 \
+  libxcb-image0 \
+  libxcb-keysyms1 \
+  libxcb-randr0 \
+  libxcb-render-util0 \
+  libxcb-xinerama0 \
+  libxcb-xfixes0
 
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
