@@ -6,6 +6,8 @@ import pathlib
 import platform
 import subprocess
 import time
+from typing import List, Callable, Any, Optional
+from functools import wraps
 
 from utils import adb_commands
 from utils import adb_models
@@ -17,6 +19,110 @@ from utils import dump_device_ui
 gms_package_name = 'com.google.android.gms'
 
 logger = common.get_logger('adb_tools')
+
+
+def adb_operation(operation_name: str = None, default_return=None, log_errors: bool = True):
+  """Decorator for ADB operations with standardized error handling.
+
+  Args:
+    operation_name: Name of the operation for logging (defaults to function name)
+    default_return: Value to return on error
+    log_errors: Whether to log errors or suppress them
+
+  Returns:
+    Decorated function with error handling
+  """
+  def decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+      op_name = operation_name or func.__name__
+      try:
+        return func(*args, **kwargs)
+      except Exception as e:
+        if log_errors:
+          logger.error(f'Error in {op_name}: {e}')
+          import traceback
+          logger.debug(f'Traceback for {op_name}: {traceback.format_exc()}')
+        return default_return
+    return wrapper
+  return decorator
+
+
+def adb_device_operation(default_return=None, log_errors: bool = True):
+  """Decorator specifically for device operations that take serial_num as first arg.
+
+  Args:
+    default_return: Value to return on error
+    log_errors: Whether to log errors
+
+  Returns:
+    Decorated function with device-specific error handling
+  """
+  def decorator(func):
+    @wraps(func)
+    def wrapper(serial_num, *args, **kwargs):
+      try:
+        return func(serial_num, *args, **kwargs)
+      except Exception as e:
+        if log_errors:
+          logger.error(f'Error in {func.__name__} for device {serial_num}: {e}')
+          import traceback
+          logger.debug(f'Traceback for {func.__name__} (device {serial_num}): {traceback.format_exc()}')
+        return default_return
+    return wrapper
+  return decorator
+
+
+def _execute_commands_parallel(commands: List[str], operation_name: str) -> List[str]:
+  """Execute multiple ADB commands in parallel.
+
+  Args:
+    commands: List of command strings to execute
+    operation_name: Name of the operation for logging
+
+  Returns:
+    List of command results
+  """
+  if not commands:
+    return []
+
+  with concurrent.futures.ThreadPoolExecutor(max_workers=len(commands)) as executor:
+    results = list(executor.map(common.run_command, commands))
+    logger.info(f'{operation_name} completed - executed {len(commands)} commands')
+    return results
+
+
+def _execute_functions_parallel(functions: List[Callable], args_list: List[Any], operation_name: str) -> List[Any]:
+  """Execute multiple functions in parallel.
+
+  Args:
+    functions: List of functions to execute
+    args_list: List of arguments for each function
+    operation_name: Name of the operation for logging
+
+  Returns:
+    List of function results
+  """
+  if not functions or not args_list:
+    return []
+
+  with concurrent.futures.ThreadPoolExecutor(max_workers=len(functions)) as executor:
+    futures = []
+    for func, args in zip(functions, args_list):
+      future = executor.submit(func, *args if isinstance(args, (list, tuple)) else [args])
+      futures.append(future)
+
+    results = []
+    for future in concurrent.futures.as_completed(futures):
+      try:
+        result = future.result()
+        results.append(result)
+      except Exception as e:
+        logger.error(f'Error in {operation_name}: {e}')
+        results.append(None)
+
+    logger.info(f'{operation_name} completed - executed {len(functions)} functions')
+    return results
 
 
 def is_adb_installed() -> bool:
@@ -137,24 +243,20 @@ def get_devices_list() -> list[adb_models.DeviceInfo]:
     logger.warning('Not found device')
     return result
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(all_devices_info)
-  ) as executor:
-    futures = []
-    for i in all_devices_info:
-      info = [x for x in i.split() if x]
-      furture = executor.submit(device_info_entry, info)
-      futures.append(furture)
+  # Prepare function calls for parallel execution
+  functions = [device_info_entry] * len(all_devices_info)
+  # Each device_info_entry expects a single list argument, not multiple args
+  args_list = [([x for x in i.split() if x],) for i in all_devices_info]
 
-    concurrent.futures.as_completed(futures)
-    for f in futures:
-      device_info = f.result()
-      result.append(device_info)
+  # Execute device info collection in parallel
+  results = _execute_functions_parallel(functions, args_list, 'get_devices_list')
 
-    return result
+  # Filter out None results and return
+  result = [device_info for device_info in results if device_info is not None]
+  return result
 
 
-def device_info_entry(info: adb_models.DeviceInfo) -> adb_models.DeviceInfo:
+def device_info_entry(info: List[str]) -> adb_models.DeviceInfo:
   """Organize device info.
 
   Args:
@@ -243,17 +345,15 @@ def generate_the_android_bug_report(
     return
 
   logger.info('Start concurrent generate bug reports.')
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(command_list)
-  ) as executor:
-    results = executor.map(common.run_command, command_list)
-    for r in results:
-      logger.info('Get generate result %s', r)
+  results = _execute_commands_parallel(command_list, 'generate_bug_report')
+  for r in results:
+    logger.info('Get generate result %s', r)
     callback(results)
 
   logger.info('----------End generate bug report finished.----------')
 
 
+@adb_device_operation(default_return=None)
 def generate_bug_report_device(serial_num: str, output_path: str) -> None:
   """Generate bug report for a single device.
 
@@ -261,14 +361,10 @@ def generate_bug_report_device(serial_num: str, output_path: str) -> None:
     serial_num: Device serial number.
     output_path: Full path where to save the bug report.
   """
-  try:
-    cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
-    result = common.run_command(cmd)
-    logger.info(f'Bug report generated for {serial_num}: {output_path}')
-    return result
-  except Exception as e:
-    logger.error(f'Failed to generate bug report for {serial_num}: {e}')
-    raise
+  cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
+  result = common.run_command(cmd)
+  logger.info(f'Bug report generated for {serial_num}: {output_path}')
+  return result
 
 
 def clear_device_logcat(serial_num) -> bool:
@@ -292,27 +388,24 @@ def run_adb_shell_command(
     cmd = adb_commands.cmd_adb_shell(s, command_str)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(commands)
-  ) as executor:
-    results = list(executor.map(common.run_command, commands))
+  results = _execute_commands_parallel(commands, 'clear_android_device_logcat')
 
-    # Log detailed results for each device
-    for i, (serial, cmd, result) in enumerate(zip(serial_nums, commands, results)):
-      logger.info(f'[{serial}] Command: {command_str}')
-      if result:
-        # Show first few lines of output
-        output_lines = result[:5] if len(result) > 5 else result
-        for line in output_lines:
-          logger.info(f'[{serial}] Output: {line}')
-        if len(result) > 5:
-          logger.info(f'[{serial}] ... and {len(result) - 5} more lines')
-      else:
-        logger.info(f'[{serial}] No output or command failed')
+  # Log detailed results for each device
+  for i, (serial, cmd, result) in enumerate(zip(serial_nums, commands, results)):
+    logger.info(f'[{serial}] Command: {command_str}')
+    if result:
+      # Show first few lines of output
+      output_lines = result[:5] if len(result) > 5 else result
+      for line in output_lines:
+        logger.info(f'[{serial}] Output: {line}')
+      if len(result) > 5:
+        logger.info(f'[{serial}] ... and {len(result) - 5} more lines')
+    else:
+      logger.info(f'[{serial}] No output or command failed')
 
-    logger.info(f'Run adb custom command completed on {len(serial_nums)} device(s)')
-    if callback:
-      callback(results)
+  logger.info(f'Run adb custom command completed on {len(serial_nums)} device(s)')
+  if callback:
+    callback(results)
 
 
 def extract_all_discovery_service_info(
@@ -335,12 +428,9 @@ def extract_all_discovery_service_info(
     cmd = adb_commands.cmd_extact_discovery_service_info(s, root_folder)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    for r in results:
-      logger.info('Get extract result %s', r)
+  results = _execute_commands_parallel(commands, 'extract_to_android_device')
+  for r in results:
+    logger.info('Get extract result %s', r)
     callback(results)
 
   logger.info('Extract done.')
@@ -434,11 +524,8 @@ def run_as_root(serial_nums: list[str]):
     cmd = adb_commands.cmd_adb_root(s)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    logger.info('Run root results: %s', results)
+  results = _execute_commands_parallel(commands, 'root_android_devices')
+  logger.info('Run root results: %s', results)
 
 
 def start_reboot(serial_nums: list[str]):
@@ -447,11 +534,8 @@ def start_reboot(serial_nums: list[str]):
     cmd = adb_commands.cmd_adb_reboot(s)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    logger.info('Start reboot results: %s', results)
+  results = _execute_commands_parallel(commands, 'start_reboot')
+  logger.info('Start reboot results: %s', results)
 
 
 def kill_adb_server():
@@ -496,12 +580,9 @@ def install_the_apk(serial_nums: list[str], apk_path: str) -> list[str]:
     cmd = adb_commands.cmd_adb_install(s, apk_path)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    logger.info('Install the apk results: %s', results)
-    return results
+  results = _execute_commands_parallel(commands, 'install_to_android_device')
+  logger.info('Install the apk results: %s', results)
+  return results
 
 
 def copy_file(source: str, destination: str):
@@ -527,12 +608,9 @@ def switch_bluetooth_enable(serial_nums: list[str], enable: bool) -> list[str]:
     cmd = adb_commands.cmd_switch_enable_bluetooth(s, enable)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(commands)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    logger.info('Switch bluetooth enable results: %s', results)
-    return results
+  results = _execute_commands_parallel(commands, 'switch_bluetooth_enable')
+  logger.info('Switch bluetooth enable results: %s', results)
+  return results
 
 def pull_device_dcim(serial_nums: list[str], output_path: str) -> list[str]:
   """Pull device dcim folder.
@@ -553,12 +631,9 @@ def pull_device_dcim(serial_nums: list[str], output_path: str) -> list[str]:
     cmd = adb_commands.cmd_pull_device_dcim(s, new_output_path)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    logger.info('Pull device dcim folder results: %s', results)
-    return results
+  results = _execute_commands_parallel(commands, 'pull_device_dcim')
+  logger.info('Pull device dcim folder results: %s', results)
+  return results
 
 
 def pull_devices_hsv(serial_nums: list[str], output_path: str) -> list[str]:
@@ -610,13 +685,8 @@ def start_to_screen_shot(
     cmd = adb_commands.cmd_adb_screen_shot(s, file_name, output_path)
     commands.append(cmd)
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, commands)
-    # Consume the generator to actually execute the commands
-    result_list = list(results)
-    logger.info('Start to screen shot results: %s', result_list)
+  results = _execute_commands_parallel(commands, 'start_to_screen_shot')
+  logger.info('Start to screen shot results: %s', results)
 
 
 def start_to_record_android_devices(
@@ -641,15 +711,14 @@ def start_to_record_android_devices(
   logger.info(f'🎬 [START DEBUG] All commands: {commands}')
 
   try:
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=len(serial_nums)
-    ) as executor:
-      logger.info(f'🎬 [START DEBUG] Created ThreadPoolExecutor with {len(serial_nums)} workers')
-      results = executor.map(common.mp_run_command, commands)
-      # Keep the video must be recorded and exists.
-      result_list = list(results)  # Force consumption
-      logger.info(f'🎬 [START DEBUG] Recording commands completed. Results: {result_list}')
-      time.sleep(0.5)
+    logger.info(f'🎬 [START DEBUG] Executing recording commands on {len(serial_nums)} devices')
+    # Use mp_run_command for recording as it's non-blocking
+    results = []
+    for cmd in commands:
+      result = common.mp_run_command(cmd)
+      results.append(result)
+    logger.info(f'🎬 [START DEBUG] Recording commands completed. Results: {results}')
+    time.sleep(0.5)
 
   except Exception as e:
     logger.error(f'❌ [START DEBUG] Error starting recording: {e}')
@@ -680,25 +749,18 @@ def stop_to_screen_record_android_devices(
   logger.info(f'🔴 [MULTI-STOP DEBUG] Output path after normalization: {output_path}')
 
   try:
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=len(serial_nums)
-    ) as executor:
-      logger.info(f'🔴 [MULTI-STOP DEBUG] Created ThreadPoolExecutor with {len(serial_nums)} max workers')
+    logger.info(f'🔴 [MULTI-STOP DEBUG] Executing stop commands on {len(serial_nums)} devices')
 
-      results = executor.map(
-          lambda x: stop_to_screen_record_android_device(
-              x, file_name, output_path
-          ),
-          serial_nums,
-      )
-      logger.info('🔴 [MULTI-STOP DEBUG] executor.map called, consuming results...')
+    # Prepare function calls for parallel execution
+    functions = [stop_to_screen_record_android_device] * len(serial_nums)
+    args_list = [(serial, file_name, output_path) for serial in serial_nums]
 
-      # Force consumption of the generator to ensure all tasks complete
-      result_list = list(results)
-      logger.info(f'🔴 [MULTI-STOP DEBUG] All stop tasks completed. Results: {result_list}')
+    # Execute stop operations in parallel
+    results = _execute_functions_parallel(functions, args_list, 'stop_screen_record')
+    logger.info(f'🔴 [MULTI-STOP DEBUG] All stop tasks completed. Results: {results}')
 
   except Exception as e:
-    logger.error(f'❌ [MULTI-STOP DEBUG] Error in ThreadPoolExecutor: {e}')
+    logger.error(f'❌ [MULTI-STOP DEBUG] Error stopping recording: {e}')
     import traceback
     logger.error(f'❌ [MULTI-STOP DEBUG] Traceback: {traceback.format_exc()}')
     raise e
@@ -773,11 +835,8 @@ def _run_multiple_adb_commands(serial_nums: list[str], command_func) -> None:
   for s in serial_nums:
     all_commands.extend(command_func(s))
 
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=len(serial_nums)
-  ) as executor:
-    results = executor.map(common.run_command, all_commands)
-    logger.info('Command execution results: %s', results)
+  results = _execute_commands_parallel(all_commands, 'run_enlarge_log_buffer')
+  logger.info('Command execution results: %s', results)
 
 
 
@@ -796,6 +855,28 @@ def run_enlarge_log_buffer(serial_nums: list[str], size: str = '16M') -> None:
   logger.info(f'Enlarged log buffer to {size}.')
 
 
+def _get_device_property(serial_num: str, shell_command: str, default_value: str = 'Unknown') -> str:
+  """Get a single device property via ADB shell command.
+
+  Args:
+    serial_num: Device serial number
+    shell_command: Shell command to execute
+    default_value: Value to return on error
+
+  Returns:
+    Property value or default_value on error
+  """
+  try:
+    cmd = adb_commands.cmd_adb_shell(serial_num, shell_command)
+    result = common.run_command(cmd)
+    if result and result[0]:
+      return result[0].strip()
+  except Exception:
+    pass
+  return default_value
+
+
+@adb_device_operation(default_return={})
 def get_additional_device_info(serial_num: str) -> dict:
   """Get additional device information for enhanced display.
 
@@ -807,25 +888,9 @@ def get_additional_device_info(serial_num: str) -> dict:
   """
   additional_info = {}
 
-  # Screen density
-  try:
-    cmd = adb_commands.cmd_adb_shell(serial_num, 'wm density')
-    result = common.run_command(cmd)
-    if result and result[0]:
-      density = result[0].strip()
-      additional_info['screen_density'] = density
-  except Exception:
-    additional_info['screen_density'] = 'Unknown'
-
-  # Screen size
-  try:
-    cmd = adb_commands.cmd_adb_shell(serial_num, 'wm size')
-    result = common.run_command(cmd)
-    if result and result[0]:
-      size = result[0].strip()
-      additional_info['screen_size'] = size
-  except Exception:
-    additional_info['screen_size'] = 'Unknown'
+  # Screen density and size using unified property getter
+  additional_info['screen_density'] = _get_device_property(serial_num, 'wm density')
+  additional_info['screen_size'] = _get_device_property(serial_num, 'wm size')
 
   # Battery information - comprehensive battery data
   try:
@@ -902,15 +967,8 @@ def get_additional_device_info(serial_num: str) -> dict:
   if 'battery_dou_hours' not in additional_info:
     additional_info['battery_dou_hours'] = 'Unknown'
 
-  # CPU architecture
-  try:
-    cmd = adb_commands.cmd_adb_shell(serial_num, 'getprop ro.product.cpu.abi')
-    result = common.run_command(cmd)
-    if result and result[0]:
-      cpu = result[0].strip()
-      additional_info['cpu_arch'] = cpu
-  except Exception:
-    additional_info['cpu_arch'] = 'Unknown'
+  # CPU architecture using unified property getter
+  additional_info['cpu_arch'] = _get_device_property(serial_num, 'getprop ro.product.cpu.abi')
 
   return additional_info
 

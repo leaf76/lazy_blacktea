@@ -15,31 +15,85 @@ def get_adb_command() -> str:
     return 'adb'
 
 
-def cmd_adb_shell(serial_num: str, command: str) -> str:
+def _build_adb_command(serial_num: str = None, *command_parts) -> str:
+  """Build ADB command with proper prefix and device selection.
+
+  Args:
+    serial_num: Device serial number (optional)
+    *command_parts: Command parts to join
+
+  Returns:
+    Complete ADB command string
+  """
   adb_cmd = get_adb_command()
-  return f'{adb_cmd} -s {serial_num} shell {command}'
+  parts = [adb_cmd]
+
+  if serial_num:
+    parts.extend(['-s', serial_num])
+
+  parts.extend(command_parts)
+  return ' '.join(parts)
+
+
+def _build_adb_shell_command(serial_num: str, shell_command: str) -> str:
+  """Build ADB shell command.
+
+  Args:
+    serial_num: Device serial number
+    shell_command: Shell command to execute
+
+  Returns:
+    Complete ADB shell command string
+  """
+  return _build_adb_command(serial_num, 'shell', shell_command)
+
+
+def _build_setting_getter_command(serial_num: str, setting_key: str) -> str:
+  """Build command to get device setting.
+
+  Args:
+    serial_num: Device serial number
+    setting_key: Setting key to retrieve
+
+  Returns:
+    Complete ADB command to get setting
+  """
+  return _build_adb_shell_command(serial_num, f'settings get global {setting_key}')
+
+
+def _build_getprop_command(serial_num: str, property_key: str) -> str:
+  """Build command to get device property.
+
+  Args:
+    serial_num: Device serial number
+    property_key: Property key to retrieve
+
+  Returns:
+    Complete ADB command to get property
+  """
+  return _build_adb_shell_command(serial_num, f'getprop {property_key}')
+
+
+def cmd_adb_shell(serial_num: str, command: str) -> str:
+  return _build_adb_shell_command(serial_num, command)
 
 
 def cmd_get_adb_devices() -> str:
   # adb devices -l
   # ['adb', 'devices', '-l']
-  adb_cmd = get_adb_command()
-  return f'{adb_cmd} devices -l'
+  return _build_adb_command(None, 'devices', '-l')
 
 
 def cmd_get_android_build_fingerprint(serial_num: str) -> str:
-  adb_cmd = get_adb_command()
-  return f'{adb_cmd} -s {serial_num} shell getprop ro.build.fingerprint'
+  return _build_getprop_command(serial_num, 'ro.build.fingerprint')
 
 
 def cmd_kill_adb_server():
-  adb_cmd = get_adb_command()
-  return f'{adb_cmd} kill-server'
+  return _build_adb_command(None, 'kill-server')
 
 
 def cmd_start_adb_server():
-  adb_cmd = get_adb_command()
-  return f'{adb_cmd} start-server'
+  return _build_adb_command(None, 'start-server')
 
 
 def cmd_get_dump_device_ui_detail(serial_num):
@@ -52,15 +106,15 @@ def cmd_pull_the_dump_device_ui_detail(serial_num, output_path):
 
 
 def cmd_adb_root(serial_num):
-  return f'adb -s {serial_num} root'
+  return _build_adb_command(serial_num, 'root')
 
 
 def cmd_adb_reboot(serial_num: str):
-  return f'adb -s {serial_num} reboot'
+  return _build_adb_command(serial_num, 'reboot')
 
 
 def cmd_adb_install(serial_num: str, apk_path: str):
-  return f'adb -s {serial_num} install -d -r -g "{apk_path}"'
+  return _build_adb_command(serial_num, 'install', '-d', '-r', '-g', f'"{apk_path}"')
 
 def cmd_extact_discovery_service_info(serial_num, root_folder):
   return (
@@ -77,27 +131,27 @@ def cmd_get_android_api_level(serial_num: str) -> str:
   Returns:
   Command string.
   """
-  return f'adb -s {serial_num} shell getprop ro.build.version.sdk'
+  return _build_getprop_command(serial_num, 'ro.build.version.sdk')
 
 
 def cmd_get_android_version(serial_num):
-  return f'adb -s {serial_num} shell getprop ro.build.version.release'
+  return _build_getprop_command(serial_num, 'ro.build.version.release')
 
 
 def cmd_get_device_bluetooth(serial_num):
   # check the bluetooth is on/off
-  return f'adb -s {serial_num} shell settings get global bluetooth_on'
+  return _build_setting_getter_command(serial_num, 'bluetooth_on')
 
 
 def cmd_get_device_wifi(serial_num):
   # check the wifi is on/off
-  return f'adb -s {serial_num} shell settings get global wifi_on'
+  return _build_setting_getter_command(serial_num, 'wifi_on')
 
 def cmd_clear_device_logcat(serial_num) -> str:
   """Clears device logcat."""
   # adb -s $serial logcat -c
   # ['adb', '-s', serialNum, 'logcat', '-b', 'all', '-c']
-  return f'adb -s {serial_num} logcat -b all -c'
+  return _build_adb_command(serial_num, 'logcat', '-b', 'all', '-c')
 
 def cmd_get_device_logcat(serial_num, output_path) -> str:
   """Gets device logcat.

@@ -5,6 +5,7 @@ import logging
 import os
 import pathlib
 import subprocess
+from typing import Optional
 
 
 def get_logger(name: str = 'my_logger') -> logging.Logger:
@@ -169,6 +170,28 @@ def sp_run_command(command, ignore_index=0) -> list[str]:
     _logger.warning('Command process error %s', e.stderr)
   _logger.debug('Command result: %s', listing_result)
   return listing_result
+
+
+def validate_and_create_output_path(output_path: str) -> Optional[str]:
+  """Validate and normalize output path, creating it if necessary.
+
+  Args:
+    output_path: Path to validate and potentially create
+
+  Returns:
+    Normalized path if valid, None if invalid
+  """
+  if not output_path or not output_path.strip():
+    return None
+
+  # Validate and normalize using common utilities
+  if not check_exists_dir(output_path):
+    normalized_path = make_gen_dir_path(output_path)
+    if not normalized_path:
+      return None
+    return normalized_path
+
+  return output_path
 
 
 def run_command(command, ignore_index=0) -> list[str]:

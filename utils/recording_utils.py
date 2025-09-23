@@ -200,17 +200,7 @@ def validate_recording_path(output_path: str) -> Optional[str]:
     Returns:
         Normalized path if valid, None if invalid
     """
-    if not output_path or not output_path.strip():
-        return None
-
-    # Validate and normalize using common utilities
-    if not common.check_exists_dir(output_path):
-        normalized_path = common.make_gen_dir_path(output_path)
-        if not normalized_path:
-            return None
-        return normalized_path
-
-    return output_path
+    return common.validate_and_create_output_path(output_path)
 
 
 def get_recording_quick_actions() -> List[dict]:
