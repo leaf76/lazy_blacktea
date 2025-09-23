@@ -59,8 +59,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          python3-pyqt6 \
-          python3-pyqt6.qtwidgets \
           python3-dev \
           build-essential \
           libgl1-mesa-dev \
@@ -71,7 +69,16 @@ jobs:
           libxcb-randr0 \
           libxcb-render-util0 \
           libxcb-xinerama0 \
-          libxcb-xfixes0
+          libxcb-xfixes0 \
+          libxcb-shape0 \
+          libxcb-sync1 \
+          libxcb-shm0 \
+          libxcb-render0 \
+          libxcb-util1 \
+          libxcb-glx0 \
+          libxcb-dri2-0 \
+          libxcb-dri3-0 \
+          libxcb-present0
 
     - name: Install system dependencies (macOS)
       if: startsWith(matrix.platform, 'macos')
