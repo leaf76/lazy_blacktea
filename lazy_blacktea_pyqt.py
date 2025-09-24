@@ -64,7 +64,6 @@ from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager
-from ui.async_device_manager import AsyncDeviceManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -943,8 +942,10 @@ class WindowMain(QMainWindow):
         self.recording_manager = RecordingManager()
         self.panels_manager = PanelsManager(self)
 
-        # Connect device manager refresh signal to main UI update
-        self.device_manager.refresh_thread.devices_updated.connect(self.update_device_list)
+        # Connect device manager signals to main UI update
+        self.device_manager.device_found.connect(self._on_device_found_from_manager)
+        self.device_manager.device_lost.connect(self._on_device_lost_from_manager)
+        self.device_manager.status_updated.connect(self._on_device_status_updated)
 
         # Setup global error handler and exception hook
         global_error_handler.parent = self
@@ -978,9 +979,6 @@ class WindowMain(QMainWindow):
         self.logging_manager = LoggingManager(self)
         self.diagnostics_manager = DiagnosticsManager(self)
 
-        # Initialize async device manager for performance optimization
-        self.async_device_manager = AsyncDeviceManager(self)
-        self._setup_async_device_signals()
 
         self.flag_actions = {}
 
@@ -1119,13 +1117,10 @@ class WindowMain(QMainWindow):
             logger.warning("No suitable app icon found")
 
     def _setup_async_device_signals(self):
-        """設置異步設備管理器的信號連接（漸進式版）"""
-        self.async_device_manager.device_discovery_started.connect(self._on_async_discovery_started)
-        self.async_device_manager.device_basic_loaded.connect(self._on_async_device_basic_loaded)
-        self.async_device_manager.device_detailed_loaded.connect(self._on_async_device_detailed_loaded)
-        self.async_device_manager.device_load_progress.connect(self._on_async_device_progress)
-        self.async_device_manager.basic_devices_ready.connect(self._on_async_basic_devices_ready)
-        self.async_device_manager.all_devices_ready.connect(self._on_async_all_devices_ready)
+        """設置異步設備管理器的信號連接（通過DeviceManager）"""
+        # Note: Signal connections are now handled by DeviceManager
+        # No direct AsyncDeviceManager signals needed in main window
+        pass
 
 
 
@@ -1605,8 +1600,8 @@ class WindowMain(QMainWindow):
     def set_refresh_interval(self, interval: int):
         """Set device refresh interval."""
         self.refresh_interval = interval
-        if hasattr(self, 'device_refresh_thread'):
-            self.device_refresh_thread.set_refresh_interval(interval)
+        if hasattr(self, 'device_manager'):
+            self.device_manager.set_refresh_interval(interval)
         logger.debug(f'Refresh interval set to {interval} seconds')
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
@@ -2900,141 +2895,6 @@ Build Fingerprint: {device.build_fingerprint}'''
         except Exception as e:
             print(f'Error in _on_console_output: {e}')
 
-    # === 異步設備管理器事件處理 ===
-    def _on_async_discovery_started(self):
-        """處理異步設備發現開始事件"""
-        logger.info('🚀 漸進式設備發現開始')
-        if hasattr(self, 'status_bar'):
-            self.status_bar.showMessage('🚀 Loading devices progressively...', 0)
-
-        # 清空現有設備列表（準備重新加載）
-        self.device_dict.clear()
-
-    def _on_async_device_basic_loaded(self, serial: str, device_info):
-        """處理設備基本信息加載完成事件（立即顯示）"""
-        logger.debug(f'📱 設備基本信息: {serial} - {device_info.device_model}')
-
-        # 更新設備字典
-        self.device_dict[serial] = device_info
-
-        # 立即更新UI顯示設備（帶加載中狀態）
-        self._update_device_in_ui_immediately(serial, device_info)
-
-        # 發送到控制台
-        self.write_to_console(f'📱 {serial} ({device_info.device_model}) - 詳細信息加載中...')
-
-    def _on_async_device_detailed_loaded(self, serial: str, device_info):
-        """處理設備詳細信息加載完成事件（更新顯示）"""
-        logger.debug(f'📋 設備詳細信息完成: {serial}')
-
-        # 更新設備字典
-        self.device_dict[serial] = device_info
-
-        # 更新UI移除加載中狀態
-        self._update_device_detailed_in_ui(serial, device_info)
-
-        # 發送到控制台
-        android_info = f'Android {device_info.android_version}'
-        self.write_to_console(f'✅ {serial} 詳細信息已加載 ({android_info})')
-
-    def _on_async_basic_devices_ready(self, device_dict: dict):
-        """處理基本設備信息全部加載完成"""
-        logger.info(f'📱 基本設備信息加載完成: {len(device_dict)} 個設備')
-        if hasattr(self, 'status_bar'):
-            self.status_bar.showMessage(f'📱 {len(device_dict)} devices ready, loading details...', 0)
-
-    def _on_async_device_progress(self, current: int, total: int, message: str):
-        """處理設備加載進度更新（簡化版）"""
-        if hasattr(self, 'status_bar') and current % max(1, total // 5) == 0:  # 減少更新頻率
-            self.status_bar.showMessage(f'📊 Loading devices... ({current}/{total})', 0)
-
-    def _on_async_all_devices_ready(self, device_dict: dict):
-        """處理所有設備加載完成事件（簡化版）"""
-        device_count = len(device_dict)
-        logger.info(f'✅ 高效異步設備加載完成: {device_count} 個設備')
-
-        # 更新設備字典
-        self.device_dict.update(device_dict)
-
-        # 一次性刷新所有UI組件
-        self._refresh_all_device_ui()
-
-        # 清除狀態欄信息
-        if hasattr(self, 'status_bar'):
-            if device_count > 0:
-                self.status_bar.showMessage(f'✅ {device_count} devices ready', 3000)
-            else:
-                self.status_bar.showMessage('⚠️ No devices found', 3000)
-
-        # 簡化控制台輸出
-        if device_count > 0:
-            self.write_to_console(f'🚀 Efficiently loaded {device_count} devices')
-        else:
-            self.write_to_console('⚠️ No devices found')
-
-    def _update_device_in_ui_immediately(self, serial: str, device_info):
-        """立即在UI中顯示設備基本信息（帶加載中狀態）"""
-        try:
-            # 刷新設備選擇框（立即顯示）
-            if hasattr(self, 'device_combobox') and self.device_combobox:
-                # 檢查是否已存在
-                existing_index = -1
-                for i in range(self.device_combobox.count()):
-                    if self.device_combobox.itemData(i) == serial:
-                        existing_index = i
-                        break
-
-                display_text = f'{serial} ({device_info.device_model}) 🔄'
-                if existing_index >= 0:
-                    # 更新現有項目
-                    self.device_combobox.setItemText(existing_index, display_text)
-                else:
-                    # 添加新項目
-                    self.device_combobox.addItem(display_text, serial)
-
-            logger.debug(f'UI立即更新：{serial} - {device_info.device_model}')
-
-        except Exception as e:
-            logger.error(f'立即UI更新失敗: {serial} - {e}')
-
-    def _update_device_detailed_in_ui(self, serial: str, device_info):
-        """在UI中更新設備詳細信息（移除加載中狀態）"""
-        try:
-            # 更新設備選擇框（移除加載中圖標）
-            if hasattr(self, 'device_combobox') and self.device_combobox:
-                for i in range(self.device_combobox.count()):
-                    if self.device_combobox.itemData(i) == serial:
-                        display_text = f'{serial} ({device_info.device_model})'
-                        self.device_combobox.setItemText(i, display_text)
-                        break
-
-            logger.debug(f'UI詳細更新完成：{serial} - Android {device_info.android_version}')
-
-        except Exception as e:
-            logger.error(f'詳細UI更新失敗: {serial} - {e}')
-
-    def _refresh_all_device_ui(self):
-        """一次性刷新所有設備UI組件（高效版）"""
-        try:
-            # 刷新設備選擇框
-            if hasattr(self, 'device_combobox') and self.device_combobox:
-                self.device_combobox.clear()
-                for serial, info in self.device_dict.items():
-                    display_text = f'{serial} ({info.device_model})'
-                    self.device_combobox.addItem(display_text, serial)
-
-            # 刷新設備複選框（如果使用複選框界面）
-            if hasattr(self, 'device_checkboxes_layout'):
-                self._refresh_device_checkboxes()
-
-            # 更新群組列表
-            if hasattr(self, 'update_groups_listbox'):
-                self.update_groups_listbox()
-
-            logger.debug(f'UI刷新完成：{len(self.device_dict)} 個設備')
-
-        except Exception as e:
-            logger.error(f'批量刷新設備UI失敗: {e}')
 
     def _clear_device_recording(self, serial):
         """Clear recording state for a specific device."""
@@ -3518,7 +3378,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
             # Load refresh interval from new config (set minimum 10 seconds for packaged apps)
             self.refresh_interval = max(10, config.device.refresh_interval)
-            self.device_manager.refresh_thread.set_refresh_interval(self.refresh_interval)
+            self.device_manager.set_refresh_interval(self.refresh_interval)
 
             # Load UI scale from new config
             self.set_ui_scale(config.ui.ui_scale)
@@ -3585,16 +3445,34 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             # Stop any active recordings
             self.recording_manager.stop_recording()
 
-        # Clean up old threads aggressively for immediate shutdown
-        if hasattr(self, 'device_refresh_thread'):
-            self.device_refresh_thread.stop()
-            # Use very short timeout for immediate shutdown experience
-            if not self.device_refresh_thread.wait(300):  # 300ms timeout for immediate feel
-                logger.debug('Device refresh thread terminated immediately for fast shutdown')
-                self.device_refresh_thread.terminate()
+        # Clean up device management threads aggressively for immediate shutdown
+        if hasattr(self, 'device_manager'):
+            self.device_manager.cleanup()
 
         logger.info('Application shutdown complete')
         event.accept()
+
+    def _on_device_found_from_manager(self, serial: str, device_info):
+        """處理從DeviceManager發來的新設備發現事件"""
+        logger.info(f'Device found from manager: {serial} - {device_info.device_model}')
+        # 更新設備字典
+        self.device_dict[serial] = device_info
+        # 觸發完整的UI更新（包括複選框）
+        self.update_device_list(self.device_dict)
+
+    def _on_device_lost_from_manager(self, serial: str):
+        """處理從DeviceManager發來的設備丟失事件"""
+        logger.info(f'Device lost from manager: {serial}')
+        # 從設備字典中移除
+        if serial in self.device_dict:
+            del self.device_dict[serial]
+        # 觸發完整的UI更新
+        self.update_device_list(self.device_dict)
+
+    def _on_device_status_updated(self, status: str):
+        """處理從DeviceManager發來的狀態更新事件"""
+        if hasattr(self, 'status_bar'):
+            self.status_bar.showMessage(status, 2000)
 
 
 def main():

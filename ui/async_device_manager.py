@@ -14,7 +14,7 @@ import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer
 
 from utils import adb_tools, common, adb_models
 
@@ -186,6 +186,12 @@ class AsyncDeviceManager(QObject):
         self.max_cache_size = 50  # 最大緩存設備數
         self.detailed_loading_enabled = True
 
+        # 定時刷新設置
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._periodic_refresh)
+        self.refresh_interval = 10  # 默認10秒刷新間隔
+        self.auto_refresh_enabled = True
+
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True):
         """開始異步設備發現"""
         # force_reload parameter kept for compatibility but not currently used
@@ -239,7 +245,7 @@ class AsyncDeviceManager(QObject):
         """快速獲取設備序號列表"""
         try:
             # 只執行基本的設備列舉，不獲取詳細信息
-            result = common.run_command(['adb', 'devices'], timeout_seconds=5)
+            result = common.run_command('adb devices')
             device_serials = []
 
             for line in result:
@@ -275,13 +281,17 @@ class AsyncDeviceManager(QObject):
         # 更新設備信息
         if serial in self.device_cache:
             device_info = self.device_cache[serial]
-            # 更新詳細信息
+            # 更新詳細信息（注意字段名稱匹配）
             device_info.wifi_status = detailed_info.get('wifi_status')
             device_info.bluetooth_status = detailed_info.get('bluetooth_status')
-            device_info.android_version = detailed_info.get('android_version', 'Unknown')
+            device_info.android_ver = detailed_info.get('android_version', 'Unknown')  # 注意：android_ver 不是 android_version
             device_info.android_api_level = detailed_info.get('android_api_level', 'Unknown')
             device_info.gms_version = detailed_info.get('gms_version', 'Unknown')
             device_info.build_fingerprint = detailed_info.get('build_fingerprint', 'Unknown')
+
+            # 更新 WiFi 和藍牙狀態的布爾字段（UI 中使用的）
+            device_info.wifi_is_on = detailed_info.get('wifi_status') == 1
+            device_info.bt_is_on = detailed_info.get('bluetooth_status') == 1
 
             # 發送更新信號
             self.device_detailed_loaded.emit(serial, device_info)
@@ -339,7 +349,45 @@ class AsyncDeviceManager(QObject):
         self.device_progress.clear()
         logger.info("設備緩存已清空")
 
+    def start_periodic_refresh(self):
+        """開始定時刷新"""
+        if self.auto_refresh_enabled and not self.refresh_timer.isActive():
+            self.refresh_timer.start(self.refresh_interval * 1000)  # 轉換為毫秒
+            logger.info(f"定時刷新已啟動，間隔: {self.refresh_interval}秒")
+
+    def stop_periodic_refresh(self):
+        """停止定時刷新"""
+        if self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+            logger.info("定時刷新已停止")
+
+    def set_refresh_interval(self, interval: int):
+        """設置刷新間隔"""
+        self.refresh_interval = max(5, interval)  # 最小5秒間隔
+        if self.refresh_timer.isActive():
+            self.refresh_timer.setInterval(self.refresh_interval * 1000)
+        logger.info(f"刷新間隔設置為: {self.refresh_interval}秒")
+
+    def set_auto_refresh_enabled(self, enabled: bool):
+        """設置是否啟用自動刷新"""
+        self.auto_refresh_enabled = enabled
+        if enabled:
+            self.start_periodic_refresh()
+        else:
+            self.stop_periodic_refresh()
+        logger.info(f"自動刷新: {'啟用' if enabled else '停用'}")
+
+    def _periodic_refresh(self):
+        """定時刷新回調"""
+        logger.debug("執行定時設備刷新")
+        try:
+            # 只進行基本信息的快速刷新，避免過度負載
+            self.start_device_discovery(force_reload=False, load_detailed=False)
+        except Exception as e:
+            logger.error(f"定時刷新失敗: {e}")
+
     def cleanup(self):
         """清理資源"""
+        self.stop_periodic_refresh()
         self.stop_current_loading()
         self.clear_cache()
