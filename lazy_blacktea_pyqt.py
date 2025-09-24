@@ -58,14 +58,14 @@ from ui.device_manager import DeviceManager
 from ui.panels_manager import PanelsManager
 from ui.device_search_manager import DeviceSearchManager
 from ui.ui_factory import UIFactory, UIInspectorFactory
+from ui.device_operations_manager import DeviceOperationsManager
+from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
+from ui.command_execution_manager import CommandExecutionManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
 from utils.recording_utils import RecordingManager, validate_recording_path
-from utils.file_generation_utils import (
-    generate_bug_report_batch, generate_device_discovery_file,
-    validate_file_output_path
-)
+# File generation utilities are now handled by FileOperationsManager
 from utils.debounced_refresh import (
     DeviceListDebouncedRefresh, BatchedUIUpdater, PerformanceOptimizedRefresh
 )
@@ -1008,6 +1008,15 @@ class WindowMain(QMainWindow):
         # Initialize UI factory for creating UI components
         self.ui_factory = UIFactory(parent_window=self)
 
+        # Initialize file operations and command execution managers
+        self.file_operations_manager = FileOperationsManager(self)
+        self.command_history_manager = CommandHistoryManager(self)
+        self.ui_hierarchy_manager = UIHierarchyManager(self)
+        self.command_execution_manager = CommandExecutionManager(self)
+
+        # Initialize device operations manager
+        self.device_operations_manager = DeviceOperationsManager(parent_window=self)
+
         self.flag_actions = {}
 
         # Multi-device operation state management
@@ -1024,10 +1033,19 @@ class WindowMain(QMainWindow):
         self.file_generation_completed_signal.connect(self._on_file_generation_completed)
         self.console_output_signal.connect(self._on_console_output)
 
-        # Connect panels_manager signals
-        self.panels_manager.screenshot_requested.connect(self.take_screenshot)
-        self.panels_manager.recording_start_requested.connect(self.start_screen_record)
-        self.panels_manager.recording_stop_requested.connect(self.stop_screen_record)
+        # Connect device operations manager signals
+        self.device_operations_manager.recording_stopped_signal.connect(self._on_recording_stopped)
+        self.device_operations_manager.recording_state_cleared_signal.connect(self._on_recording_state_cleared)
+        self.device_operations_manager.screenshot_completed_signal.connect(self._on_screenshot_completed)
+        self.device_operations_manager.operation_completed_signal.connect(self._on_device_operation_completed)
+
+        # Connect file operations manager signals
+        self.file_operations_manager.file_generation_completed_signal.connect(self._on_file_generation_completed)
+
+        # Connect panels_manager signals to device operations manager
+        self.panels_manager.screenshot_requested.connect(self.device_operations_manager.take_screenshot)
+        self.panels_manager.recording_start_requested.connect(self.device_operations_manager.start_screen_record)
+        self.panels_manager.recording_stop_requested.connect(self.device_operations_manager.stop_screen_record)
 
         self.user_scale = 1.0
         self.scrcpy_available = self._check_scrcpy_available()  # Check if scrcpy is installed
@@ -1413,9 +1431,8 @@ class WindowMain(QMainWindow):
 
         layout.addStretch()
 
-        # Initialize command history
-        self.command_history = []
-        self.load_command_history_from_config()
+        # Initialize command history display
+        self.update_history_display()
 
         tab_widget.addTab(tab, 'Shell Commands')
 
@@ -2790,6 +2807,15 @@ Build Fingerprint: {device.build_fingerprint}'''
         self.update_recording_status()
         logger.info(f'🔄 [SIGNAL] _on_recording_state_cleared completed for {device_serial}')
 
+    def _on_device_operation_completed(self, operation, device_serial, success, message):
+        """Handle device operation completed signal."""
+        status_icon = "✅" if success else "❌"
+        self.write_to_console(f"{status_icon} {operation} on device {device_serial}: {message}")
+
+        if not success:
+            # Show error for failed operations
+            self.show_error(f"{operation.capitalize()} Failed", f"Device {device_serial}: {message}")
+
     def _on_screenshot_completed(self, output_path, device_count, device_models):
         """Handle screenshot completed signal in main thread."""
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed executing in main thread')
@@ -3185,42 +3211,15 @@ Build Fingerprint: {device.build_fingerprint}'''
     # Shell commands
     @ensure_devices_selected
     def run_shell_command(self):
-        """Run shell command on selected devices."""
+        """Run shell command on selected devices using command execution manager."""
         command = self.shell_cmd_edit.text().strip()
-        if not command:
-            self.show_error('Error', 'Please enter a command.')
-            return
-
         devices = self.get_checked_devices()
-        if not devices:
-            self.show_error('Error', 'No devices selected.')
-            return
-
-        serials = [d.device_serial_num for d in devices]
-        device_count = len(devices)
-
-        logger.info(f'Running shell command "{command}" on {device_count} device(s): {serials}')
-        self.show_info('Shell Command', f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.')
-
-        def shell_wrapper():
-            try:
-                # The function expects a list of serials, not individual serials
-                adb_tools.run_adb_shell_command(serials, command)
-                QTimer.singleShot(0, lambda: logger.info(f'Shell command "{command}" completed on all devices'))
-            except Exception as e:
-                raise e  # Re-raise to be handled by run_in_thread
-
-        self.run_in_thread(shell_wrapper)
+        self.command_execution_manager.run_shell_command(command, devices)
 
     # Enhanced command execution methods
     def add_template_command(self, command):
-        """Add a template command to the batch commands area."""
-        current_text = self.batch_commands_edit.toPlainText()
-        if current_text:
-            new_text = current_text + '\n' + command
-        else:
-            new_text = command
-        self.batch_commands_edit.setPlainText(new_text)
+        """Add a template command to the batch commands area using command execution manager."""
+        self.command_execution_manager.add_template_command(command)
 
     @ensure_devices_selected
     def run_single_command(self):
@@ -3249,66 +3248,16 @@ Build Fingerprint: {device.build_fingerprint}'''
 
     @ensure_devices_selected
     def run_batch_commands(self):
-        """Run all commands simultaneously."""
+        """Run all commands simultaneously using command execution manager."""
         commands = self.get_valid_commands()
-        if not commands:
-            self.show_error('Error', 'No valid commands found. Please enter commands in the Batch Commands area.')
-            return
-
         devices = self.get_checked_devices()
-        serials = [d.device_serial_num for d in devices]
-        device_count = len(devices)
-
-        self.show_info('Batch Commands',
-                      f'Running {len(commands)} commands simultaneously on {device_count} device(s):\n\n' +
-                      '\n'.join(f'• {cmd}' for cmd in commands[:5]) +
-                      (f'\n... and {len(commands)-5} more' if len(commands) > 5 else ''))
-
-        for command in commands:
-            self.add_to_history(command)
-            def shell_wrapper(cmd=command):
-                try:
-                    def log_results(results):
-                        # Direct console output using signal system
-                        self.write_to_console(f'🚀 Executing: {cmd}')
-                        # Direct call to result logging
-                        self.log_command_results(cmd, serials, results)
-
-                    adb_tools.run_adb_shell_command(serials, cmd, callback=log_results)
-                except Exception as e:
-                    QTimer.singleShot(0, lambda c=cmd: logger.warning(f'Command failed: {c} - {e}'))
-
-            self.run_in_thread(shell_wrapper)
+        self.command_execution_manager.execute_batch_commands(commands, devices)
 
 
     def execute_single_command(self, command):
-        """Execute a single command and add to history."""
+        """Execute a single command and add to history using command execution manager."""
         devices = self.get_checked_devices()
-        serials = [d.device_serial_num for d in devices]
-        device_count = len(devices)
-
-        logger.info(f'🚀 Starting command execution: "{command}" on {device_count} device(s)')
-        self.show_info('Single Command', f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.')
-
-        self.add_to_history(command)
-
-        def shell_wrapper():
-            try:
-                # Use callback to ensure results are logged to console
-                def log_results(results):
-                    # Direct console output using signal system
-                    self.write_to_console('📨 Callback received, processing results...')
-                    # Direct call to result logging - no timer needed
-                    self.log_command_results(command, serials, results)
-
-                logger.info(f'📞 Calling adb_tools.run_adb_shell_command with callback')
-                adb_tools.run_adb_shell_command(serials, command, callback=log_results)
-                QTimer.singleShot(0, lambda: logger.info(f'✅ Single command "{command}" execution completed'))
-            except Exception as e:
-                logger.error(f'❌ Command execution failed: {e}')
-                raise e
-
-        self.run_in_thread(shell_wrapper)
+        self.command_execution_manager.execute_single_command(command, devices)
 
     def log_command_results(self, command, serials, results):
         """Log command results to console with proper formatting."""
@@ -3384,39 +3333,19 @@ Build Fingerprint: {device.build_fingerprint}'''
 
 
     def get_valid_commands(self):
-        """Extract valid commands from batch text area."""
+        """Extract valid commands from batch text area using command execution manager."""
         text = self.batch_commands_edit.toPlainText().strip()
-        if not text:
-            return []
-
-        lines = text.split('\n')
-        commands = []
-
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                commands.append(line)
-
-        return commands
+        return self.command_execution_manager.get_valid_commands_from_text(text)
 
     def add_to_history(self, command):
-        """Add command to history."""
-        if command not in self.command_history:
-            self.command_history.append(command)
-            # Keep only last 50 commands
-            if len(self.command_history) > 50:
-                self.command_history = self.command_history[-50:]
-            self.update_history_display()
-            # Auto-save to config
-            logger.info(f'Adding command to history: {command}')
-            self.save_command_history_to_config()
-        else:
-            logger.info(f'Command already in history: {command}')
+        """Add command to history using command history manager."""
+        self.command_history_manager.add_to_history(command)
+        self.update_history_display()
 
     def update_history_display(self):
         """Update the history list widget."""
         self.command_history_list.clear()
-        for command in reversed(self.command_history):  # Show most recent first
+        for command in reversed(self.command_history_manager.command_history):  # Show most recent first
             self.command_history_list.addItem(command)
 
     def load_from_history(self, item):
@@ -3430,92 +3359,26 @@ Build Fingerprint: {device.build_fingerprint}'''
         self.batch_commands_edit.setPlainText(new_text)
 
     def clear_command_history(self):
-        """Clear command history."""
-        self.command_history.clear()
-        self.update_history_display()
-        # Auto-save to config after clearing
-        self.save_command_history_to_config()
+        """Clear command history using command history manager."""
+        self.command_history_manager.clear_history()
 
     def export_command_history(self):
-        """Export command history to file."""
-        if not self.command_history:
-            self.show_info('Export History', 'No commands in history to export.')
-            return
-
-        filename, _ = QFileDialog.getSaveFileName(
-            self, 'Export Command History',
-            f'adb_commands_{common.current_format_time_utc()}.txt',
-            'Text Files (*.txt);;All Files (*)'
-        )
-
-        if filename:
-            try:
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write('# ADB Command History\n')
-                    f.write(f'# Generated: {common.timestamp_time()}\n\n')
-                    for command in self.command_history:
-                        f.write(f'{command}\n')
-
-                self.show_info('Export History', f'Command history exported to:\n{filename}')
-            except Exception as e:
-                self.show_error('Export Error', f'Failed to export history:\n{e}')
+        """Export command history to file using command history manager."""
+        self.command_history_manager.export_command_history()
 
     def import_command_history(self):
-        """Import command history from file."""
-        filename, _ = QFileDialog.getOpenFileName(
-            self, 'Import Command History', '',
-            'Text Files (*.txt);;All Files (*)'
-        )
-
-        if filename:
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-
-                loaded_commands = []
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        loaded_commands.append(line)
-
-                if loaded_commands:
-                    self.command_history.extend(loaded_commands)
-                    # Remove duplicates while preserving order
-                    seen = set()
-                    self.command_history = [x for x in self.command_history if not (x in seen or seen.add(x))]
-                    # Keep only last 50 commands
-                    if len(self.command_history) > 50:
-                        self.command_history = self.command_history[-50:]
-
-                    self.update_history_display()
-                    # Auto-save to config after importing
-                    self.save_command_history_to_config()
-                    self.show_info('Import History', f'Imported {len(loaded_commands)} commands from:\n{filename}')
-                else:
-                    self.show_info('Import History', 'No valid commands found in file.')
-
-            except Exception as e:
-                self.show_error('Import Error', f'Failed to import history:\n{e}')
+        """Import command history from file using command history manager."""
+        self.command_history_manager.import_command_history()
 
     def load_command_history_from_config(self):
-        """Load command history from config file."""
-        try:
-            config_data = json_utils.read_config_json()
-            if 'command_history' in config_data:
-                self.command_history = config_data['command_history'][-50:]  # Keep only last 50
-                self.update_history_display()
-        except Exception:
-            self.command_history = []
+        """Load command history from config file using command history manager."""
+        # This method is now handled by the command history manager during initialization
+        pass
 
     def save_command_history_to_config(self):
-        """Save command history to config file."""
-        try:
-            config_data = json_utils.read_config_json()
-            config_data['command_history'] = self.command_history
-            json_utils.save_config_json(config_data)
-            logger.info(f'Command history auto-saved ({len(self.command_history)} commands)')
-        except Exception as e:
-            logger.warning(f'Failed to save command history to config: {e}')
+        """Save command history to config file using command history manager."""
+        # This method is now handled by the command history manager automatically
+        pass
 
     # scrcpy functionality
     @ensure_devices_selected
@@ -3730,153 +3593,30 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     # File generation methods
     @ensure_devices_selected
     def generate_android_bug_report(self):
-        """Generate Android bug report using utils."""
-        output_path = self.file_gen_output_path_edit.text().strip()
-
-        # Validate output path using utils
-        validated_path = validate_file_output_path(output_path)
-        if not validated_path:
-            self.error_handler.handle_error(ErrorCode.FILE_NOT_FOUND,
-                                           'Please select a valid file generation output directory first.')
-            return
-
+        """Generate Android bug report using file operations manager."""
         devices = self.get_checked_devices()
-
-        # Show progress notification
-        self.error_handler.show_info('📊 Generating Bug Reports',
-                                   f'Generating Android bug reports for {len(devices)} device(s)...\n\n'
-                                   f'📁 Saving to: {validated_path}\n\n'
-                                   f'Please wait, this may take a while...')
-
-        # Enhanced callback with error handling for Samsung and other device issues
-        def bug_report_callback(operation_name, output_path, device_count, icon):
-            self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
-
-        # Enhanced error-aware generation
-        def generation_wrapper():
-            try:
-                generate_bug_report_batch(devices, validated_path, bug_report_callback)
-            except Exception as e:
-                # Handle Samsung and other device-specific failures
-                QTimer.singleShot(0, lambda: self.show_error(
-                    '🐛 Bug Report Generation Failed',
-                    f'Failed to generate bug reports for some devices.\n\n'
-                    f'Error: {str(e)}\n\n'
-                    f'Common causes:\n'
-                    f'• Samsung devices may require special permissions\n'
-                    f'• Device may not support bug report generation\n'
-                    f'• Insufficient storage space on device\n'
-                    f'• Device disconnected during process\n'
-                    f'• Root access required for some devices\n\n'
-                    f'Please check:\n'
-                    f'1. Enable "USB debugging (Security settings)"\n'
-                    f'2. Grant all requested permissions\n'
-                    f'3. Ensure device has sufficient storage\n'
-                    f'4. Try with individual devices if multiple selected'
-                ))
-
-        # Run in background thread with error handling
-        threading.Thread(target=generation_wrapper, daemon=True).start()
+        output_path = self.file_gen_output_path_edit.text().strip()
+        self.file_operations_manager.generate_android_bug_report(devices, output_path)
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):
-        """Generate device discovery file using utils."""
-        output_path = self.file_gen_output_path_edit.text().strip()
-
-        # Validate output path using utils
-        validated_path = validate_file_output_path(output_path)
-        if not validated_path:
-            self.error_handler.handle_error(ErrorCode.FILE_NOT_FOUND,
-                                           'Please select a valid file generation output directory first.')
-            return
-
+        """Generate device discovery file using file operations manager."""
         devices = self.get_checked_devices()
-
-        # Show progress notification
-        self.error_handler.show_info('🔍 Generating Discovery File',
-                                   f'Extracting device discovery information for {len(devices)} device(s)...\n\n'
-                                   f'📁 Saving to: {validated_path}\n\n'
-                                   f'Please wait...')
-
-        # Use file generation utils with callback
-        def discovery_callback(operation_name, output_path, device_count, icon):
-            self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
-
-        generate_device_discovery_file(devices, validated_path, discovery_callback)
+        output_path = self.file_gen_output_path_edit.text().strip()
+        self.file_operations_manager.generate_device_discovery_file(devices, output_path)
 
     @ensure_devices_selected
     def pull_device_dcim_with_folder(self):
-        """Pull DCIM folder from devices."""
-        output_path = self.file_gen_output_path_edit.text().strip()
-        if not output_path:
-            self.show_error('Error', 'Please select a file generation output directory first.')
-            return
-
-        # Validate and normalize output path using common.py
-        if not common.check_exists_dir(output_path):
-            normalized_path = common.make_gen_dir_path(output_path)
-            if not normalized_path:
-                self.show_error('Error', 'Invalid file generation output directory path.')
-                return
-            output_path = normalized_path
-
+        """Pull DCIM folder from devices using file operations manager."""
         devices = self.get_checked_devices()
-        serials = [d.device_serial_num for d in devices]
-        device_count = len(devices)
-
-        # Show progress notification
-        self.show_info('📷 Pulling DCIM Folders',
-                      f'Pulling DCIM folders from {device_count} device(s)...\n\n'
-                      f'📁 Saving to: {output_path}\n\n'
-                      f'This may take some time depending on the number of photos and videos...')
-
-        def dcim_wrapper():
-            try:
-                adb_tools.pull_device_dcim(serials, output_path)
-                # Emit completion signal
-                self.file_generation_completed_signal.emit('DCIM Pull', output_path, device_count, '📷')
-            except Exception as e:
-                raise e  # Re-raise to be handled by run_in_thread
-
-        self.run_in_thread(dcim_wrapper)
-        logger.info(f'Pulling DCIM folders from {device_count} devices: {serials}')
+        output_path = self.file_gen_output_path_edit.text().strip()
+        self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
 
     @ensure_devices_selected
     def dump_device_hsv(self):
-        """Dump device UI hierarchy."""
+        """Dump device UI hierarchy using UI hierarchy manager."""
         output_path = self.file_gen_output_path_edit.text().strip()
-        if not output_path:
-            self.show_error('Error', 'Please select a file generation output directory first.')
-            return
-
-        # Validate and normalize output path using common.py
-        if not common.check_exists_dir(output_path):
-            normalized_path = common.make_gen_dir_path(output_path)
-            if not normalized_path:
-                self.show_error('Error', 'Invalid file generation output directory path.')
-                return
-            output_path = normalized_path
-
-        devices = self.get_checked_devices()
-        serials = [d.device_serial_num for d in devices]
-        device_count = len(devices)
-
-        # Show progress notification
-        self.show_info('📱 Dumping UI Hierarchy',
-                      f'Dumping UI hierarchy for {device_count} device(s)...\n\n'
-                      f'📁 Saving to: {output_path}\n\n'
-                      f'Please wait...')
-
-        def hsv_wrapper():
-            try:
-                adb_tools.pull_devices_hsv(serials, output_path)
-                # Emit completion signal
-                self.file_generation_completed_signal.emit('UI Hierarchy Dump', output_path, device_count, '📱')
-            except Exception as e:
-                raise e  # Re-raise to be handled by run_in_thread
-
-        self.run_in_thread(hsv_wrapper)
-        logger.info(f'Dumping UI hierarchy for {device_count} devices: {serials}')
+        self.ui_hierarchy_manager.export_hierarchy(output_path)
 
     @ensure_devices_selected
     def launch_ui_inspector(self):
