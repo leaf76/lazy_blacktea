@@ -1433,7 +1433,6 @@ class WindowMain(QMainWindow):
         generation_actions = [
             ('🔍 Device Discovery', self.generate_device_discovery_file),
             ('📷 Device DCIM Pull', self.pull_device_dcim_with_folder),
-            ('📱 UI Inspector', self.launch_ui_inspector),
             ('📁 Export UI Hierarchy', self.dump_device_hsv),
         ]
 
@@ -1508,7 +1507,11 @@ class WindowMain(QMainWindow):
         console_font.setFamily('Monaco' if platform.system() == 'Darwin' else 'Consolas' if platform.system() == 'Windows' else 'monospace')
         console_font.setPointSize(9)
         self.console_text.setFont(console_font)
-        self.console_text.setMaximumHeight(200)
+        # Allow console to expand - set minimum height but no maximum
+        self.console_text.setMinimumHeight(150)
+        # Set size policy to allow expansion
+        from PyQt6.QtWidgets import QSizePolicy
+        self.console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Ensure console is visible with clear styling
         self.console_text.setStyleSheet("""
@@ -2256,11 +2259,10 @@ class WindowMain(QMainWindow):
 
         context_menu.addSeparator()
 
-        # UI Inspector action (only if this device is selected)
-        if checkbox_widget.isChecked():
-            ui_inspector_action = context_menu.addAction('🔍 Launch UI Inspector')
-            ui_inspector_action.triggered.connect(lambda: self.launch_ui_inspector_for_device(device_serial))
-            context_menu.addSeparator()
+        # UI Inspector action (always available for any device)
+        ui_inspector_action = context_menu.addAction('🔍 Launch UI Inspector')
+        ui_inspector_action.triggered.connect(lambda: self.launch_ui_inspector_for_device(device_serial))
+        context_menu.addSeparator()
 
         # Device-specific actions
         reboot_action = context_menu.addAction('🔄 Reboot Device')
@@ -2293,35 +2295,81 @@ class WindowMain(QMainWindow):
             self.check_devices[target_serial].setChecked(False)
 
     def launch_ui_inspector_for_device(self, device_serial):
-        """Launch UI Inspector for a specific device."""
+        """Launch UI Inspector for a specific device using the unified UI Inspector functionality."""
         if device_serial in self.device_dict:
             device = self.device_dict[device_serial]
-            logger.info(f'Launching UI Inspector for device: {device.device_model} ({device_serial})')
-            ui_inspector = UIInspectorDialog(self, device_serial, device.device_model)
-            ui_inspector.exec()
+            # Temporarily select only this device for the UI Inspector operation
+            original_selections = self._backup_device_selections()
+            self.select_only_device(device_serial)
+
+            # Use the same UI Inspector function as tabs
+            self.launch_ui_inspector()
+
+            # Restore original selections
+            self._restore_device_selections(original_selections)
+        else:
+            self.show_error('Error', f'Device {device_serial} not found.')
 
     def reboot_single_device(self, device_serial):
-        """Reboot a single device."""
-        self.run_in_thread(adb_tools.run_reboot_devices, [device_serial])
-        logger.info(f'Rebooting device: {device_serial}')
-
-    def take_screenshot_single_device(self, device_serial):
-        """Take screenshot for a single device."""
+        """Reboot a single device using the unified reboot functionality."""
         if device_serial in self.device_dict:
             device = self.device_dict[device_serial]
+            # Temporarily select only this device for the reboot operation
+            original_selections = self._backup_device_selections()
+            self.select_only_device(device_serial)
 
-            # Use the configured output path
-            output_path = self.output_path_edit.text().strip()
-            if not output_path or not common.check_exists_dir(output_path):
-                output_path = common.get_full_path('~/Desktop')
+            # Use the same reboot function as tabs
+            self.reboot_device()
 
-            self.run_in_thread(adb_tools.run_take_screenshots, [device_serial], [device.device_model], output_path)
-            logger.info(f'Taking screenshot for device: {device.device_model} ({device_serial})')
+            # Restore original selections
+            self._restore_device_selections(original_selections)
+        else:
+            self.show_error('Error', f'Device {device_serial} not found.')
+
+    def take_screenshot_single_device(self, device_serial):
+        """Take screenshot for a single device using the unified screenshot functionality."""
+        if device_serial in self.device_dict:
+            device = self.device_dict[device_serial]
+            # Temporarily select only this device for the screenshot operation
+            original_selections = self._backup_device_selections()
+            self.select_only_device(device_serial)
+
+            # Use the same screenshot function as tabs
+            self.take_screenshot()
+
+            # Restore original selections
+            self._restore_device_selections(original_selections)
+        else:
+            self.show_error('Error', f'Device {device_serial} not found.')
 
     def launch_scrcpy_single_device(self, device_serial):
-        """Launch scrcpy for a single device."""
-        self.run_in_thread(adb_tools.run_setup_scrcpy, [device_serial])
-        logger.info(f'Launching scrcpy for device: {device_serial}')
+        """Launch scrcpy for a single device using the unified scrcpy functionality."""
+        if device_serial in self.device_dict:
+            device = self.device_dict[device_serial]
+            # Temporarily select only this device for the scrcpy operation
+            original_selections = self._backup_device_selections()
+            self.select_only_device(device_serial)
+
+            # Use the same scrcpy function as tabs
+            self.launch_scrcpy()
+
+            # Restore original selections
+            self._restore_device_selections(original_selections)
+        else:
+            self.show_error('Error', f'Device {device_serial} not found.')
+
+    def _backup_device_selections(self):
+        """Backup current device selections."""
+        selections = {}
+        for serial, checkbox in self.check_devices.items():
+            selections[serial] = checkbox.isChecked()
+        return selections
+
+    def _restore_device_selections(self, selections):
+        """Restore device selections from backup."""
+        for serial, checkbox in self.check_devices.items():
+            if serial in selections:
+                checkbox.setChecked(selections[serial])
 
     def copy_single_device_info(self, device_serial):
         """Copy information for a single device."""

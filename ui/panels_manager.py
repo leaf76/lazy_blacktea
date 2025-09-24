@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QLineEdit, QProgressBar, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont, QAction, QActionGroup
 
 from utils import common
 
@@ -289,8 +289,12 @@ class PanelsManager(QObject):
         # Console text area
         console_text = QTextEdit()
         console_text.setReadOnly(True)
-        console_text.setMaximumHeight(200)
+        # Allow console to expand - set minimum height but no maximum
+        console_text.setMinimumHeight(150)
         console_text.setFont(QFont("Consolas", 9))
+        # Set size policy to allow expansion
+        from PyQt6.QtWidgets import QSizePolicy
+        console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         console_text.setStyleSheet("""
             QTextEdit {
                 background-color: #1e1e1e;
@@ -372,9 +376,11 @@ class PanelsManager(QObject):
 
         # UI Scale submenu
         scale_menu = settings_menu.addMenu('UI Scale')
+        scale_group = QActionGroup(main_window)
         scales = [('Default', 1.0), ('Large', 1.25), ('Extra Large', 1.5)]
         for name, scale in scales:
             action = QAction(name, main_window, checkable=True)
+            scale_group.addAction(action)
             if scale == 1.0:
                 action.setChecked(True)
             action.triggered.connect(lambda checked, s=scale: main_window.set_ui_scale(s))
@@ -382,9 +388,11 @@ class PanelsManager(QObject):
 
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
+        refresh_group = QActionGroup(main_window)
         intervals = [5, 10, 20, 30, 60]
         for interval in intervals:
             action = QAction(f'{interval} Seconds', main_window, checkable=True)
+            refresh_group.addAction(action)
             if interval == 5:  # Default to 5 seconds
                 action.setChecked(True)
             action.triggered.connect(lambda checked, i=interval: main_window.set_refresh_interval(i))
