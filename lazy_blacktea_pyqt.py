@@ -61,6 +61,7 @@ from ui.ui_factory import UIFactory, UIInspectorFactory
 from ui.device_operations_manager import DeviceOperationsManager
 from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
 from ui.command_execution_manager import CommandExecutionManager
+from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -433,15 +434,7 @@ class UIInspectorDialog(QDialog):
 
         # Device info section with system styling
         device_info = QLabel(f'📱 {self.device_model}')
-        device_info.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                padding: 8px 12px;
-                border: 1px solid palette(mid);
-                border-radius: 6px;
-            }
-        ''')
+        device_info.setStyleSheet(StyleManager.get_device_info_style())
         toolbar.addWidget(device_info)
 
         toolbar.addStretch()
@@ -471,15 +464,7 @@ class UIInspectorDialog(QDialog):
     def create_system_button(self, text):
         """Create a button with system styling."""
         button = QPushButton(text)
-        button.setFixedHeight(36)
-        button.setStyleSheet('''
-            QPushButton {
-                padding: 0px 16px;
-                font-weight: bold;
-                font-size: 12px;
-                min-width: 80px;
-            }
-        ''')
+        StyleManager.apply_button_style(button, ButtonStyle.SYSTEM, 36)
         return button
 
     def create_screenshot_panel(self):
@@ -491,15 +476,7 @@ class UIInspectorDialog(QDialog):
 
         # Screenshot header with system styling
         header = QLabel('📸 Device Screenshot')
-        header.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                padding: 8px 0px;
-                border-bottom: 1px solid palette(mid);
-                margin-bottom: 8px;
-            }
-        ''')
+        StyleManager.apply_label_style(header, LabelStyle.HEADER)
         layout.addWidget(header)
 
         # Screenshot display with system scroll area
@@ -523,15 +500,7 @@ class UIInspectorDialog(QDialog):
 
         # Inspector header with system styling
         header = QLabel('🔍 Element Inspector')
-        header.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                padding: 8px 0px;
-                border-bottom: 1px solid palette(mid);
-                margin-bottom: 8px;
-            }
-        ''')
+        StyleManager.apply_label_style(header, LabelStyle.HEADER)
         layout.addWidget(header)
 
         # Create tabbed interface with system styling
@@ -590,23 +559,12 @@ class UIInspectorDialog(QDialog):
         search_layout.setContentsMargins(0, 0, 0, 0)
 
         search_label = QLabel('🔍')
-        search_label.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                color: #666666;
-                padding: 4px;
-            }
-        ''')
+        search_label.setStyleSheet(StyleManager.get_search_label_style())
         search_layout.addWidget(search_label)
 
         self.hierarchy_search = QLineEdit()
         self.hierarchy_search.setPlaceholderText('Search elements...')
-        self.hierarchy_search.setStyleSheet('''
-            QLineEdit {
-                padding: 6px 8px;
-                font-size: 12px;
-            }
-        ''')
+        self.hierarchy_search.setStyleSheet(StyleManager.get_search_input_style())
         search_layout.addWidget(self.hierarchy_search)
 
         layout.addWidget(search_widget)
@@ -616,14 +574,7 @@ class UIInspectorDialog(QDialog):
         self.hierarchy_tree.setHeaderLabel('UI Elements')
         self.hierarchy_tree.itemClicked.connect(self.on_tree_item_clicked)
         self.hierarchy_tree.itemActivated.connect(self.on_tree_item_activated)
-        self.hierarchy_tree.setStyleSheet('''
-            QTreeWidget {
-                font-size: 11px;
-            }
-            QTreeWidget::item {
-                padding: 4px;
-            }
-        ''')
+        self.hierarchy_tree.setStyleSheet(StyleManager.get_tree_style())
 
         # Install event filter for optimized Enter key handling
         self.hierarchy_tree.installEventFilter(self)
@@ -923,7 +874,7 @@ class UIInspectorDialog(QDialog):
         """Add a spacer between sections to prevent overlap."""
         spacer = QWidget()
         spacer.setFixedHeight(16)  # Increased spacer height
-        spacer.setStyleSheet('QWidget { background-color: transparent; }')
+        # Spacer styling handled by parent layout
         self.element_details_layout.addWidget(spacer)
 
     def save_screenshot(self):
@@ -1086,18 +1037,7 @@ class WindowMain(QMainWindow):
         self.set_app_icon()
 
         # Set global tooltip styling for better positioning and appearance
-        self.setStyleSheet(self.styleSheet() + '''
-            QToolTip {
-                background-color: rgba(45, 45, 45, 0.95);
-                color: white;
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 6px;
-                padding: 6px;
-                font-size: 11px;
-                font-family: 'Segoe UI', Arial, sans-serif;
-                max-width: 350px;
-            }
-        ''')
+        self.setStyleSheet(self.styleSheet() + StyleManager.get_tooltip_style())
 
         # Remove the problematic attribute setting as it's not needed for tooltip positioning
 
@@ -1253,22 +1193,7 @@ class WindowMain(QMainWindow):
         self.screenshot_btn = QPushButton('📷 Take Screenshot')
         self.screenshot_btn.clicked.connect(lambda: self.take_screenshot())
         # Set initial default style
-        self.screenshot_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 12px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-        ''')
+        StyleManager.apply_button_style(self.screenshot_btn, ButtonStyle.PRIMARY)
         capture_layout.addWidget(self.screenshot_btn, 0, 0)
 
         # Recording buttons
@@ -1282,12 +1207,12 @@ class WindowMain(QMainWindow):
 
         # Recording status display
         self.recording_status_label = QLabel('No active recordings')
-        self.recording_status_label.setStyleSheet('color: gray; font-style: italic;')
+        StyleManager.apply_label_style(self.recording_status_label, LabelStyle.STATUS)
         capture_layout.addWidget(self.recording_status_label, 2, 0, 1, 2)
 
         # Recording timer display
         self.recording_timer_label = QLabel('')
-        self.recording_timer_label.setStyleSheet('color: red; font-weight: bold;')
+        self.recording_timer_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
         capture_layout.addWidget(self.recording_timer_label, 3, 0, 1, 2)
 
         layout.addWidget(capture_group)
@@ -1320,7 +1245,7 @@ class WindowMain(QMainWindow):
         if active_count > 0:
             status_text = f"🔴 Recording: {active_count} device(s)"
             self.recording_status_label.setText(status_text)
-            self.recording_status_label.setStyleSheet('color: red; font-weight: bold;')
+            self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
 
             # Limit display to first 8 recordings to prevent UI overflow
             if len(active_recordings) > 8:
@@ -1331,7 +1256,7 @@ class WindowMain(QMainWindow):
             self.recording_timer_label.setText('\n'.join(display_recordings))
         else:
             self.recording_status_label.setText('No active recordings')
-            self.recording_status_label.setStyleSheet('color: gray; font-style: italic;')
+            self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_inactive'])
             self.recording_timer_label.setText('')
 
     def show_recording_warning(self, serial):
@@ -1543,14 +1468,7 @@ class WindowMain(QMainWindow):
         self.console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Ensure console is visible with clear styling
-        self.console_text.setStyleSheet("""
-            QTextEdit {
-                background-color: white;
-                color: black;
-                border: 2px solid #cccccc;
-                padding: 5px;
-            }
-        """)
+        self.console_text.setStyleSheet(StyleManager.get_console_style())
 
         # Add a welcome message to verify the console is working
         welcome_msg = """🍵 Console Output Ready - Logging initialized
@@ -2151,43 +2069,7 @@ class WindowMain(QMainWindow):
 
     def _apply_device_checkbox_style(self, checkbox):
         """Apply visual styling to device checkbox for better selection feedback."""
-        checkbox.setStyleSheet('''
-            QCheckBox {
-                padding: 8px;
-                border: 2px solid transparent;
-                border-radius: 6px;
-                background-color: rgba(240, 240, 240, 0.3);
-                margin: 2px;
-            }
-            QCheckBox:hover {
-                background-color: rgba(200, 220, 255, 0.5);
-                border: 2px solid rgba(100, 150, 255, 0.3);
-            }
-            QCheckBox:checked {
-                background-color: rgba(100, 200, 100, 0.2);
-                border: 2px solid rgba(50, 150, 50, 0.6);
-                font-weight: bold;
-            }
-            QCheckBox:checked:hover {
-                background-color: rgba(100, 200, 100, 0.3);
-                border: 2px solid rgba(50, 150, 50, 0.8);
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 3px;
-                border: 2px solid #666;
-                background-color: white;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4CAF50;
-                border: 2px solid #4CAF50;
-                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAiIGhlaWdodD0iNyIgdmlld0JveD0iMCAwIDEwIDciIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik04LjUgMUwzLjUgNkwxLjUgNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHN2Zz4K);
-            }
-            QCheckBox::indicator:hover {
-                border: 2px solid #2196F3;
-            }
-        ''')
+        checkbox.setStyleSheet(StyleManager.get_checkbox_style())
 
     def _update_checkbox_visual_state(self, checkbox, state):
         """Update visual state of checkbox when selection changes."""
@@ -2264,16 +2146,7 @@ class WindowMain(QMainWindow):
         device = self.device_dict[device_serial]
         context_menu = QMenu(self)
         # Use system default styling for context menu
-        context_menu.setStyleSheet('''
-            QMenu::item:disabled {
-                font-weight: bold;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #E0E0E0;
-                margin: 4px 0px;
-            }
-        ''')
+        context_menu.setStyleSheet(StyleManager.get_menu_style())
 
         # Device info header
         device_name = f'📱 {device.device_model} ({device_serial[:8]}...)'
@@ -2865,7 +2738,7 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         # Title
         title_label = QLabel('⚡ Quick Actions for Screenshots')
-        title_label.setStyleSheet('font-weight: bold; font-size: 14px; color: #1976D2; margin-bottom: 10px;')
+        StyleManager.apply_label_style(title_label, LabelStyle.HEADER)
         layout.addWidget(title_label)
 
         # Find screenshot files
@@ -2881,24 +2754,11 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         # Info label
         info_label = QLabel(f'📱 Screenshots from: {", ".join(device_models[:2])}{"..." if len(device_models) > 2 else ""}')
-        info_label.setStyleSheet('color: #424242; margin-bottom: 15px;')
+        StyleManager.apply_label_style(info_label, LabelStyle.INFO)
         layout.addWidget(info_label)
 
-        # Action buttons
-        button_style = '''
-            QPushButton {
-                background-color: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                padding: 10px;
-                border-radius: 5px;
-                text-align: left;
-                margin: 2px;
-            }
-            QPushButton:hover {
-                background-color: #E3F2FD;
-                border-color: #1976D2;
-            }
-        '''
+        # Action buttons use centralized style
+        button_style = StyleManager.get_action_button_style()
 
         # Take another screenshot
         another_screenshot_btn = QPushButton('📷 Take Another Screenshot')
@@ -2921,24 +2781,12 @@ Build Fingerprint: {device.build_fingerprint}'''
         # Show file count if available
         if screenshot_files:
             file_count_label = QLabel(f'📁 Found {len(screenshot_files)} screenshot file(s)')
-            file_count_label.setStyleSheet('color: #666; font-size: 12px; margin-top: 10px;')
+            StyleManager.apply_label_style(file_count_label, LabelStyle.INFO)
             layout.addWidget(file_count_label)
 
         # Close button
         close_btn = QPushButton('Close')
-        close_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #757575;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                margin-top: 10px;
-            }
-            QPushButton:hover {
-                background-color: #616161;
-            }
-        ''')
+        StyleManager.apply_button_style(close_btn, ButtonStyle.NEUTRAL)
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
 
@@ -2988,37 +2836,13 @@ Build Fingerprint: {device.build_fingerprint}'''
         if in_progress:
             self.screenshot_btn.setText('📷 Taking Screenshots...')
             self.screenshot_btn.setEnabled(False)
-            self.screenshot_btn.setStyleSheet('''
-                QPushButton {
-                    background-color: #FF9800;
-                    color: white;
-                    border: none;
-                    padding: 8px 12px;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-            ''')
+            self.screenshot_btn.setStyleSheet(StyleManager.get_status_styles()['screenshot_processing'])
         else:
             logger.info(f'🔧 [BUTTON STATE] Resetting screenshot button to default state')
             self.screenshot_btn.setText('📷 Take Screenshot')
             self.screenshot_btn.setEnabled(True)
             # Set proper default style
-            self.screenshot_btn.setStyleSheet('''
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    border: none;
-                    padding: 8px 12px;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #45a049;
-                }
-                QPushButton:pressed {
-                    background-color: #3d8b40;
-                }
-            ''')
+            self.screenshot_btn.setStyleSheet(StyleManager.get_status_styles()['screenshot_ready'])
             logger.info('📷 [BUTTON STATE] Screenshot button reset to default state successfully')
 
     def _on_file_generation_completed(self, operation_name, output_path, device_count, icon):
@@ -3035,17 +2859,17 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         # Success message
         success_label = QLabel(f'✅ Successfully completed {operation_name.lower()}')
-        success_label.setStyleSheet('font-weight: bold; color: #2E7D32; font-size: 14px;')
+        StyleManager.apply_label_style(success_label, LabelStyle.SUCCESS)
         layout.addWidget(success_label)
 
         # Device info
         device_label = QLabel(f'📱 Processed: {device_count} device(s)')
-        device_label.setStyleSheet('color: #424242; margin: 10px 0px;')
+        StyleManager.apply_label_style(device_label, LabelStyle.INFO)
         layout.addWidget(device_label)
 
         # Path info
         path_label = QLabel(f'📁 Location: {output_path}')
-        path_label.setStyleSheet('color: #424242; word-wrap: break-word;')
+        StyleManager.apply_label_style(path_label, LabelStyle.INFO)
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
 
@@ -3054,36 +2878,13 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         # Open folder button
         open_folder_btn = QPushButton('🗂️ Open Folder')
-        open_folder_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #1976D2;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1565C0;
-            }
-        ''')
+        StyleManager.apply_button_style(open_folder_btn, ButtonStyle.SECONDARY)
         open_folder_btn.clicked.connect(lambda: self._open_folder(output_path))
         button_layout.addWidget(open_folder_btn)
 
         # Close button
         close_btn = QPushButton('Close')
-        close_btn.setStyleSheet('''
-            QPushButton {
-                background-color: #757575;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #616161;
-            }
-        ''')
+        StyleManager.apply_button_style(close_btn, ButtonStyle.NEUTRAL)
         close_btn.clicked.connect(dialog.accept)
         button_layout.addWidget(close_btn)
 
