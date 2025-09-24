@@ -3,90 +3,191 @@
 import logging
 import time
 import hashlib
-from typing import Dict, List, Optional
-from PyQt6.QtWidgets import QCheckBox, QLabel, QHBoxLayout, QWidget
+from typing import Dict, List
+from PyQt6.QtWidgets import QCheckBox, QLabel
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 
 from utils import adb_models, adb_tools, common
 
 logger = common.get_logger('device_manager')
 
-# Global cache for device information
-_device_cache = {
-    'devices': {},
-    'last_update': 0,
-    'cache_ttl': 3.0,  # Cache for 3 seconds
-    'last_hash': ''
-}
+# Configuration constants
+class DeviceManagerConfig:
+    DEFAULT_CACHE_TTL = 3.0
+    DEFAULT_REFRESH_INTERVAL = 3
+    SHUTDOWN_TIMEOUT = 300  # milliseconds
+    ERROR_RETRY_DELAY = 5000  # milliseconds
+    PROGRESSIVE_DELAY = 100  # milliseconds
+    FULL_UPDATE_INTERVAL = 10  # seconds
+
+class DeviceCache:
+    """Manages device information caching to reduce ADB calls."""
+
+    def __init__(self, cache_ttl: float = DeviceManagerConfig.DEFAULT_CACHE_TTL):
+        self.devices: Dict[str, adb_models.DeviceInfo] = {}
+        self.last_update = 0
+        self.cache_ttl = cache_ttl
+        self.last_hash = ''
+
+    def get_devices(self) -> List[adb_models.DeviceInfo]:
+        """Get devices with caching."""
+        current_time = time.time()
+
+        # Check if cache is still valid
+        if (current_time - self.last_update) < self.cache_ttl:
+            logger.debug('Using cached device list')
+            return list(self.devices.values())
+
+        return self._refresh_cache()
+
+    def _refresh_cache(self) -> List[adb_models.DeviceInfo]:
+        """Refresh the device cache."""
+        try:
+            devices = adb_tools.get_devices_list()
+            current_hash = self._calculate_hash(devices)
+
+            # Only update cache if devices actually changed
+            if current_hash != self.last_hash or devices:
+                self.devices = {d.device_serial_num: d for d in devices}
+                self.last_update = time.time()
+                self.last_hash = current_hash
+                logger.debug(f'Updated device cache with {len(devices)} devices')
+
+            return devices
+
+        except Exception as e:
+            logger.error(f'Error getting device list: {e}')
+            return list(self.devices.values())
+
+    def _calculate_hash(self, devices: List[adb_models.DeviceInfo]) -> str:
+        """Calculate hash for device list to detect changes."""
+        device_serials = sorted([d.device_serial_num for d in devices])
+        return hashlib.md5('|'.join(device_serials).encode()).hexdigest()
+
+    def force_refresh(self):
+        """Force cache refresh on next access."""
+        self.last_update = 0
+
+
+# Global device cache instance
+_device_cache = DeviceCache()
 
 
 def get_devices_cached() -> List[adb_models.DeviceInfo]:
     """Get devices with caching to reduce ADB calls."""
-    current_time = time.time()
+    return _device_cache.get_devices()
 
-    # Check if cache is still valid
-    if (current_time - _device_cache['last_update']) < _device_cache['cache_ttl']:
-        logger.debug('Using cached device list')
-        return list(_device_cache['devices'].values())
 
-    # Get fresh device list
-    try:
-        devices = adb_tools.get_devices_list()
-
-        # Create hash of device serials to detect changes
-        device_serials = sorted([d.device_serial_num for d in devices])
-        current_hash = hashlib.md5('|'.join(device_serials).encode()).hexdigest()
-
-        # Only update cache if devices actually changed or cache expired
-        if current_hash != _device_cache['last_hash'] or devices:
-            _device_cache['devices'] = {d.device_serial_num: d for d in devices}
-            _device_cache['last_update'] = current_time
-            _device_cache['last_hash'] = current_hash
-            logger.debug(f'Updated device cache with {len(devices)} devices')
-
-        return devices
-
-    except Exception as e:
-        logger.error(f'Error getting device list: {e}')
-        # Return cached devices if available
-        return list(_device_cache['devices'].values())
+class StatusMessages:
+    """Status message constants for device discovery."""
+    SCANNING = "🔍 Scanning for devices..."
+    NO_DEVICES = "📱 No devices connected"
+    DEVICES_CONNECTED = "📱 {count} device{s} connected"
+    DEVICES_FOUND = "✅ {count} device{s} connected"
+    DEVICE_FOUND = "📱 Found device: {serial}"
+    SCAN_ERROR = "❌ Device scan error: {error}"
 
 
 class DeviceRefreshThread(QThread):
-    """Thread for refreshing device list without blocking UI."""
+    """Thread for refreshing device list without blocking UI with progressive discovery."""
 
     devices_updated = pyqtSignal(dict)
+    device_found = pyqtSignal(str, adb_models.DeviceInfo)  # individual device found
+    device_lost = pyqtSignal(str)  # device disconnected
+    status_updated = pyqtSignal(str)  # status messages
 
-    def __init__(self, parent=None, refresh_interval=10):  # Increased default interval
+    def __init__(self, parent=None, refresh_interval: int = DeviceManagerConfig.DEFAULT_REFRESH_INTERVAL):
         super().__init__(parent)
         self.refresh_interval = refresh_interval
         self.running = True
         self.mutex = QMutex()
-        self.last_device_count = 0
+        self.known_devices = set()  # Track known device serials
+        self.last_full_update = 0
 
     def run(self):
-        """Main thread loop for device refresh."""
+        """Main thread loop for progressive device refresh."""
         while self.running:
             try:
-                with QMutexLocker(self.mutex):
-                    if not self.running:
-                        break
+                if self._should_stop():
+                    break
 
-                # Use cached device detection
-                devices = get_devices_cached()
-                device_dict = {device.device_serial_num: device for device in devices}
-
-                # Only emit signal if device count changed or this is the first run
-                current_count = len(devices)
-                if current_count != self.last_device_count or self.last_device_count == 0:
-                    self.devices_updated.emit(device_dict)
-                    self.last_device_count = current_count
-                    logger.debug(f'Emitted device update: {current_count} devices')
-
+                self._perform_device_scan()
                 self.msleep(self.refresh_interval * 1000)
+
             except Exception as e:
-                logger.error(f'Error in device refresh thread: {e}')
-                self.msleep(10000)  # Wait 10 seconds before retry
+                self._handle_scan_error(e)
+
+    def _should_stop(self) -> bool:
+        """Check if thread should stop."""
+        with QMutexLocker(self.mutex):
+            return not self.running
+
+    def _perform_device_scan(self):
+        """Perform a single device scan cycle."""
+        self.status_updated.emit(StatusMessages.SCANNING)
+
+        devices = get_devices_cached()
+        current_serials = set(device.device_serial_num for device in devices)
+
+        # Handle device changes
+        lost_devices = self._process_lost_devices(current_serials)
+        new_devices = self._process_new_devices(devices, current_serials)
+
+        # Update status and emit periodic full update
+        self._update_status_message(new_devices, lost_devices)
+        self._emit_periodic_update(devices)
+
+    def _process_lost_devices(self, current_serials: set) -> set:
+        """Process devices that have been disconnected."""
+        lost_devices = self.known_devices - current_serials
+        for serial in lost_devices:
+            self.device_lost.emit(serial)
+            self.known_devices.discard(serial)
+            logger.info(f'Device disconnected: {serial}')
+        return lost_devices
+
+    def _process_new_devices(self, devices: List[adb_models.DeviceInfo], current_serials: set) -> set:
+        """Process newly discovered devices."""
+        new_devices = current_serials - self.known_devices
+
+        for device in devices:
+            serial = device.device_serial_num
+            if serial in new_devices:
+                self.status_updated.emit(StatusMessages.DEVICE_FOUND.format(serial=serial))
+                self.device_found.emit(serial, device)
+                self.known_devices.add(serial)
+                logger.info(f'New device found: {serial} - {device.device_model}')
+                self.msleep(DeviceManagerConfig.PROGRESSIVE_DELAY)
+
+        return new_devices
+
+    def _update_status_message(self, new_devices: set, lost_devices: set):
+        """Update status message based on device changes."""
+        total_devices = len(self.known_devices)
+        plural_s = 's' if total_devices != 1 else ''
+
+        if total_devices == 0:
+            self.status_updated.emit(StatusMessages.NO_DEVICES)
+        elif new_devices or lost_devices:
+            self.status_updated.emit(StatusMessages.DEVICES_FOUND.format(
+                count=total_devices, s=plural_s))
+        else:
+            self.status_updated.emit(StatusMessages.DEVICES_CONNECTED.format(
+                count=total_devices, s=plural_s))
+
+    def _emit_periodic_update(self, devices: List[adb_models.DeviceInfo]):
+        """Emit full device list periodically for batch operations."""
+        current_time = time.time()
+        if current_time - self.last_full_update > DeviceManagerConfig.FULL_UPDATE_INTERVAL:
+            device_dict = {device.device_serial_num: device for device in devices}
+            self.devices_updated.emit(device_dict)
+            self.last_full_update = current_time
+
+    def _handle_scan_error(self, error: Exception):
+        """Handle errors during device scanning."""
+        logger.error(f'Error in device refresh thread: {error}')
+        self.status_updated.emit(StatusMessages.SCAN_ERROR.format(error=str(error)))
+        self.msleep(DeviceManagerConfig.ERROR_RETRY_DELAY)
 
     def stop(self):
         """Stop the refresh thread."""
@@ -97,6 +198,12 @@ class DeviceRefreshThread(QThread):
         """Update refresh interval."""
         with QMutexLocker(self.mutex):
             self.refresh_interval = interval
+
+    def force_refresh(self):
+        """Force immediate device refresh by clearing known devices."""
+        with QMutexLocker(self.mutex):
+            self.known_devices.clear()  # Force rediscovery of all devices
+        logger.info('Force refresh: cleared known devices for immediate rediscovery')
 
 
 class DeviceManager:
@@ -110,9 +217,12 @@ class DeviceManager:
         self.device_operations: Dict[str, str] = {}
         self.device_recording_status: Dict[str, Dict] = {}
 
-        # Initialize refresh thread
-        self.refresh_thread = DeviceRefreshThread(parent_widget, refresh_interval=5)
+        # Initialize refresh thread with progressive discovery
+        self.refresh_thread = DeviceRefreshThread(parent_widget, refresh_interval=3)
         self.refresh_thread.devices_updated.connect(self.update_device_list)
+        self.refresh_thread.device_found.connect(self._on_device_found)
+        self.refresh_thread.device_lost.connect(self._on_device_lost)
+        self.refresh_thread.status_updated.connect(self._on_status_updated)
 
     def start_device_refresh(self):
         """Start the device refresh thread."""
@@ -124,8 +234,7 @@ class DeviceManager:
         """Stop the device refresh thread with timeout to prevent hanging."""
         if self.refresh_thread.isRunning():
             self.refresh_thread.stop()
-            # Use very short timeout for immediate shutdown
-            if not self.refresh_thread.wait(300):  # 300ms timeout for immediate feel
+            if not self.refresh_thread.wait(DeviceManagerConfig.SHUTDOWN_TIMEOUT):
                 logger.debug('Device refresh thread terminated immediately for fast shutdown')
                 self.refresh_thread.terminate()
             else:
@@ -185,8 +294,11 @@ class DeviceManager:
     def clear_device_operations(self, serials: List[str]):
         """Clear operation status for multiple devices."""
         for serial in serials:
-            if serial in self.device_operations:
-                del self.device_operations[serial]
+            self._remove_from_dict(self.device_operations, serial)
+
+    def clear_device_operation_status(self, serial: str):
+        """Clear operation status for a single device."""
+        self._remove_from_dict(self.device_operations, serial)
 
     def set_device_recording_status(self, serial: str, status: Dict):
         """Set recording status for a device."""
@@ -195,6 +307,77 @@ class DeviceManager:
     def get_device_recording_status(self, serial: str) -> Dict:
         """Get recording status for a device."""
         return self.device_recording_status.get(serial, {})
+
+    def _safe_execute(self, operation_name: str, operation_func):
+        """Safely execute an operation with error handling."""
+        try:
+            operation_func()
+        except Exception as e:
+            logger.error(f'Error in {operation_name}: {e}')
+
+    def _remove_from_dict(self, dictionary: Dict, key: str) -> bool:
+        """Safely remove key from dictionary."""
+        if key in dictionary:
+            del dictionary[key]
+            return True
+        return False
+
+    def _cleanup_device_data(self, serial: str):
+        """Clean up all tracking data for a device."""
+        self._remove_from_dict(self.device_dict, serial)
+        self._remove_from_dict(self.device_operations, serial)
+        self._remove_from_dict(self.device_recording_status, serial)
+
+    def _cleanup_device_ui(self, serial: str):
+        """Clean up UI elements for a device."""
+        if serial in self.check_devices:
+            checkbox = self.check_devices[serial]
+            checkbox.setParent(None)
+            checkbox.deleteLater()
+            del self.check_devices[serial]
+
+
+    def _on_device_found(self, serial: str, device_info: adb_models.DeviceInfo):
+        """Handle individual device found - add to UI immediately."""
+        def add_device():
+            self.device_dict[serial] = device_info
+            if hasattr(self.parent, 'add_device_to_ui'):
+                self.parent.add_device_to_ui(serial, device_info)
+            else:
+                self.parent.update_device_list(self.device_dict)
+            logger.info(f'Individual device added: {serial} - {device_info.device_model}')
+
+        self._safe_execute('device found handling', add_device)
+
+    def _on_device_lost(self, serial: str):
+        """Handle individual device lost - remove from UI immediately."""
+        def remove_device():
+            self._cleanup_device_data(serial)
+            self._cleanup_device_ui(serial)
+            if hasattr(self.parent, 'remove_device_from_ui'):
+                self.parent.remove_device_from_ui(serial)
+            else:
+                self.parent.update_device_list(self.device_dict)
+            logger.info(f'Individual device removed: {serial}')
+
+        self._safe_execute('device lost handling', remove_device)
+
+    def _on_status_updated(self, status: str):
+        """Handle status updates from device discovery."""
+        def update_status():
+            if hasattr(self.parent, 'update_status_message'):
+                self.parent.update_status_message(status)
+            elif hasattr(self.parent, 'status_bar'):
+                self.parent.status_bar.showMessage(status)
+            logger.debug(f'Device status update: {status}')
+
+        self._safe_execute('status update handling', update_status)
+
+    def force_refresh(self):
+        """Force immediate device refresh."""
+        if hasattr(self.refresh_thread, 'force_refresh'):
+            self.refresh_thread.force_refresh()
+        logger.info('Forced device refresh requested')
 
     def cleanup(self):
         """Clean up resources."""

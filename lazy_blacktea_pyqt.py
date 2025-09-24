@@ -1742,12 +1742,18 @@ class WindowMain(QMainWindow):
                 self.no_devices_label.setParent(None)
 
     def refresh_device_list(self):
-        """Manually refresh device list."""
+        """Manually refresh device list with progressive discovery."""
         try:
-            devices = adb_tools.get_devices_list()
-            device_dict = {device.device_serial_num: device for device in devices}
-            self.update_device_list(device_dict)
-            logger.info('Device list refreshed manually')
+            # Use device manager's force refresh for immediate progressive discovery
+            if hasattr(self.device_manager, 'force_refresh'):
+                self.device_manager.force_refresh()
+                logger.info('Device list refresh requested (progressive mode)')
+            else:
+                # Fallback to original method
+                devices = adb_tools.get_devices_list()
+                device_dict = {device.device_serial_num: device for device in devices}
+                self.update_device_list(device_dict)
+                logger.info('Device list refreshed manually (legacy mode)')
         except Exception as e:
             logger.error(f'Error refreshing device list: {e}')
             self.show_error('Error', f'Failed to refresh device list: {e}')
