@@ -380,6 +380,64 @@ The application includes **Smart ADB Detection** that automatically searches com
 - Check USB connection
 - Run `adb devices` in terminal to verify connection
 
+### Linux Qt Platform Plugin Issues
+
+If you encounter this error on Linux:
+```
+qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb platform plugin.
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "" even though it was found.
+This application failed to start because no Qt platform plugin could be initialized.
+```
+
+**Solution: Install missing Qt dependencies**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+    libxcb-cursor0 \
+    libxcb1 \
+    libxcb-xkb1 \
+    libxcb-xinput0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-xinerama0 \
+    libxcb-xfixes0 \
+    libxcb-shape0 \
+    libxcb-sync1 \
+    libxcb-shm0 \
+    libxcb-render0 \
+    libxcb-util1 \
+    libfontconfig1 \
+    libfreetype6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxi6 \
+    libxrender1 \
+    libdbus-1-3 \
+    libgl1-mesa-dev \
+    libxkbcommon-x11-0
+```
+
+**CentOS/RHEL/Fedora:**
+```bash
+sudo yum install -y libxcb libxcb-devel xcb-util xcb-util-devel \
+    libXrender libXi fontconfig freetype libX11 dbus-libs mesa-libGL
+# Or for newer Fedora:
+sudo dnf install -y libxcb libxcb-devel xcb-util xcb-util-devel \
+    libXrender libXi fontconfig freetype libX11 dbus-libs mesa-libGL
+```
+
+**Alternative: Use offscreen rendering**
+If you only need CLI functionality without GUI:
+```bash
+export QT_QPA_PLATFORM=offscreen
+./LazyBlacktea-x86_64.AppImage
+```
+
 ### Permission Issues
 - Some operations require device to be rooted
 - Enable "USB Debugging (Security settings)" for system-level changes
