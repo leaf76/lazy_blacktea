@@ -57,6 +57,7 @@ from ui.command_executor import CommandExecutor, ensure_devices_selected
 from ui.device_manager import DeviceManager
 from ui.panels_manager import PanelsManager
 from ui.device_search_manager import DeviceSearchManager
+from ui.ui_factory import UIFactory, UIInspectorFactory
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -379,6 +380,9 @@ class UIInspectorDialog(QDialog):
         self.screenshot_data = None
         self.ui_hierarchy = None
         self.ui_elements = []
+
+        # Initialize UI Inspector factory for creating UI components
+        self.ui_inspector_factory = UIInspectorFactory(parent_dialog=self)
 
         self.setWindowTitle(f'📱 UI Inspector - {device_model}')
         self.setModal(True)
@@ -1000,6 +1004,10 @@ class WindowMain(QMainWindow):
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
+
+        # Initialize UI factory for creating UI components
+        self.ui_factory = UIFactory(parent_window=self)
+
         self.flag_actions = {}
 
         # Multi-device operation state management

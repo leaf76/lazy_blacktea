@@ -1,0 +1,647 @@
+"""UI工廠模組 - 負責創建和管理所有UI組件
+
+這個模組將所有UI創建邏輯從主窗口中分離出來，提供：
+1. 工具面板創建
+2. 標籤頁創建
+3. 控制台面板創建
+4. 狀態欄創建
+5. UI Inspector相關組件創建
+
+重構目標：
+- 減少主窗口類的複雜度
+- 提高UI組件創建邏輯的可重用性
+- 改善代碼組織結構
+"""
+
+from typing import Dict, List, Any, Optional
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
+    QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
+    QCheckBox, QLineEdit, QProgressBar, QComboBox, QListWidget,
+    QStatusBar, QToolBar, QFrame, QSizePolicy
+)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QAction, QPixmap
+
+from utils import common
+
+
+class UIFactory:
+    """UI組件工廠類 - 負責創建各種UI組件"""
+
+    def __init__(self, parent_window=None):
+        self.parent_window = parent_window
+        self.logger = common.get_logger('ui_factory')
+
+    # ===== 工具面板創建 =====
+
+    def create_tools_panel(self, parent) -> QWidget:
+        """創建工具面板容器"""
+        tools_widget = QWidget()
+        tools_layout = QVBoxLayout(tools_widget)
+        tools_layout.setContentsMargins(5, 5, 5, 5)
+
+        # 創建標籤頁容器
+        tab_widget = QTabWidget()
+
+        # 添加各個工具標籤頁
+        self.create_adb_tools_tab(tab_widget)
+        self.create_shell_commands_tab(tab_widget)
+        self.create_file_generation_tab(tab_widget)
+        self.create_device_groups_tab(tab_widget)
+
+        tools_layout.addWidget(tab_widget)
+
+        self.logger.debug("工具面板創建完成")
+        return tools_widget
+
+    def create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
+        """創建ADB工具標籤頁"""
+        adb_tab = QWidget()
+        layout = QVBoxLayout(adb_tab)
+
+        # 設備控制區域
+        device_control_group = QGroupBox("📱 Device Control")
+        device_control_layout = QGridLayout(device_control_group)
+
+        device_buttons = [
+            ("🔌 Reboot Device", "reboot_device"),
+            ("🔌 Reboot to Recovery", "reboot_recovery"),
+            ("🔌 Reboot to Bootloader", "reboot_bootloader"),
+            ("🔄 Restart ADB", "restart_adb"),
+        ]
+
+        for i, (text, action) in enumerate(device_buttons):
+            btn = QPushButton(text)
+            btn.setObjectName(action)
+            btn.setMinimumHeight(35)
+            row, col = divmod(i, 2)
+            device_control_layout.addWidget(btn, row, col)
+
+        layout.addWidget(device_control_group)
+
+        # 連接性控制區域
+        connectivity_group = QGroupBox("📶 Connectivity")
+        connectivity_layout = QGridLayout(connectivity_group)
+
+        connectivity_buttons = [
+            ("📶 Enable WiFi", "enable_wifi"),
+            ("📶 Disable WiFi", "disable_wifi"),
+            ("🔵 Enable Bluetooth", "enable_bluetooth"),
+            ("🔵 Disable Bluetooth", "disable_bluetooth"),
+        ]
+
+        for i, (text, action) in enumerate(connectivity_buttons):
+            btn = QPushButton(text)
+            btn.setObjectName(action)
+            btn.setMinimumHeight(35)
+            row, col = divmod(i, 2)
+            connectivity_layout.addWidget(btn, row, col)
+
+        layout.addWidget(connectivity_group)
+
+        # 系統工具區域
+        system_group = QGroupBox("🔧 System Tools")
+        system_layout = QGridLayout(system_group)
+
+        system_buttons = [
+            ("🗑️ Clear Logcat", "clear_logcat"),
+            ("📊 Show Logcat", "show_logcat"),
+            ("ℹ️ Device Info", "device_info"),
+            ("🏠 Go Home", "go_home"),
+            ("📸 Take Screenshot", "take_screenshot"),
+            ("🎬 Start Recording", "start_recording"),
+            ("⏹️ Stop Recording", "stop_recording"),
+            ("🔍 Launch UI Inspector", "launch_ui_inspector"),
+        ]
+
+        for i, (text, action) in enumerate(system_buttons):
+            btn = QPushButton(text)
+            btn.setObjectName(action)
+            btn.setMinimumHeight(35)
+            row, col = divmod(i, 2)
+            system_layout.addWidget(btn, row, col)
+
+        layout.addWidget(system_group)
+
+        # 安裝工具區域
+        install_group = QGroupBox("📦 Installation")
+        install_layout = QVBoxLayout(install_group)
+
+        install_btn = QPushButton("📱 Install APK")
+        install_btn.setObjectName("install_apk")
+        install_btn.setMinimumHeight(40)
+        install_layout.addWidget(install_btn)
+
+        scrcpy_btn = QPushButton("🖥️ Launch scrcpy")
+        scrcpy_btn.setObjectName("launch_scrcpy")
+        scrcpy_btn.setMinimumHeight(40)
+        install_layout.addWidget(scrcpy_btn)
+
+        layout.addWidget(install_group)
+
+        layout.addStretch()
+        tab_widget.addTab(adb_tab, "ADB Tools")
+
+    def create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
+        """創建Shell命令標籤頁"""
+        shell_tab = QWidget()
+        layout = QVBoxLayout(shell_tab)
+
+        # 命令輸入區域
+        input_group = QGroupBox("📝 Command Input")
+        input_layout = QVBoxLayout(input_group)
+
+        # 命令文本框
+        command_edit = QTextEdit()
+        command_edit.setObjectName("command_edit")
+        command_edit.setPlaceholderText("Enter ADB shell commands here...\nExample: pm list packages")
+        command_edit.setMaximumHeight(100)
+        input_layout.addWidget(command_edit)
+
+        # 按鈕區域
+        button_layout = QHBoxLayout()
+
+        run_btn = QPushButton("▶️ Run Command")
+        run_btn.setObjectName("run_command")
+        run_btn.setMinimumHeight(35)
+        button_layout.addWidget(run_btn)
+
+        run_all_btn = QPushButton("⚡ Run All Commands")
+        run_all_btn.setObjectName("run_all_commands")
+        run_all_btn.setMinimumHeight(35)
+        button_layout.addWidget(run_all_btn)
+
+        clear_btn = QPushButton("🗑️ Clear")
+        clear_btn.setObjectName("clear_commands")
+        clear_btn.clicked.connect(command_edit.clear)
+        button_layout.addWidget(clear_btn)
+
+        input_layout.addLayout(button_layout)
+        layout.addWidget(input_group)
+
+        # 模板命令區域
+        template_group = QGroupBox("📋 Template Commands")
+        template_layout = QVBoxLayout(template_group)
+
+        template_commands = [
+            ("📱 List Packages", "pm list packages"),
+            ("🔋 Battery Info", "dumpsys battery"),
+            ("📊 System Info", "getprop"),
+            ("📱 Running Apps", "pm list packages -e"),
+            ("🌐 Network Info", "ip addr show"),
+            ("📱 Device Properties", "getprop ro.product.model")
+        ]
+
+        for i in range(0, len(template_commands), 2):
+            row_layout = QHBoxLayout()
+            for j in range(2):
+                if i + j < len(template_commands):
+                    text, cmd = template_commands[i + j]
+                    btn = QPushButton(text)
+                    btn.setObjectName(f"template_{i+j}")
+                    btn.clicked.connect(lambda checked, command=cmd: self._add_template_command(command_edit, command))
+                    row_layout.addWidget(btn)
+            template_layout.addLayout(row_layout)
+
+        layout.addWidget(template_group)
+
+        # 命令歷史區域
+        history_group = QGroupBox("📚 Command History")
+        history_layout = QVBoxLayout(history_group)
+
+        history_scroll = QScrollArea()
+        history_scroll.setMaximumHeight(100)
+        history_scroll.setObjectName("command_history")
+        history_layout.addWidget(history_scroll)
+
+        # 歷史控制按鈕
+        history_controls = QHBoxLayout()
+
+        save_history_btn = QPushButton("💾 Save History")
+        save_history_btn.setObjectName("save_history")
+        history_controls.addWidget(save_history_btn)
+
+        load_history_btn = QPushButton("📂 Load History")
+        load_history_btn.setObjectName("load_history")
+        history_controls.addWidget(load_history_btn)
+
+        clear_history_btn = QPushButton("🗑️ Clear History")
+        clear_history_btn.setObjectName("clear_history")
+        history_controls.addWidget(clear_history_btn)
+
+        history_layout.addLayout(history_controls)
+        layout.addWidget(history_group)
+
+        layout.addStretch()
+        tab_widget.addTab(shell_tab, "Shell Commands")
+
+    def create_file_generation_tab(self, tab_widget: QTabWidget) -> None:
+        """創建文件生成標籤頁"""
+        file_tab = QWidget()
+        layout = QVBoxLayout(file_tab)
+
+        # 輸出路徑設定
+        path_group = QGroupBox("📁 Output Settings")
+        path_layout = QHBoxLayout(path_group)
+
+        path_layout.addWidget(QLabel("Output Directory:"))
+
+        path_edit = QLineEdit()
+        path_edit.setObjectName("file_gen_output_path")
+        path_edit.setPlaceholderText("Select output directory...")
+        path_layout.addWidget(path_edit)
+
+        browse_btn = QPushButton("📂 Browse")
+        browse_btn.setObjectName("browse_file_gen_output")
+        path_layout.addWidget(browse_btn)
+
+        layout.addWidget(path_group)
+
+        # 生成工具區域
+        tools_group = QGroupBox("🛠️ Generation Tools")
+        tools_layout = QGridLayout(tools_group)
+
+        generation_tools = [
+            ("🐛 Generate Bug Report", "generate_bug_report"),
+            ("🔍 Device Discovery File", "generate_device_discovery"),
+            ("📋 Device Info Files", "generate_device_info"),
+            ("📊 System Report", "generate_system_report"),
+            ("📱 Package List", "generate_package_list"),
+            ("🔋 Battery Report", "generate_battery_report"),
+        ]
+
+        for i, (text, action) in enumerate(generation_tools):
+            btn = QPushButton(text)
+            btn.setObjectName(action)
+            btn.setMinimumHeight(40)
+            row, col = divmod(i, 2)
+            tools_layout.addWidget(btn, row, col)
+
+        layout.addWidget(tools_group)
+
+        # 生成選項
+        options_group = QGroupBox("⚙️ Generation Options")
+        options_layout = QVBoxLayout(options_group)
+
+        # 包含隱私敏感信息選項
+        include_sensitive_cb = QCheckBox("Include sensitive information (logs, system info)")
+        include_sensitive_cb.setObjectName("include_sensitive_info")
+        options_layout.addWidget(include_sensitive_cb)
+
+        # 壓縮輸出選項
+        compress_output_cb = QCheckBox("Compress output files")
+        compress_output_cb.setObjectName("compress_output")
+        compress_output_cb.setChecked(True)
+        options_layout.addWidget(compress_output_cb)
+
+        # 包含截圖選項
+        include_screenshots_cb = QCheckBox("Include device screenshots")
+        include_screenshots_cb.setObjectName("include_screenshots")
+        include_screenshots_cb.setChecked(True)
+        options_layout.addWidget(include_screenshots_cb)
+
+        layout.addWidget(options_group)
+
+        layout.addStretch()
+        tab_widget.addTab(file_tab, "File Generation")
+
+    def create_device_groups_tab(self, tab_widget: QTabWidget) -> None:
+        """創建設備組管理標籤頁"""
+        groups_tab = QWidget()
+        layout = QVBoxLayout(groups_tab)
+
+        # 設備組列表
+        groups_group = QGroupBox("👥 Device Groups")
+        groups_layout = QVBoxLayout(groups_group)
+
+        groups_list = QListWidget()
+        groups_list.setObjectName("device_groups_list")
+        groups_list.setMaximumHeight(200)
+        groups_layout.addWidget(groups_list)
+
+        # 組控制按鈕
+        group_controls = QHBoxLayout()
+
+        new_group_btn = QPushButton("➕ New Group")
+        new_group_btn.setObjectName("new_group")
+        group_controls.addWidget(new_group_btn)
+
+        edit_group_btn = QPushButton("✏️ Edit Group")
+        edit_group_btn.setObjectName("edit_group")
+        group_controls.addWidget(edit_group_btn)
+
+        delete_group_btn = QPushButton("🗑️ Delete Group")
+        delete_group_btn.setObjectName("delete_group")
+        group_controls.addWidget(delete_group_btn)
+
+        groups_layout.addLayout(group_controls)
+        layout.addWidget(groups_group)
+
+        # 組選擇控制
+        selection_group = QGroupBox("🎯 Group Selection")
+        selection_layout = QVBoxLayout(selection_group)
+
+        select_group_combo = QComboBox()
+        select_group_combo.setObjectName("select_group_combo")
+        selection_layout.addWidget(select_group_combo)
+
+        select_group_controls = QHBoxLayout()
+
+        select_group_btn = QPushButton("✅ Select Group Devices")
+        select_group_btn.setObjectName("select_group_devices")
+        select_group_controls.addWidget(select_group_btn)
+
+        add_to_group_btn = QPushButton("➕ Add Selected to Group")
+        add_to_group_btn.setObjectName("add_to_group")
+        select_group_controls.addWidget(add_to_group_btn)
+
+        selection_layout.addLayout(select_group_controls)
+        layout.addWidget(selection_group)
+
+        layout.addStretch()
+        tab_widget.addTab(groups_tab, "Device Groups")
+
+    # ===== 控制台面板創建 =====
+
+    def create_console_panel(self, parent_layout) -> QTextEdit:
+        """創建控制台輸出面板"""
+        console_group = QGroupBox("📟 Console Output")
+        console_layout = QVBoxLayout(console_group)
+
+        # 控制台文本區域
+        console_text = QTextEdit()
+        console_text.setObjectName("console_output")
+        console_text.setReadOnly(True)
+        console_text.setMinimumHeight(150)
+        console_text.setFont(QFont("Consolas", 9))
+
+        # 設置大小策略允許擴展
+        console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # 設置樣式
+        console_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #404040;
+                border-radius: 4px;
+            }
+        """)
+
+        console_layout.addWidget(console_text)
+
+        # 控制台控制按鈕
+        controls_layout = QHBoxLayout()
+
+        clear_btn = QPushButton("🗑️ Clear")
+        clear_btn.setObjectName("clear_console")
+        clear_btn.clicked.connect(console_text.clear)
+        controls_layout.addWidget(clear_btn)
+
+        copy_btn = QPushButton("📋 Copy All")
+        copy_btn.setObjectName("copy_console")
+        copy_btn.clicked.connect(lambda: self._copy_console_text(console_text))
+        controls_layout.addWidget(copy_btn)
+
+        save_btn = QPushButton("💾 Save Log")
+        save_btn.setObjectName("save_console")
+        controls_layout.addWidget(save_btn)
+
+        controls_layout.addStretch()
+        console_layout.addLayout(controls_layout)
+
+        parent_layout.addWidget(console_group)
+        self.logger.debug("控制台面板創建完成")
+        return console_text
+
+    # ===== 狀態欄創建 =====
+
+    def create_status_bar(self) -> Dict[str, Any]:
+        """創建狀態欄組件"""
+        widgets = {}
+
+        # 設備數量標籤
+        widgets['device_count'] = QLabel("Devices: 0")
+        widgets['device_count'].setStyleSheet("QLabel { margin: 2px 5px; }")
+
+        # 錄製狀態標籤
+        widgets['recording_status'] = QLabel("No active recordings")
+        widgets['recording_status'].setStyleSheet("QLabel { margin: 2px 5px; color: gray; }")
+
+        # 進度條
+        widgets['progress_bar'] = QProgressBar()
+        widgets['progress_bar'].setVisible(False)
+        widgets['progress_bar'].setMaximumWidth(200)
+
+        # 連接狀態指示器
+        widgets['connection_status'] = QLabel("🔴 Disconnected")
+        widgets['connection_status'].setStyleSheet("QLabel { margin: 2px 5px; }")
+
+        self.logger.debug("狀態欄組件創建完成")
+        return widgets
+
+    # ===== 輔助方法 =====
+
+    def _add_template_command(self, text_edit: QTextEdit, command: str):
+        """添加模板命令到文本編輯器"""
+        current_text = text_edit.toPlainText()
+        if current_text and not current_text.endswith('\n'):
+            text_edit.append('')
+        text_edit.append(command)
+
+    def _copy_console_text(self, console_text: QTextEdit):
+        """復制控制台文本到剪貼板"""
+        from PyQt6.QtWidgets import QApplication
+
+        text = console_text.toPlainText()
+        if text:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text)
+            self.logger.info("控制台文本已復制到剪貼板")
+
+
+class UIInspectorFactory:
+    """UI Inspector組件工廠類"""
+
+    def __init__(self, parent_dialog=None):
+        self.parent_dialog = parent_dialog
+        self.logger = common.get_logger('ui_inspector_factory')
+
+    def create_modern_toolbar(self, parent_layout) -> QToolBar:
+        """創建現代化工具欄"""
+        toolbar = QToolBar()
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+        # 添加工具欄按鈕
+        actions = [
+            ("🔄", "Refresh", self._on_refresh_clicked),
+            ("📷", "Screenshot", self._on_screenshot_clicked),
+            ("🔍", "Inspect", self._on_inspect_clicked),
+            ("📋", "Copy", self._on_copy_clicked),
+            ("💾", "Save", self._on_save_clicked),
+        ]
+
+        for icon, text, callback in actions:
+            action = QAction(icon + " " + text, self.parent_dialog)
+            action.triggered.connect(callback)
+            toolbar.addAction(action)
+
+        parent_layout.addWidget(toolbar)
+        return toolbar
+
+    def create_system_button(self, text: str) -> QPushButton:
+        """創建系統風格按鈕"""
+        button = QPushButton(text)
+        button.setMinimumHeight(30)
+        button.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        return button
+
+    def create_screenshot_panel(self) -> QWidget:
+        """創建截圖顯示面板"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # 截圖標籤
+        screenshot_label = QLabel()
+        screenshot_label.setObjectName("screenshot_display")
+        screenshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        screenshot_label.setStyleSheet("""
+            QLabel {
+                border: 2px solid #cccccc;
+                border-radius: 8px;
+                background-color: #f5f5f5;
+                min-height: 200px;
+            }
+        """)
+        screenshot_label.setText("📱 Device screenshot will appear here")
+
+        layout.addWidget(screenshot_label)
+        return panel
+
+    def create_inspector_panel(self) -> QWidget:
+        """創建檢查器面板"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # 創建選項卡
+        tab_widget = QTabWidget()
+
+        # 元素詳情選項卡
+        details_tab = self.create_element_details_tab()
+        tab_widget.addTab(details_tab, "Element Details")
+
+        # 層次結構選項卡
+        hierarchy_tab = self.create_hierarchy_tab()
+        tab_widget.addTab(hierarchy_tab, "Hierarchy")
+
+        layout.addWidget(tab_widget)
+        return panel
+
+    def create_element_details_tab(self) -> QWidget:
+        """創建元素詳情選項卡"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 元素信息顯示
+        info_group = QGroupBox("🔍 Element Information")
+        info_layout = QVBoxLayout(info_group)
+
+        details_text = QTextEdit()
+        details_text.setObjectName("element_details")
+        details_text.setReadOnly(True)
+        details_text.setMaximumHeight(150)
+        info_layout.addWidget(details_text)
+
+        layout.addWidget(info_group)
+
+        # 屬性列表
+        attrs_group = QGroupBox("📋 Attributes")
+        attrs_layout = QVBoxLayout(attrs_group)
+
+        attrs_text = QTextEdit()
+        attrs_text.setObjectName("element_attributes")
+        attrs_text.setReadOnly(True)
+        attrs_layout.addWidget(attrs_text)
+
+        layout.addWidget(attrs_group)
+
+        return tab
+
+    def create_hierarchy_tab(self) -> QWidget:
+        """創建層次結構選項卡"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 搜索框
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("🔍 Search:"))
+
+        search_edit = QLineEdit()
+        search_edit.setObjectName("hierarchy_search")
+        search_edit.setPlaceholderText("Search elements...")
+        search_layout.addWidget(search_edit)
+
+        layout.addLayout(search_layout)
+
+        # 層次結構樹
+        hierarchy_group = QGroupBox("🌳 UI Hierarchy")
+        hierarchy_layout = QVBoxLayout(hierarchy_group)
+
+        from PyQt6.QtWidgets import QTreeWidget
+        hierarchy_tree = QTreeWidget()
+        hierarchy_tree.setObjectName("hierarchy_tree")
+        hierarchy_tree.setHeaderLabel("Elements")
+        hierarchy_layout.addWidget(hierarchy_tree)
+
+        layout.addWidget(hierarchy_group)
+
+        return tab
+
+    # ===== 事件處理方法 =====
+
+    def _on_refresh_clicked(self):
+        """刷新按鈕點擊事件"""
+        self.logger.info("刷新UI Inspector")
+
+    def _on_screenshot_clicked(self):
+        """截圖按鈕點擊事件"""
+        self.logger.info("拍攝設備截圖")
+
+    def _on_inspect_clicked(self):
+        """檢查按鈕點擊事件"""
+        self.logger.info("開始UI檢查")
+
+    def _on_copy_clicked(self):
+        """復制按鈕點擊事件"""
+        self.logger.info("復制元素信息")
+
+    def _on_save_clicked(self):
+        """保存按鈕點擊事件"""
+        self.logger.info("保存UI層次結構")
+
+
+# 工廠實例創建函數
+def create_ui_factory(parent_window=None) -> UIFactory:
+    """創建UI工廠實例"""
+    return UIFactory(parent_window)
+
+
+def create_ui_inspector_factory(parent_dialog=None) -> UIInspectorFactory:
+    """創建UI Inspector工廠實例"""
+    return UIInspectorFactory(parent_dialog)
