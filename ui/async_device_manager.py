@@ -10,13 +10,11 @@
 5. 內存使用優化和設備信息緩存
 """
 
-import asyncio
-import threading
 import time
-from typing import Dict, List, Optional, Callable, Set
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QThread, QMutex, QMutexLocker
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker
 
 from utils import adb_tools, common, adb_models
 
@@ -190,6 +188,7 @@ class AsyncDeviceManager(QObject):
 
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True):
         """開始異步設備發現"""
+        # force_reload parameter kept for compatibility but not currently used
         logger.info("開始異步設備發現...")
 
         # 停止現有工作線程
