@@ -8,6 +8,47 @@ import subprocess
 from typing import Optional
 
 
+# 全局變數記錄是否已經清理過今天的日志
+_logs_cleaned_today = False
+
+
+def _cleanup_old_logs(logs_dir: str):
+  """清理舊的日志文件，只保留今天的（每天只執行一次）"""
+  global _logs_cleaned_today
+
+  # 如果今天已經清理過，跳過
+  if _logs_cleaned_today:
+    return
+
+  try:
+    today = datetime.date.today().strftime('%Y%m%d')
+    cleaned_count = 0
+
+    for filename in os.listdir(logs_dir):
+      if filename.startswith('lazy_blacktea_') and filename.endswith('.log'):
+        # 提取日期部分 (lazy_blacktea_20250924_123456.log -> 20250924)
+        try:
+          date_part = filename[14:22]  # 修正索引位置，提取日期部分
+          if len(date_part) == 8 and date_part.isdigit():
+            if date_part != today:
+              old_log_path = os.path.join(logs_dir, filename)
+              os.remove(old_log_path)
+              cleaned_count += 1
+        except (IndexError, ValueError):
+          # 如果文件名格式不符合預期，跳過
+          continue
+
+    # 標記為已清理
+    _logs_cleaned_today = True
+
+    # 如果清理了文件，記錄信息
+    if cleaned_count > 0:
+      print(f"清理了 {cleaned_count} 個舊日志文件")
+  except Exception as e:
+    # 清理失敗不影響主程序運行
+    pass
+
+
 def get_logger(name: str = 'my_logger') -> logging.Logger:
   """Set the logger with simplified output."""
   # Create logs directory in appropriate location based on platform
@@ -29,6 +70,9 @@ def get_logger(name: str = 'my_logger') -> logging.Logger:
     home_dir = os.path.expanduser('~')
     logs_dir = os.path.join(home_dir, '.lazy_blacktea_logs')
   pathlib.Path(logs_dir).mkdir(parents=True, exist_ok=True)
+
+  # Clean up old log files (keep only today's logs)
+  _cleanup_old_logs(logs_dir)
 
   # Create log filename with timestamp
   current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
