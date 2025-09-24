@@ -46,11 +46,13 @@ class DeviceLoadProgress:
 class AsyncDeviceWorker(QThread):
     """異步設備信息加載工作線程"""
 
-    # 簡化的信號定義
-    device_loaded = pyqtSignal(str, object)  # device_serial, device_info
+    # 漸進式加載信號定義
+    device_basic_loaded = pyqtSignal(str, object)  # device_serial, basic_info
+    device_detailed_loaded = pyqtSignal(str, object)  # device_serial, detailed_info
     device_load_failed = pyqtSignal(str, str)  # device_serial, error_message
     progress_updated = pyqtSignal(int, int)  # current_count, total_count
-    all_devices_loaded = pyqtSignal()
+    all_basic_loaded = pyqtSignal()  # 所有基本信息加載完成
+    all_detailed_loaded = pyqtSignal()  # 所有詳細信息加載完成
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,32 +82,61 @@ class AsyncDeviceWorker(QThread):
             logger.error(f"異步設備加載錯誤: {e}")
 
     def _load_devices_efficiently(self):
-        """高效批量設備加載"""
+        """漸進式設備加載：先顯示基本信息，再異步補充詳細信息"""
         if not self.device_serials:
             return
 
-        logger.info(f"開始高效異步加載 {len(self.device_serials)} 個設備")
+        logger.info(f"開始漸進式異步加載 {len(self.device_serials)} 個設備")
 
-        # 使用並發方式一次性加載所有設備信息
-        self._load_all_devices_concurrent()
+        # Phase 1: 快速加載並顯示基本信息
+        self._load_basic_info_immediately()
 
         if not self.stop_requested:
-            self.all_devices_loaded.emit()
-            logger.info(f"異步設備加載完成：{len(self.device_serials)} 個設備")
+            self.all_basic_loaded.emit()
 
-    def _load_all_devices_concurrent(self):
-        """並發加載所有設備信息"""
+        # Phase 2: 異步加載詳細信息
+        if self.load_detailed and not self.stop_requested:
+            self._load_detailed_info_progressively()
+
+        if not self.stop_requested:
+            self.all_detailed_loaded.emit()
+            logger.info(f"漸進式設備加載完成：{len(self.device_serials)} 個設備")
+
+    def _load_basic_info_immediately(self):
+        """立即加載所有設備的基本信息（僅基本信息，不執行耗時檢查）"""
+        logger.info("Phase 1: 快速加載基本設備信息")
+
+        try:
+            # 使用新的快速設備列表函數
+            basic_device_infos = adb_tools.get_devices_list_fast()
+
+            loaded_count = 0
+            for device_info in basic_device_infos:
+                if self.stop_requested:
+                    break
+
+                # 立即發送基本信息到UI
+                self.device_basic_loaded.emit(device_info.device_serial_num, device_info)
+                loaded_count += 1
+
+                # 更新進度
+                self.progress_updated.emit(loaded_count, len(self.device_serials))
+
+            logger.info(f"基本信息加載完成：{loaded_count} 個設備")
+
+        except Exception as e:
+            logger.error(f"基本信息加載失敗: {e}")
+
+    def _load_detailed_info_progressively(self):
+        """漸進式加載詳細設備信息"""
+        logger.info("Phase 2: 異步加載詳細設備信息")
+
         import concurrent.futures
 
-        # 更新進度
-        total_devices = len(self.device_serials)
-        self.progress_updated.emit(0, total_devices)
-
-        # 使用ThreadPoolExecutor並發處理所有設備
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
-            # 提交所有設備的加載任務
+            # 提交詳細信息加載任務
             future_to_serial = {
-                executor.submit(self._load_complete_device_info, serial): serial
+                executor.submit(adb_tools.get_device_detailed_info, serial): serial
                 for serial in self.device_serials
             }
 
@@ -116,84 +147,36 @@ class AsyncDeviceWorker(QThread):
 
                 serial = future_to_serial[future]
                 try:
-                    device_info = future.result()
-                    if device_info:
-                        # 直接發送完整的設備信息
-                        self.device_loaded.emit(serial, device_info)
+                    detailed_info = future.result()
+                    if detailed_info:
+                        # 發送詳細信息更新
+                        self.device_detailed_loaded.emit(serial, detailed_info)
                         loaded_count += 1
                     else:
-                        self.device_load_failed.emit(serial, "無法加載設備信息")
+                        self.device_load_failed.emit(serial, "無法加載詳細設備信息")
                 except Exception as e:
-                    logger.error(f"設備 {serial} 加載失敗: {e}")
+                    logger.error(f"設備 {serial} 詳細信息加載失敗: {e}")
                     self.device_load_failed.emit(serial, str(e))
 
-                # 更新進度（減少頻率）
-                if loaded_count % max(1, total_devices // 10) == 0 or loaded_count == total_devices:
-                    self.progress_updated.emit(loaded_count, total_devices)
+                # 更新詳細信息加載進度
+                if loaded_count % max(1, len(self.device_serials) // 5) == 0:
+                    logger.debug(f"詳細信息加載進度: {loaded_count}/{len(self.device_serials)}")
 
-    def _load_complete_device_info(self, serial: str) -> Optional[adb_models.DeviceInfo]:
-        """一次性加載設備完整信息"""
-        if self.stop_requested:
-            return None
+            logger.info(f"詳細信息加載完成：{loaded_count} 個設備")
 
-        try:
-            # 獲取基本設備屬性
-            device_model = self._get_device_property_fast(serial, 'ro.product.model')
-            device_product = self._get_device_property_fast(serial, 'ro.product.name')
-            android_version = self._get_device_property_fast(serial, 'ro.build.version.release')
-            api_level = self._get_device_property_fast(serial, 'ro.build.version.sdk')
-
-            # 只在需要詳細信息時才加載耗時的狀態檢查
-            wifi_status = None
-            bluetooth_status = None
-            if self.load_detailed and not self.stop_requested:
-                try:
-                    wifi_status = adb_tools.check_wifi_is_on(serial)
-                    bluetooth_status = adb_tools.check_bluetooth_is_on(serial)
-                except:
-                    pass  # 忽略狀態檢查失敗，繼續加載基本信息
-
-            # 創建完整設備信息對象
-            return adb_models.DeviceInfo(
-                device_serial_num=serial,
-                device_usb='USB',  # 簡化USB信息
-                device_product=device_product or 'Unknown',
-                device_model=device_model or 'Unknown Device',
-                wifi_status=wifi_status,
-                bluetooth_status=bluetooth_status,
-                android_version=android_version or 'Unknown',
-                android_api_level=api_level or 'Unknown',
-                gms_version='Unknown',  # 簡化GMS版本檢查
-                build_fingerprint='Unknown'  # 簡化指紋信息
-            )
-        except Exception as e:
-            logger.error(f"獲取設備 {serial} 完整信息失敗: {e}")
-            return None
-
-    def _get_device_property_fast(self, serial: str, property_name: str) -> Optional[str]:
-        """快速獲取設備屬性"""
-        try:
-            result = common.run_command(
-                ['adb', '-s', serial, 'shell', 'getprop', property_name],
-                timeout_seconds=2  # 更短的超時時間
-            )
-            if result and len(result) > 0:
-                value = result[0].strip()
-                return value if value and value != '' else None
-        except Exception as e:
-            logger.debug(f"快速獲取設備 {serial} 屬性 {property_name} 失敗: {e}")
-        return None
 
 
 
 class AsyncDeviceManager(QObject):
     """異步設備管理器"""
 
-    # 簡化的信號定義
+    # 漸進式加載信號定義
     device_discovery_started = pyqtSignal()
-    device_info_loaded = pyqtSignal(str, object)  # device_serial, device_info
+    device_basic_loaded = pyqtSignal(str, object)  # device_serial, basic_info
+    device_detailed_loaded = pyqtSignal(str, object)  # device_serial, detailed_info
     device_load_progress = pyqtSignal(int, int, str)  # current, total, message
-    all_devices_ready = pyqtSignal(dict)  # {serial: device_info}
+    basic_devices_ready = pyqtSignal(dict)  # 基本信息加載完成
+    all_devices_ready = pyqtSignal(dict)  # 所有信息加載完成
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -229,11 +212,13 @@ class AsyncDeviceManager(QObject):
             self.worker = AsyncDeviceWorker()
             self.worker.set_devices(basic_device_serials, load_detailed)
 
-            # 連接信號（簡化版）
-            self.worker.device_loaded.connect(self._on_device_loaded)
+            # 連接信號（漸進式版）
+            self.worker.device_basic_loaded.connect(self._on_device_basic_loaded)
+            self.worker.device_detailed_loaded.connect(self._on_device_detailed_loaded)
             self.worker.device_load_failed.connect(self._on_device_load_failed)
             self.worker.progress_updated.connect(self._on_progress_updated)
-            self.worker.all_devices_loaded.connect(self._on_all_devices_loaded)
+            self.worker.all_basic_loaded.connect(self._on_all_basic_loaded)
+            self.worker.all_detailed_loaded.connect(self._on_all_detailed_loaded)
 
             # 啟動工作線程
             self.worker.start()
@@ -269,20 +254,53 @@ class AsyncDeviceManager(QObject):
             logger.error(f"獲取基本設備列表失敗: {e}")
             return []
 
-    def _on_device_loaded(self, serial: str, device_info: adb_models.DeviceInfo):
-        """設備信息加載完成時的處理（簡化版）"""
-        logger.debug(f"設備信息已加載: {serial} - {device_info.device_model}")
+    def _on_device_basic_loaded(self, serial: str, device_info: adb_models.DeviceInfo):
+        """設備基本信息加載完成時的處理"""
+        logger.debug(f"設備基本信息已加載: {serial} - {device_info.device_model}")
 
         # 更新緩存
         self.device_cache[serial] = device_info
 
         # 更新進度
         if serial in self.device_progress:
-            self.device_progress[serial].status = DeviceLoadStatus.FULLY_LOADED
+            self.device_progress[serial].status = DeviceLoadStatus.BASIC_LOADED
             self.device_progress[serial].basic_info = device_info
 
-        # 發送信號
-        self.device_info_loaded.emit(serial, device_info)
+        # 發送信號，立即更新UI
+        self.device_basic_loaded.emit(serial, device_info)
+
+    def _on_device_detailed_loaded(self, serial: str, detailed_info: dict):
+        """設備詳細信息加載完成時的處理"""
+        logger.debug(f"設備詳細信息已加載: {serial}")
+
+        # 更新設備信息
+        if serial in self.device_cache:
+            device_info = self.device_cache[serial]
+            # 更新詳細信息
+            device_info.wifi_status = detailed_info.get('wifi_status')
+            device_info.bluetooth_status = detailed_info.get('bluetooth_status')
+            device_info.android_version = detailed_info.get('android_version', 'Unknown')
+            device_info.android_api_level = detailed_info.get('android_api_level', 'Unknown')
+            device_info.gms_version = detailed_info.get('gms_version', 'Unknown')
+            device_info.build_fingerprint = detailed_info.get('build_fingerprint', 'Unknown')
+
+            # 發送更新信號
+            self.device_detailed_loaded.emit(serial, device_info)
+
+        # 更新進度
+        if serial in self.device_progress:
+            self.device_progress[serial].status = DeviceLoadStatus.FULLY_LOADED
+            self.device_progress[serial].detailed_info = detailed_info
+
+    def _on_all_basic_loaded(self):
+        """所有設備基本信息加載完成"""
+        logger.info("所有設備基本信息加載完成")
+        self.basic_devices_ready.emit(self.device_cache.copy())
+
+    def _on_all_detailed_loaded(self):
+        """所有設備詳細信息加載完成"""
+        logger.info("所有設備詳細信息加載完成")
+        self.all_devices_ready.emit(self.device_cache.copy())
 
     def _on_device_load_failed(self, serial: str, error_message: str):
         """設備加載失敗時的處理"""

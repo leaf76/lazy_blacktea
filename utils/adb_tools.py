@@ -256,6 +256,112 @@ def get_devices_list() -> list[adb_models.DeviceInfo]:
   return result
 
 
+def get_devices_list_fast() -> list[adb_models.DeviceInfo]:
+  """Get devices list with basic info only (fast version for immediate UI display).
+
+  Returns:
+    device_infos: the device info list with basic information only.
+  """
+  result = []
+  init_devices = common.run_command(adb_commands.cmd_get_adb_devices(), 1)
+  logger.info('Get init devices (fast): %s', init_devices)
+  all_devices_info = [item for item in init_devices if item]
+
+  if not any(all_devices_info):
+    logger.warning('Not found device')
+    return result
+
+  # Prepare function calls for parallel execution (basic info only)
+  functions = [device_basic_info_entry] * len(all_devices_info)
+  args_list = [([x for x in i.split() if x],) for i in all_devices_info]
+
+  # Execute basic device info collection in parallel
+  results = _execute_functions_parallel(functions, args_list, 'get_devices_list_fast')
+
+  # Filter out None results and return
+  result = [device_info for device_info in results if device_info is not None]
+  logger.info(f'Fast device discovery completed: {len(result)} devices')
+  return result
+
+
+def device_basic_info_entry(info: List[str]) -> adb_models.DeviceInfo:
+  """Organize basic device info only (fast version without detailed checks).
+
+  Args:
+    info: device info from the adb
+
+  Returns:
+    Basic device info with placeholders for detailed information.
+  """
+  logger.info(f'Getting basic info for: {info}')
+  serial_num = info[0]
+
+  # usb: ?#
+  device_usb = 'None'
+  if len(info) > 2 and ':' in info[2]:
+    device_usb = info[2].split(':')[1]
+
+  # product: ?#
+  device_prod = 'None'
+  if len(info) > 3 and ':' in info[3]:
+    device_prod = info[3].split(':')[1]
+
+  # model: ?#
+  device_model = 'None'
+  if len(info) > 4 and ':' in info[4]:
+    device_model = info[4].split(':')[1]
+
+  logger.info(f'Basic phone info: {serial_num}, {device_usb}, {device_prod}, {device_model}')
+
+  # 創建基本設備信息，詳細信息用加載中的占位符
+  return adb_models.DeviceInfo(
+      serial_num,
+      device_usb,
+      device_prod,
+      device_model,
+      None,  # WiFi狀態稍後加載
+      None,  # 藍牙狀態稍後加載
+      '加載中...',  # Android版本稍後加載
+      '加載中...',  # API等級稍後加載
+      '加載中...',  # GMS版本稍後加載
+      '加載中...',  # Build fingerprint稍後加載
+  )
+
+
+def get_device_detailed_info(serial_num: str) -> dict:
+  """Get detailed information for a specific device (async operation).
+
+  Args:
+    serial_num: Device serial number
+
+  Returns:
+    Dictionary with detailed device information
+  """
+  logger.info(f'獲取設備詳細信息: {serial_num}')
+
+  try:
+    detailed_info = {
+      'wifi_status': check_wifi_is_on(serial_num),
+      'bluetooth_status': check_bluetooth_is_on(serial_num),
+      'android_version': get_android_version(serial_num),
+      'android_api_level': get_android_api_level(serial_num),
+      'gms_version': get_gms_version(serial_num),
+      'build_fingerprint': get_build_fingerprint(serial_num),
+    }
+    logger.info(f'設備 {serial_num} 詳細信息獲取完成')
+    return detailed_info
+  except Exception as e:
+    logger.error(f'獲取設備 {serial_num} 詳細信息失敗: {e}')
+    return {
+      'wifi_status': None,
+      'bluetooth_status': None,
+      'android_version': 'Unknown',
+      'android_api_level': 'Unknown',
+      'gms_version': 'Unknown',
+      'build_fingerprint': 'Unknown',
+    }
+
+
 def device_info_entry(info: List[str]) -> adb_models.DeviceInfo:
   """Organize device info.
 

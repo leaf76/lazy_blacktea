@@ -1119,10 +1119,12 @@ class WindowMain(QMainWindow):
             logger.warning("No suitable app icon found")
 
     def _setup_async_device_signals(self):
-        """設置異步設備管理器的信號連接（簡化版）"""
+        """設置異步設備管理器的信號連接（漸進式版）"""
         self.async_device_manager.device_discovery_started.connect(self._on_async_discovery_started)
-        self.async_device_manager.device_info_loaded.connect(self._on_async_device_loaded)
+        self.async_device_manager.device_basic_loaded.connect(self._on_async_device_basic_loaded)
+        self.async_device_manager.device_detailed_loaded.connect(self._on_async_device_detailed_loaded)
         self.async_device_manager.device_load_progress.connect(self._on_async_device_progress)
+        self.async_device_manager.basic_devices_ready.connect(self._on_async_basic_devices_ready)
         self.async_device_manager.all_devices_ready.connect(self._on_async_all_devices_ready)
 
 
@@ -2901,22 +2903,45 @@ Build Fingerprint: {device.build_fingerprint}'''
     # === 異步設備管理器事件處理 ===
     def _on_async_discovery_started(self):
         """處理異步設備發現開始事件"""
-        logger.info('🔍 高效異步設備發現開始')
+        logger.info('🚀 漸進式設備發現開始')
         if hasattr(self, 'status_bar'):
-            self.status_bar.showMessage('🔍 Loading devices efficiently...', 0)
+            self.status_bar.showMessage('🚀 Loading devices progressively...', 0)
 
         # 清空現有設備列表（準備重新加載）
         self.device_dict.clear()
 
-    def _on_async_device_loaded(self, serial: str, device_info):
-        """處理設備信息加載完成事件（簡化版）"""
-        logger.debug(f'📋 設備加載完成: {serial} - {device_info.device_model}')
+    def _on_async_device_basic_loaded(self, serial: str, device_info):
+        """處理設備基本信息加載完成事件（立即顯示）"""
+        logger.debug(f'📱 設備基本信息: {serial} - {device_info.device_model}')
 
         # 更新設備字典
         self.device_dict[serial] = device_info
 
-        # 發送到控制台（減少輸出頻率）
-        self.write_to_console(f'✅ Device: {serial} ({device_info.device_model})')
+        # 立即更新UI顯示設備（帶加載中狀態）
+        self._update_device_in_ui_immediately(serial, device_info)
+
+        # 發送到控制台
+        self.write_to_console(f'📱 {serial} ({device_info.device_model}) - 詳細信息加載中...')
+
+    def _on_async_device_detailed_loaded(self, serial: str, device_info):
+        """處理設備詳細信息加載完成事件（更新顯示）"""
+        logger.debug(f'📋 設備詳細信息完成: {serial}')
+
+        # 更新設備字典
+        self.device_dict[serial] = device_info
+
+        # 更新UI移除加載中狀態
+        self._update_device_detailed_in_ui(serial, device_info)
+
+        # 發送到控制台
+        android_info = f'Android {device_info.android_version}'
+        self.write_to_console(f'✅ {serial} 詳細信息已加載 ({android_info})')
+
+    def _on_async_basic_devices_ready(self, device_dict: dict):
+        """處理基本設備信息全部加載完成"""
+        logger.info(f'📱 基本設備信息加載完成: {len(device_dict)} 個設備')
+        if hasattr(self, 'status_bar'):
+            self.status_bar.showMessage(f'📱 {len(device_dict)} devices ready, loading details...', 0)
 
     def _on_async_device_progress(self, current: int, total: int, message: str):
         """處理設備加載進度更新（簡化版）"""
@@ -2946,6 +2971,47 @@ Build Fingerprint: {device.build_fingerprint}'''
             self.write_to_console(f'🚀 Efficiently loaded {device_count} devices')
         else:
             self.write_to_console('⚠️ No devices found')
+
+    def _update_device_in_ui_immediately(self, serial: str, device_info):
+        """立即在UI中顯示設備基本信息（帶加載中狀態）"""
+        try:
+            # 刷新設備選擇框（立即顯示）
+            if hasattr(self, 'device_combobox') and self.device_combobox:
+                # 檢查是否已存在
+                existing_index = -1
+                for i in range(self.device_combobox.count()):
+                    if self.device_combobox.itemData(i) == serial:
+                        existing_index = i
+                        break
+
+                display_text = f'{serial} ({device_info.device_model}) 🔄'
+                if existing_index >= 0:
+                    # 更新現有項目
+                    self.device_combobox.setItemText(existing_index, display_text)
+                else:
+                    # 添加新項目
+                    self.device_combobox.addItem(display_text, serial)
+
+            logger.debug(f'UI立即更新：{serial} - {device_info.device_model}')
+
+        except Exception as e:
+            logger.error(f'立即UI更新失敗: {serial} - {e}')
+
+    def _update_device_detailed_in_ui(self, serial: str, device_info):
+        """在UI中更新設備詳細信息（移除加載中狀態）"""
+        try:
+            # 更新設備選擇框（移除加載中圖標）
+            if hasattr(self, 'device_combobox') and self.device_combobox:
+                for i in range(self.device_combobox.count()):
+                    if self.device_combobox.itemData(i) == serial:
+                        display_text = f'{serial} ({device_info.device_model})'
+                        self.device_combobox.setItemText(i, display_text)
+                        break
+
+            logger.debug(f'UI詳細更新完成：{serial} - Android {device_info.android_version}')
+
+        except Exception as e:
+            logger.error(f'詳細UI更新失敗: {serial} - {e}')
 
     def _refresh_all_device_ui(self):
         """一次性刷新所有設備UI組件（高效版）"""
