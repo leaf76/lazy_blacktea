@@ -62,6 +62,8 @@ from ui.device_operations_manager import DeviceOperationsManager
 from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
 from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
+from ui.app_management_manager import AppManagementManager
+from ui.logging_manager import LoggingManager, DiagnosticsManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -968,6 +970,13 @@ class WindowMain(QMainWindow):
         # Initialize device operations manager
         self.device_operations_manager = DeviceOperationsManager(parent_window=self)
 
+        # Initialize application management manager
+        self.app_management_manager = AppManagementManager(self)
+
+        # Initialize logging and diagnostics manager
+        self.logging_manager = LoggingManager(self)
+        self.diagnostics_manager = DiagnosticsManager(self)
+
         self.flag_actions = {}
 
         # Multi-device operation state management
@@ -999,7 +1008,10 @@ class WindowMain(QMainWindow):
         self.panels_manager.recording_stop_requested.connect(self.device_operations_manager.stop_screen_record)
 
         self.user_scale = 1.0
-        self.scrcpy_available = self._check_scrcpy_available()  # Check if scrcpy is installed
+
+        # Initialize app management and check scrcpy availability
+        self.app_management_manager.initialize()
+        self.scrcpy_available = self.app_management_manager.scrcpy_available
 
         # Check if ADB is installed
         if not adb_tools.is_adb_installed():
@@ -1140,8 +1152,12 @@ class WindowMain(QMainWindow):
         self.output_path_edit.setPlaceholderText('Select output directory...')
         output_layout.addWidget(self.output_path_edit)
 
-        browse_btn = QPushButton('Browse')
-        browse_btn.clicked.connect(lambda: self.browse_output_path())
+        browse_btn = UIFactory.create_standard_button(
+            '📂 Browse',
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.browse_output_path(),
+            tooltip='Select output directory'
+        )
         output_layout.addWidget(browse_btn)
 
         layout.addWidget(output_group)
@@ -1151,13 +1167,21 @@ class WindowMain(QMainWindow):
         logcat_layout = QGridLayout(logcat_group)
 
         # Clear logcat button
-        clear_logcat_btn = QPushButton('🗑️ Clear Logcat')
-        clear_logcat_btn.clicked.connect(lambda: self.clear_logcat())
+        clear_logcat_btn = UIFactory.create_standard_button(
+            '🗑️ Clear Logcat',
+            ButtonStyle.DANGER,
+            click_handler=lambda: self.clear_logcat(),
+            tooltip='Clear logcat on selected devices'
+        )
         logcat_layout.addWidget(clear_logcat_btn, 0, 0)
 
         # Android Bug Report button
-        bug_report_btn = QPushButton('📊 Android Bug Report')
-        bug_report_btn.clicked.connect(lambda: self.generate_android_bug_report())
+        bug_report_btn = UIFactory.create_standard_button(
+            '📊 Android Bug Report',
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.generate_android_bug_report(),
+            tooltip='Generate Android bug report'
+        )
         logcat_layout.addWidget(bug_report_btn, 0, 1)
 
         layout.addWidget(logcat_group)
@@ -1339,8 +1363,12 @@ class WindowMain(QMainWindow):
 
         history_buttons_layout = QHBoxLayout()
 
-        clear_history_btn = QPushButton('🗑️ Clear')
-        clear_history_btn.clicked.connect(lambda: self.clear_command_history())
+        clear_history_btn = UIFactory.create_standard_button(
+            '🗑️ Clear',
+            ButtonStyle.DANGER,
+            click_handler=lambda: self.clear_command_history(),
+            tooltip='Clear command history'
+        )
         history_buttons_layout.addWidget(clear_history_btn)
 
         export_history_btn = QPushButton('📤 Export')
@@ -1374,8 +1402,12 @@ class WindowMain(QMainWindow):
         self.file_gen_output_path_edit.setPlaceholderText('Select output directory...')
         output_layout.addWidget(self.file_gen_output_path_edit)
 
-        browse_btn = QPushButton('Browse')
-        browse_btn.clicked.connect(lambda: self.browse_file_generation_output_path())
+        browse_btn = UIFactory.create_standard_button(
+            '📂 Browse',
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.browse_file_generation_output_path(),
+            tooltip='Select output directory for file generation'
+        )
         output_layout.addWidget(browse_btn)
 
         layout.addWidget(output_group)
@@ -2104,33 +2136,8 @@ class WindowMain(QMainWindow):
         QToolTip.showText(tooltip_pos, tooltip_text, widget)
 
     def _check_scrcpy_available(self):
-        """Check if scrcpy is available in the system and get version info."""
-
-        is_available, version_output = adb_tools.check_tool_availability('scrcpy')
-
-        if is_available:
-            logger.info(f'scrcpy is available: {version_output}')
-
-            # Extract version number for compatibility checks
-            if 'scrcpy' in version_output:
-                # Parse version like "scrcpy 3.3.2"
-                try:
-                    version_line = version_output.split('\n')[0]
-                    version_str = version_line.split()[1]
-                    major_version = int(version_str.split('.')[0])
-                    self.scrcpy_major_version = major_version
-                    logger.info(f'Detected scrcpy major version: {major_version}')
-                except (IndexError, ValueError):
-                    self.scrcpy_major_version = 2  # Default to older version
-                    logger.warning('Could not parse scrcpy version, assuming v2.x')
-            else:
-                self.scrcpy_major_version = 2
-
-            return True
-        else:
-            logger.info('scrcpy is not available')
-            self.scrcpy_major_version = None
-            return False
+        """Check if scrcpy is available (deprecated - use app_management_manager)."""
+        return self.app_management_manager.check_scrcpy_available()
 
     def update_selection_count(self):
         """Update the title to show current selection count."""
@@ -2248,20 +2255,8 @@ class WindowMain(QMainWindow):
             self.show_error('Error', f'Device {device_serial} not found.')
 
     def launch_scrcpy_single_device(self, device_serial):
-        """Launch scrcpy for a single device using the unified scrcpy functionality."""
-        if device_serial in self.device_dict:
-            device = self.device_dict[device_serial]
-            # Temporarily select only this device for the scrcpy operation
-            original_selections = self._backup_device_selections()
-            self.select_only_device(device_serial)
-
-            # Use the same scrcpy function as tabs
-            self.launch_scrcpy()
-
-            # Restore original selections
-            self._restore_device_selections(original_selections)
-        else:
-            self.show_error('Error', f'Device {device_serial} not found.')
+        """Launch scrcpy for a single device."""
+        self.app_management_manager.launch_scrcpy_for_device(device_serial)
 
     def _backup_device_selections(self):
         """Backup current device selections."""
@@ -2486,34 +2481,8 @@ Build Fingerprint: {device.build_fingerprint}'''
 
     @ensure_devices_selected
     def install_apk(self):
-        """Install APK on selected devices with enhanced progress display."""
-        apk_file, _ = QFileDialog.getOpenFileName(self, 'Select APK File', '', 'APK Files (*.apk)')
-        if apk_file:
-            devices = self.get_checked_devices()
-            apk_name = os.path.basename(apk_file)
-
-            # Show enhanced progress notification
-            self.error_handler.show_info('📦 APK Installation',
-                                       f'Installing {apk_name} to {len(devices)} device(s)...\n\n'
-                                       f'📱 Devices: {len(devices)} selected\n'
-                                       f'📄 APK: {apk_name}\n\n'
-                                       f'Please wait, installation in progress...')
-
-            # Install with progress tracking
-            def install_with_progress():
-                try:
-                    self._install_apk_with_progress(devices, apk_file, apk_name)
-                except Exception as e:
-                    logger.error(f'APK installation failed: {e}')
-                    self.error_handler.handle_error(ErrorCode.COMMAND_EXECUTION_FAILED, str(e))
-
-            # Run in background thread
-            import threading
-            thread = threading.Thread(target=install_with_progress)
-            thread.daemon = True
-            thread.start()
-
-            logger.info(f'Installing APK {apk_file} to {len(devices)} devices')
+        """Install APK on selected devices."""
+        self.app_management_manager.install_apk_dialog()
 
     def _install_apk_with_progress(self, devices, apk_file, apk_name):
         """Install APK with device-by-device progress updates."""
@@ -3002,12 +2971,8 @@ Build Fingerprint: {device.build_fingerprint}'''
 
     @ensure_devices_selected
     def clear_logcat(self):
-        """Clear logcat on selected devices."""
-        def logcat_wrapper(serials):
-            for serial in serials:
-                adb_tools.clear_device_logcat(serial)
-
-        self._run_adb_tool_on_selected_devices(logcat_wrapper, 'clear logcat')
+        """Clear logcat on selected devices using logging manager."""
+        self.logging_manager.logcat_manager.clear_logcat_selected_devices()
 
     # Shell commands
     @ensure_devices_selected
@@ -3185,85 +3150,7 @@ Build Fingerprint: {device.build_fingerprint}'''
     @ensure_devices_selected
     def launch_scrcpy(self):
         """Launch scrcpy for selected devices."""
-        if not self.scrcpy_available:
-            self.show_scrcpy_installation_guide()
-            return
-
-        devices = self.get_checked_devices()
-        if not devices:
-            self.show_error('Error', 'No devices selected.')
-            return
-
-        if len(devices) > 1:
-            # Multiple devices - ask user to choose one
-            device_choices = [f"{d.device_model} ({d.device_serial_num})" for d in devices]
-            choice, ok = QInputDialog.getItem(
-                self,
-                'Select Device for Mirroring',
-                'scrcpy can only mirror one device at a time.\nPlease select which device to mirror:',
-                device_choices,
-                0,
-                False
-            )
-            if not ok:
-                return
-
-            # Find the selected device
-            selected_index = device_choices.index(choice)
-            selected_device = devices[selected_index]
-        else:
-            selected_device = devices[0]
-
-        serial = selected_device.device_serial_num
-        device_model = selected_device.device_model
-
-        logger.info(f'Launching scrcpy for device: {device_model} ({serial})')
-        self.show_info('scrcpy', f'Launching device mirroring for:\n{device_model} ({serial})\n\nscrcpy window will open shortly...')
-
-        def scrcpy_wrapper():
-            try:
-
-                # Get the correct scrcpy command path
-                scrcpy_cmd = adb_tools.get_scrcpy_command()
-                cmd = [scrcpy_cmd, '-s', serial]
-
-                # Add version-compatible options
-                cmd.extend([
-                    '--max-size', '1024',  # Limit resolution for better performance
-                    '--max-fps', '30',     # Limit FPS for better performance
-                    '--stay-awake',        # Keep device awake while mirroring
-                ])
-
-                # Add bit rate option based on scrcpy version
-                if hasattr(self, 'scrcpy_major_version') and self.scrcpy_major_version >= 3:
-                    # scrcpy 3.x+ uses --video-bit-rate
-                    cmd.extend(['--video-bit-rate', '8M'])
-                else:
-                    # scrcpy 2.x and earlier use --bit-rate
-                    cmd.extend(['--bit-rate', '8M'])
-
-                logger.info(f'Executing scrcpy command: {" ".join(cmd)}')
-
-                # Launch scrcpy in background
-                if sys.platform.startswith('win'):
-                    # Windows
-                    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
-                else:
-                    # macOS/Linux
-                    subprocess.Popen(cmd)
-
-                QTimer.singleShot(0, lambda: logger.info(f'scrcpy launched successfully for {device_model}'))
-
-            except subprocess.CalledProcessError as e:
-                error_msg = f'Failed to launch scrcpy: {e}'
-                logger.error(error_msg)
-                QTimer.singleShot(0, lambda: self.show_error('scrcpy Error', error_msg))
-            except Exception as e:
-                error_msg = f'Error launching scrcpy: {str(e)}'
-                logger.error(error_msg)
-                QTimer.singleShot(0, lambda: self.show_error('scrcpy Error', error_msg))
-
-        self.run_in_thread(scrcpy_wrapper)
+        self.app_management_manager.launch_scrcpy_for_selected_devices()
 
     def show_scrcpy_installation_guide(self):
         """Show detailed installation guide for scrcpy."""

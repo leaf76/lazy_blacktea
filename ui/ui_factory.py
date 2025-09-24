@@ -13,7 +13,7 @@
 - 改善代碼組織結構
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
@@ -24,6 +24,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QAction, QPixmap
 
 from utils import common
+from .style_manager import StyleManager, ButtonStyle, LabelStyle
 
 
 class UIFactory:
@@ -32,6 +33,94 @@ class UIFactory:
     def __init__(self, parent_window=None):
         self.parent_window = parent_window
         self.logger = common.get_logger('ui_factory')
+
+    # ===== 標準化UI元件工廠方法 =====
+
+    @staticmethod
+    def create_standard_button(
+        text: str,
+        style: ButtonStyle = ButtonStyle.PRIMARY,
+        fixed_height: int = 36,
+        click_handler: Optional[Callable] = None,
+        tooltip: Optional[str] = None,
+        enabled: bool = True,
+        object_name: Optional[str] = None
+    ) -> QPushButton:
+        """創建標準按鈕"""
+        button = QPushButton(text)
+        button.setStyleSheet(StyleManager.get_button_style(style, fixed_height))
+        button.setFixedHeight(fixed_height)
+        button.setEnabled(enabled)
+
+        if object_name:
+            button.setObjectName(object_name)
+
+        if click_handler:
+            button.clicked.connect(click_handler)
+
+        if tooltip:
+            button.setToolTip(tooltip)
+
+        return button
+
+    @staticmethod
+    def create_standard_label(
+        text: str,
+        style: LabelStyle = LabelStyle.STATUS,
+        word_wrap: bool = False,
+        alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft,
+        object_name: Optional[str] = None
+    ) -> QLabel:
+        """創建標準標籤"""
+        label = QLabel(text)
+        label.setStyleSheet(StyleManager.get_label_style(style))
+        label.setWordWrap(word_wrap)
+        label.setAlignment(alignment)
+
+        if object_name:
+            label.setObjectName(object_name)
+
+        return label
+
+    @staticmethod
+    def create_standard_input(
+        placeholder: Optional[str] = None,
+        text: str = "",
+        read_only: bool = False,
+        object_name: Optional[str] = None
+    ) -> QLineEdit:
+        """創建標準輸入框"""
+        input_field = QLineEdit()
+        input_field.setStyleSheet(StyleManager.get_input_style())
+
+        if placeholder:
+            input_field.setPlaceholderText(placeholder)
+
+        if text:
+            input_field.setText(text)
+
+        input_field.setReadOnly(read_only)
+
+        if object_name:
+            input_field.setObjectName(object_name)
+
+        return input_field
+
+    @staticmethod
+    def create_standard_checkbox(
+        text: str,
+        checked: bool = False,
+        object_name: Optional[str] = None
+    ) -> QCheckBox:
+        """創建標準核取方塊"""
+        checkbox = QCheckBox(text)
+        checkbox.setStyleSheet(StyleManager.get_checkbox_style())
+        checkbox.setChecked(checked)
+
+        if object_name:
+            checkbox.setObjectName(object_name)
+
+        return checkbox
 
     # ===== 工具面板創建 =====
 
