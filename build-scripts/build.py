@@ -196,15 +196,25 @@ def create_distribution():
 
     if system == "darwin":  # macOS
         app_path = "dist/LazyBlacktea.app"
+        target_arch = os.environ.get('TARGET_ARCH', platform.machine())
+
         if os.path.exists(app_path):
             print_success(f"macOS app bundle created: {app_path}")
+
+            # Verify the built app architecture
+            if shutil.which("lipo"):
+                print("🔍 Verifying app architecture...")
+                result = run_command(["lipo", "-archs", f"{app_path}/Contents/MacOS/LazyBlacktea"])
+                if result:
+                    print(f"✅ Built architecture verified")
 
             # Create DMG (if hdiutil is available)
             if shutil.which("hdiutil"):
                 print("Creating DMG...")
-                dmg_cmd = ["hdiutil", "create", "-volname", "Lazy Blacktea", "-srcfolder", app_path, "-ov", "-format", "UDZO", "dist/LazyBlacktea.dmg"]
+                dmg_name = f"LazyBlacktea-macos-{target_arch}.dmg"
+                dmg_cmd = ["hdiutil", "create", "-volname", "Lazy Blacktea", "-srcfolder", app_path, "-ov", "-format", "UDZO", f"dist/{dmg_name}"]
                 if run_command(dmg_cmd):
-                    print_success("DMG created: dist/LazyBlacktea.dmg")
+                    print_success(f"DMG created: dist/{dmg_name}")
                 else:
                     print_warning("Failed to create DMG")
             else:
@@ -292,16 +302,42 @@ exec "${HERE}/usr/bin/lazyblacktea/lazyblacktea" "$@"
 
 def main():
     """Main build function"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Lazy Blacktea Cross-Platform Builder")
+    parser.add_argument('--arch', choices=['x86_64', 'arm64'],
+                       help='Target architecture (macOS only, defaults to current arch)')
+    args = parser.parse_args()
+
     print_header("Lazy Blacktea Cross-Platform Builder")
 
     system = platform.system()
-    arch = platform.machine()
-    print(f"🖥️  Platform: {system} {arch}")
+    current_arch = platform.machine()
+    target_arch = args.arch or current_arch
+
+    print(f"🖥️  Platform: {system}")
+    print(f"📋 Current architecture: {current_arch}")
+    print(f"🎯 Target architecture: {target_arch}")
 
     if system not in ["Darwin", "Linux"]:
         print_error(f"Unsupported platform: {system}")
         print("This script supports macOS and Linux only.")
         sys.exit(1)
+
+    # Set architecture-specific environment variables for macOS
+    if system == "Darwin":
+        os.environ['TARGET_ARCH'] = target_arch
+        if target_arch != current_arch:
+            print_step(f"Setting up cross-compilation for {target_arch}...")
+            os.environ['ARCHFLAGS'] = f"-arch {target_arch}"
+            os.environ['CFLAGS'] = f"-arch {target_arch}"
+            os.environ['LDFLAGS'] = f"-arch {target_arch}"
+            print(f"✅ Cross-compilation environment configured for {target_arch}")
+        else:
+            print_step(f"Building for native architecture: {target_arch}")
+            os.environ['ARCHFLAGS'] = f"-arch {target_arch}"
+            os.environ['CFLAGS'] = f"-arch {target_arch}"
+            os.environ['LDFLAGS'] = f"-arch {target_arch}"
 
     # Check if we're in the right directory and change to project root if needed
     script_dir = os.path.dirname(os.path.abspath(__file__))

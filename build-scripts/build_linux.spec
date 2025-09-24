@@ -26,7 +26,6 @@ a = Analysis(
         ('config', 'config'),
         ('ui', 'ui'),
         ('utils', 'utils'),
-        ('logcat_viewer.py', '.'),  # Include the extracted logcat viewer module
     ] + qt_plugins,
     hiddenimports=[
         'PyQt6.QtCore',
@@ -35,7 +34,6 @@ a = Analysis(
         'PyQt6.QtNetwork',
         'PyQt6.QtPrintSupport',
         'PyQt6.sip',
-        'logcat_viewer',  # Include the extracted logcat module
         'utils.qt_dependency_checker',  # Include the Qt dependency checker
     ],
     hookspath=[],
