@@ -82,16 +82,27 @@ def show_manual_installation_instructions(distro):
 def test_qt_platform_plugin():
     """Test if Qt platform plugin is available."""
     try:
+        # Check if we're in a CI environment (GitHub Actions, etc.)
+        is_ci = any(env_var in os.environ for env_var in ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'])
+
         # Test Qt platform plugin by creating minimal QApplication
         test_app = QApplication.instance()
         if test_app is None:
-            os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+            # Force offscreen mode in CI environments or if display is not available
+            if is_ci or not os.environ.get('DISPLAY'):
+                os.environ['QT_QPA_PLATFORM'] = 'offscreen'
             test_app = QApplication([])
         return True, None
     except Exception as e:
         error_msg = str(e).lower()
         if 'xcb' in error_msg or 'platform plugin' in error_msg:
-            return False, "Qt xcb platform plugin dependencies missing"
+            # Try offscreen mode as fallback
+            try:
+                os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+                fallback_app = QApplication([])
+                return True, None
+            except:
+                return False, "Qt xcb platform plugin dependencies missing"
         return False, f"Qt initialization failed: {e}"
 
 
@@ -104,6 +115,12 @@ def check_and_fix_qt_dependencies():
     """
     # Only run on Linux systems
     if platform.system() != 'Linux':
+        return True
+
+    # Check if we're in a CI environment - if so, set offscreen mode immediately
+    is_ci = any(env_var in os.environ for env_var in ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'])
+    if is_ci:
+        os.environ['QT_QPA_PLATFORM'] = 'offscreen'
         return True
 
     # Test Qt platform plugin
