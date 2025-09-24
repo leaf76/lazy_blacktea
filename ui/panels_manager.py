@@ -4,7 +4,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
-    QCheckBox, QLineEdit, QProgressBar, QApplication
+    QCheckBox, QLineEdit, QProgressBar, QApplication, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QAction, QActionGroup
@@ -413,6 +413,29 @@ class PanelsManager(QObject):
         title_label = QLabel('Connected Devices (0)')
         title_label.setFont(QFont('Arial', 12, QFont.Weight.Bold))
         device_layout.addWidget(title_label)
+
+        # Search and sort controls
+        search_layout = QHBoxLayout()
+
+        # Search field with icon
+        search_label = QLabel('🔍')
+        search_layout.addWidget(search_label)
+
+        search_field = QLineEdit()
+        search_field.setPlaceholderText('Search devices (model, serial, android 13, wifi on, selected, etc.)...')
+        search_field.textChanged.connect(lambda text: main_window.on_search_changed(text))
+        search_layout.addWidget(search_field)
+
+        # Sort dropdown
+        sort_label = QLabel('Sort:')
+        search_layout.addWidget(sort_label)
+
+        sort_combo = QComboBox()
+        sort_combo.addItems(['Name', 'Serial', 'Status', 'Selected'])
+        sort_combo.currentTextChanged.connect(lambda text: main_window.on_sort_changed(text.lower()))
+        search_layout.addWidget(sort_combo)
+
+        device_layout.addLayout(search_layout)
 
         # Control buttons
         control_layout = QHBoxLayout()

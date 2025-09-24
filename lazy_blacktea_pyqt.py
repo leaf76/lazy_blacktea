@@ -56,6 +56,7 @@ from ui.error_handler import ErrorHandler, ErrorCode, global_error_handler, setu
 from ui.command_executor import CommandExecutor, ensure_devices_selected
 from ui.device_manager import DeviceManager
 from ui.panels_manager import PanelsManager
+from ui.device_search_manager import DeviceSearchManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -996,6 +997,9 @@ class WindowMain(QMainWindow):
         self.check_devices: Dict[str, QCheckBox] = {}
         self.device_groups: Dict[str, List[str]] = {}
         self.refresh_interval = 10
+
+        # Initialize device search manager
+        self.device_search_manager = DeviceSearchManager(main_window=self)
         self.flag_actions = {}
 
         # Multi-device operation state management
@@ -1732,6 +1736,9 @@ class WindowMain(QMainWindow):
         # Re-enable UI updates after batch operations
         self.device_scroll.setUpdatesEnabled(True)
 
+        # Apply search and sort filters after device list update
+        self.filter_and_sort_devices()
+
         # Handle no devices case
         if not device_dict:
             if not hasattr(self, 'no_devices_label') or not self.no_devices_label.parent():
@@ -2370,6 +2377,65 @@ class WindowMain(QMainWindow):
         for serial, checkbox in self.check_devices.items():
             if serial in selections:
                 checkbox.setChecked(selections[serial])
+
+
+
+
+    def filter_and_sort_devices(self):
+        """Filter and sort devices based on current search and sort settings."""
+        if not hasattr(self, 'device_layout'):
+            return
+
+        # Get all devices
+        devices = list(self.device_dict.values())
+
+        # Use search manager to filter and sort
+        sorted_devices = self.device_search_manager.search_and_sort_devices(
+            devices,
+            self.device_search_manager.get_search_text(),
+            self.device_search_manager.get_sort_mode()
+        )
+
+        # Create device items with checkboxes
+        device_items = []
+        for device in sorted_devices:
+            serial = device.device_serial_num
+            if serial in self.check_devices:
+                checkbox = self.check_devices[serial]
+                device_items.append((serial, device, checkbox))
+
+        # Reorder widgets in layout
+        for i, (serial, device, checkbox) in enumerate(device_items):
+            # Remove from layout
+            self.device_layout.removeWidget(checkbox)
+            # Insert at correct position (before the stretch item)
+            self.device_layout.insertWidget(i, checkbox)
+            checkbox.setVisible(True)
+
+        # Hide devices that don't match search
+        for serial, checkbox in self.check_devices.items():
+            if not any(item[0] == serial for item in device_items):
+                checkbox.setVisible(False)
+
+        # Update device count
+        visible_count = len(device_items)
+        total_count = len(self.device_dict)
+        if hasattr(self, 'title_label'):
+            search_text = self.device_search_manager.get_search_text()
+            if search_text:
+                self.title_label.setText(f'Connected Devices ({visible_count}/{total_count})')
+            else:
+                self.title_label.setText(f'Connected Devices ({total_count})')
+
+    def on_search_changed(self, text: str):
+        """Handle search text change."""
+        self.device_search_manager.set_search_text(text.strip())
+        self.filter_and_sort_devices()
+
+    def on_sort_changed(self, sort_mode: str):
+        """Handle sort mode change."""
+        self.device_search_manager.set_sort_mode(sort_mode)
+        self.filter_and_sort_devices()
 
     def copy_single_device_info(self, device_serial):
         """Copy information for a single device."""
