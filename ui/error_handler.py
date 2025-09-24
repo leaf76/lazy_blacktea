@@ -284,6 +284,12 @@ class ErrorHandler(QObject):
             QMessageBox.warning(self.parent, title, message)
         logger.warning(f"Warning shown: {title} - {message}")
 
+    def show_error(self, title: str, message: str):
+        """Show error message."""
+        if self.parent:
+            QMessageBox.critical(self.parent, title, message)
+        logger.error(f"Error shown: {title} - {message}")
+
     def show_question(self, message: str, title: str = "Confirm") -> bool:
         """Show question dialog and return user response."""
         if self.parent:

@@ -1741,7 +1741,7 @@ class WindowMain(QMainWindow):
                 logger.info('Device list refreshed manually (legacy mode)')
         except Exception as e:
             logger.error(f'Error refreshing device list: {e}')
-            self.show_error('Error', f'Failed to refresh device list: {e}')
+            self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'Failed to refresh device list: {e}')
 
     def select_all_devices(self):
         """Select all connected devices."""
@@ -1760,12 +1760,12 @@ class WindowMain(QMainWindow):
         """Save the currently selected devices as a group."""
         group_name = self.group_name_edit.text().strip()
         if not group_name:
-            self.show_error('Error', 'Group name cannot be empty.')
+            self.error_handler.show_error('Error', 'Group name cannot be empty.')
             return
 
         checked_devices = self.get_checked_devices()
         if not checked_devices:
-            self.show_error('Warning', 'No devices selected to save in the group.')
+            self.error_handler.show_warning('Warning', 'No devices selected to save in the group.')
             return
 
         # Check if group already exists
@@ -1919,7 +1919,7 @@ class WindowMain(QMainWindow):
         """Copy selected device information to clipboard with comprehensive details."""
         checked_devices = self.get_checked_devices()
         if not checked_devices:
-            self.show_info('Info', 'No devices selected.')
+            self.error_handler.show_info('Info', 'No devices selected.')
             return
 
         device_info_sections = []
