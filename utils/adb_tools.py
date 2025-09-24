@@ -313,7 +313,7 @@ def device_basic_info_entry(info: List[str]) -> adb_models.DeviceInfo:
 
   logger.info(f'Basic phone info: {serial_num}, {device_usb}, {device_prod}, {device_model}')
 
-  # 創建基本設備信息，詳細信息用加載中的占位符
+  # 創建基本設備信息，詳細信息初始為 None，稍後根據加載結果更新
   return adb_models.DeviceInfo(
       serial_num,
       device_usb,
@@ -321,10 +321,10 @@ def device_basic_info_entry(info: List[str]) -> adb_models.DeviceInfo:
       device_model,
       None,  # WiFi狀態稍後加載
       None,  # 藍牙狀態稍後加載
-      '加載中...',  # Android版本稍後加載
-      '加載中...',  # API等級稍後加載
-      '加載中...',  # GMS版本稍後加載
-      '加載中...',  # Build fingerprint稍後加載
+      None,  # Android版本稍後加載，加載失敗時設為Unknown
+      None,  # API等級稍後加載，加載失敗時設為Unknown
+      None,  # GMS版本稍後加載，加載失敗時設為Unknown
+      None,  # Build fingerprint稍後加載，加載失敗時設為Unknown
   )
 
 

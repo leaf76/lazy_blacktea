@@ -187,10 +187,11 @@ class AsyncDeviceManager(QObject):
         self.detailed_loading_enabled = True
 
         # 定時刷新設置
-        self.refresh_timer = QTimer()
+        self.refresh_timer = QTimer(self)  # 確保timer有正確的parent
         self.refresh_timer.timeout.connect(self._periodic_refresh)
-        self.refresh_interval = 10  # 默認10秒刷新間隔
+        self.refresh_interval = 5   # 默認5秒刷新間隔
         self.auto_refresh_enabled = True
+        self.refresh_cycle_count = 0  # 用於追踪刷新週期
 
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True):
         """開始異步設備發現"""
@@ -263,8 +264,19 @@ class AsyncDeviceManager(QObject):
         """設備基本信息加載完成時的處理"""
         logger.debug(f"設備基本信息已加載: {serial} - {device_info.device_model}")
 
-        # 更新緩存
-        self.device_cache[serial] = device_info
+        # 智能更新緩存：保留現有的詳細信息
+        if serial in self.device_cache:
+            existing_device = self.device_cache[serial]
+            # 只更新基本信息，保留詳細信息
+            existing_device.device_serial_num = device_info.device_serial_num
+            existing_device.device_usb = device_info.device_usb
+            existing_device.device_prod = device_info.device_prod
+            existing_device.device_model = device_info.device_model
+            # 詳細信息字段保持不變（android_ver, android_api_level, gms_version, build_fingerprint, wifi_is_on, bt_is_on）
+            device_info = existing_device  # 使用合併後的設備信息
+        else:
+            # 新設備，直接添加
+            self.device_cache[serial] = device_info
 
         # 更新進度
         if serial in self.device_progress:
@@ -281,17 +293,42 @@ class AsyncDeviceManager(QObject):
         # 更新設備信息
         if serial in self.device_cache:
             device_info = self.device_cache[serial]
-            # 更新詳細信息（注意字段名稱匹配）
-            device_info.wifi_status = detailed_info.get('wifi_status')
-            device_info.bluetooth_status = detailed_info.get('bluetooth_status')
-            device_info.android_ver = detailed_info.get('android_version', 'Unknown')  # 注意：android_ver 不是 android_version
-            device_info.android_api_level = detailed_info.get('android_api_level', 'Unknown')
-            device_info.gms_version = detailed_info.get('gms_version', 'Unknown')
-            device_info.build_fingerprint = detailed_info.get('build_fingerprint', 'Unknown')
 
-            # 更新 WiFi 和藍牙狀態的布爾字段（UI 中使用的）
-            device_info.wifi_is_on = detailed_info.get('wifi_status') == 1
-            device_info.bt_is_on = detailed_info.get('bluetooth_status') == 1
+            # 只更新實際獲得的有效值，保持原有值不被覆蓋
+            wifi_status = detailed_info.get('wifi_status')
+            if wifi_status is not None:
+                device_info.wifi_status = wifi_status
+                device_info.wifi_is_on = (wifi_status == 1)
+
+            bt_status = detailed_info.get('bluetooth_status')
+            if bt_status is not None:
+                device_info.bluetooth_status = bt_status
+                device_info.bt_is_on = (bt_status == 1)
+
+            # 只在獲得有效非Unknown值時才更新字符串字段
+            android_ver = detailed_info.get('android_version')
+            if android_ver and android_ver != 'Unknown':
+                device_info.android_ver = android_ver
+            elif device_info.android_ver is None:  # 初次加載且沒有值
+                device_info.android_ver = 'Unknown'
+
+            android_api = detailed_info.get('android_api_level')
+            if android_api and android_api != 'Unknown':
+                device_info.android_api_level = android_api
+            elif device_info.android_api_level is None:  # 初次加載且沒有值
+                device_info.android_api_level = 'Unknown'
+
+            gms_ver = detailed_info.get('gms_version')
+            if gms_ver and gms_ver != 'Unknown':
+                device_info.gms_version = gms_ver
+            elif device_info.gms_version is None:  # 初次加載且沒有值
+                device_info.gms_version = 'Unknown'
+
+            build_fp = detailed_info.get('build_fingerprint')
+            if build_fp and build_fp != 'Unknown':
+                device_info.build_fingerprint = build_fp
+            elif device_info.build_fingerprint is None:  # 初次加載且沒有值
+                device_info.build_fingerprint = 'Unknown'
 
             # 發送更新信號
             self.device_detailed_loaded.emit(serial, device_info)
@@ -351,9 +388,14 @@ class AsyncDeviceManager(QObject):
 
     def start_periodic_refresh(self):
         """開始定時刷新"""
+        logger.info(f"嘗試啟動定時刷新 - auto_refresh_enabled: {self.auto_refresh_enabled}, timer_active: {self.refresh_timer.isActive()}, interval: {self.refresh_interval}秒")
         if self.auto_refresh_enabled and not self.refresh_timer.isActive():
             self.refresh_timer.start(self.refresh_interval * 1000)  # 轉換為毫秒
-            logger.info(f"定時刷新已啟動，間隔: {self.refresh_interval}秒")
+            logger.info(f"✅ 定時刷新已啟動，間隔: {self.refresh_interval}秒")
+        elif self.refresh_timer.isActive():
+            logger.warning("定時刷新已經在運行中")
+        elif not self.auto_refresh_enabled:
+            logger.warning("自動刷新已禁用，無法啟動定時刷新")
 
     def stop_periodic_refresh(self):
         """停止定時刷新"""
@@ -379,10 +421,17 @@ class AsyncDeviceManager(QObject):
 
     def _periodic_refresh(self):
         """定時刷新回調"""
-        logger.debug("執行定時設備刷新")
+        # 如果有工作線程正在運行，跳過這次刷新避免衝突
+        if self.worker and self.worker.isRunning():
+            logger.info("🔄 跳過定時刷新 - 設備加載中，避免中斷")
+            return
+
+        self.refresh_cycle_count += 1
+
+        # 自動刷新始終加載詳細信息，與手動刷新保持一致
+        logger.info(f"🔄 執行定時設備刷新 (第{self.refresh_cycle_count}次, 完整信息)")
         try:
-            # 只進行基本信息的快速刷新，避免過度負載
-            self.start_device_discovery(force_reload=False, load_detailed=False)
+            self.start_device_discovery(force_reload=True, load_detailed=True)
         except Exception as e:
             logger.error(f"定時刷新失敗: {e}")
 

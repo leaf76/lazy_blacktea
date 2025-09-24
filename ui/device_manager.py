@@ -45,6 +45,10 @@ class DeviceManager(QObject):
     def start_device_refresh(self):
         """Start device refresh using AsyncDeviceManager."""
         logger.info('Starting device refresh with AsyncDeviceManager')
+        # 確保刷新間隔已設置（如果主應用還沒設置的話，使用默認值）
+        if hasattr(self.parent, 'refresh_interval') and self.parent.refresh_interval:
+            self.async_device_manager.set_refresh_interval(self.parent.refresh_interval)
+            logger.info(f'Applied refresh interval from main app: {self.parent.refresh_interval}s')
         self.async_device_manager.start_periodic_refresh()
         # 立即執行一次發現
         self.async_device_manager.start_device_discovery(force_reload=False, load_detailed=True)
@@ -81,6 +85,9 @@ class DeviceManager(QObject):
         """處理設備詳細信息加載完成"""
         self.device_dict[serial] = device_info
         logger.debug(f'Device detailed info loaded: {serial}')
+
+        # 觸發UI更新以顯示詳細信息
+        self.update_device_list(self.device_dict)
 
     def _on_basic_devices_ready(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """處理基本設備信息全部就緒"""

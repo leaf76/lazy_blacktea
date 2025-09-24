@@ -955,7 +955,7 @@ class WindowMain(QMainWindow):
         self.device_dict: Dict[str, adb_models.DeviceInfo] = {}
         self.check_devices: Dict[str, QCheckBox] = {}
         self.device_groups: Dict[str, List[str]] = {}
-        self.refresh_interval = 10
+        self.refresh_interval = 5
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -1038,8 +1038,8 @@ class WindowMain(QMainWindow):
         # Initialize groups list (now that UI is created)
         self.update_groups_listbox()
 
-        # Start device refresh with delay to avoid GUI blocking
-        QTimer.singleShot(250, self.device_manager.start_device_refresh)
+        # Start device refresh with delay to avoid GUI blocking (after config is loaded)
+        QTimer.singleShot(500, self.device_manager.start_device_refresh)
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -1602,7 +1602,9 @@ class WindowMain(QMainWindow):
         self.refresh_interval = interval
         if hasattr(self, 'device_manager'):
             self.device_manager.set_refresh_interval(interval)
-        logger.debug(f'Refresh interval set to {interval} seconds')
+            logger.info(f'Refresh interval set to {interval} seconds and applied to DeviceManager')
+        else:
+            logger.warning(f'Refresh interval set to {interval} seconds but DeviceManager not yet available')
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """Update the device list display without rebuilding UI."""
@@ -1639,12 +1641,15 @@ class WindowMain(QMainWindow):
                 recording_status = self._get_device_recording_status(serial)
 
                 # Format GMS version for display
+                # 處理可能為 None 的字段，顯示為 Unknown
+                android_ver = device.android_ver if device.android_ver else 'Unknown'
+                android_api = device.android_api_level if device.android_api_level else 'Unknown'
                 gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
                 device_text = (
                     f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
                     f'🆔 {device.device_serial_num:<20} | '
-                    f'🤖 Android {device.android_ver:<2} (API {device.android_api_level:<2}) | '
+                    f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
                     f'🎯 GMS: {gms_display:<12} | '
                     f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
                     f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
@@ -1688,13 +1693,15 @@ class WindowMain(QMainWindow):
                 operation_status = self._get_device_operation_status(serial)
                 recording_status = self._get_device_recording_status(serial)
 
-                # Format GMS version for display
+                # 處理可能為 None 的字段，顯示為 Unknown
+                android_ver = device.android_ver if device.android_ver else 'Unknown'
+                android_api = device.android_api_level if device.android_api_level else 'Unknown'
                 gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
                 device_text = (
                     f'{operation_status}{recording_status}📱 {device.device_model:<15} | '
                     f'🆔 {device.device_serial_num:<15} | '
-                    f'🤖 Android {device.android_ver:<2} (API {device.android_api_level:<2}) | '
+                    f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
                     f'🎯 GMS: {gms_display:<12} | '
                     f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
                     f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
@@ -1738,20 +1745,20 @@ class WindowMain(QMainWindow):
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""
         try:
-            logger.info('🔄 Manual device refresh requested (async optimized)')
+            logger.info('🔄 Manual device refresh requested (using DeviceManager)')
 
-            # Use async device manager for better performance with multiple devices
-            self.async_device_manager.start_device_discovery(force_reload=True, load_detailed=True)
+            # Use DeviceManager for unified device management
+            self.device_manager.force_refresh()
 
             # Update status to show loading
             if hasattr(self, 'status_bar'):
                 self.status_bar.showMessage('🔄 Discovering devices...', 5000)
 
         except Exception as e:
-            logger.error(f'Error starting async device refresh: {e}')
-            self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'Failed to start async refresh: {e}')
+            logger.error(f'Error starting device refresh: {e}')
+            self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'Failed to start refresh: {e}')
 
-            # Fallback to original synchronous method if async fails
+            # Fallback to original synchronous method if needed
             try:
                 logger.info('Falling back to synchronous device refresh')
                 devices = adb_tools.get_devices_list()
@@ -1890,7 +1897,7 @@ class WindowMain(QMainWindow):
 
         # Basic actions
         refresh_action = context_menu.addAction('Refresh')
-        refresh_action.triggered.connect(lambda: self.refresh_device_list())
+        refresh_action.triggered.connect(lambda: self.device_manager.force_refresh())
 
         select_all_action = context_menu.addAction('Select All')
         select_all_action.triggered.connect(lambda: self.select_all_devices())
@@ -1959,10 +1966,10 @@ class WindowMain(QMainWindow):
 
             # System Information
             device_info.append("SYSTEM INFORMATION:")
-            device_info.append(f"Android Version: {device.android_ver}")
-            device_info.append(f"API Level: {device.android_api_level}")
-            device_info.append(f"GMS Version: {device.gms_version}")
-            device_info.append(f"Build Fingerprint: {device.build_fingerprint}")
+            device_info.append(f"Android Version: {device.android_ver if device.android_ver else 'Unknown'}")
+            device_info.append(f"API Level: {device.android_api_level if device.android_api_level else 'Unknown'}")
+            device_info.append(f"GMS Version: {device.gms_version if device.gms_version else 'Unknown'}")
+            device_info.append(f"Build Fingerprint: {device.build_fingerprint if device.build_fingerprint else 'Unknown'}")
             device_info.append("")
 
             # Connectivity
@@ -2068,8 +2075,8 @@ class WindowMain(QMainWindow):
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
             f'Model: {device.device_model}\n'
             f'Serial: {device.device_serial_num}\n'
-            f'Android: {device.android_ver} (API Level {device.android_api_level})\n'
-            f'GMS Version: {device.gms_version}\n'
+            f'Android: {device.android_ver if device.android_ver else "Unknown"} (API Level {device.android_api_level if device.android_api_level else "Unknown"})\n'
+            f'GMS Version: {device.gms_version if device.gms_version else "Unknown"}\n'
             f'Product: {device.device_prod}\n'
             f'USB: {device.device_usb}\n'
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
@@ -2078,7 +2085,7 @@ class WindowMain(QMainWindow):
             f'Bluetooth: {self._get_on_off_status(device.bt_is_on)}\n'
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
             f'🔧 Build Information\n'
-            f'Build Fingerprint: {device.build_fingerprint[:50]}...'
+            f'Build Fingerprint: {(device.build_fingerprint[:50] + "...") if device.build_fingerprint else "Unknown"}'
         )
 
         # Try to get additional info, but don't block UI for it
@@ -2356,8 +2363,8 @@ class WindowMain(QMainWindow):
             device_info = f'''Device Information:
 Model: {device.device_model}
 Serial: {device.device_serial_num}
-Android Version: {device.android_ver} (API Level {device.android_api_level})
-GMS Version: {device.gms_version}
+Android Version: {device.android_ver if device.android_ver else 'Unknown'} (API Level {device.android_api_level if device.android_api_level else 'Unknown'})
+GMS Version: {device.gms_version if device.gms_version else 'Unknown'}
 Product: {device.device_prod}
 USB: {device.device_usb}
 WiFi Status: {self._get_on_off_status(device.wifi_is_on)}
@@ -2437,7 +2444,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             self.device_operations[serial] = description
 
         # Trigger device list refresh to show operation status
-        QTimer.singleShot(100, self.refresh_device_list)
+        QTimer.singleShot(100, self.device_manager.force_refresh)
 
         if show_progress:
             device_list = ', '.join(device_models[:3])
@@ -2478,7 +2485,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             if serial in self.device_operations:
                 del self.device_operations[serial]
         # Refresh device list to update display
-        self.refresh_device_list()
+        self.device_manager.force_refresh()
 
     # ADB Server methods
     def adb_start_server(self):
@@ -2565,7 +2572,7 @@ Build Fingerprint: {device.build_fingerprint}'''
         # Set devices as in operation (Screenshot)
         for device in devices:
             self.device_manager.set_device_operation_status(device.device_serial_num, 'Screenshot')
-        self.refresh_device_list()
+        self.device_manager.force_refresh()
 
         # Update UI state
         self._update_screenshot_button_state(True)
@@ -2584,7 +2591,7 @@ Build Fingerprint: {device.build_fingerprint}'''
                 # Clean up device operation status
                 for device in devices:
                     self.device_manager.clear_device_operation_status(device.device_serial_num)
-                self.refresh_device_list()
+                self.device_manager.force_refresh()
             except Exception as signal_error:
                 logger.error(f'🔧 [CALLBACK RECEIVED] Signal emission failed: {signal_error}')
                 import traceback
@@ -2664,7 +2671,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             logger.info(f'🔄 [SIGNAL] Removing operation for {device_serial}')
             del self.device_operations[device_serial]
         logger.info(f'🔄 [SIGNAL] Triggering UI refresh for {device_serial}')
-        self.refresh_device_list()
+        self.device_manager.force_refresh()
         self.update_recording_status()
         logger.info(f'🔄 [SIGNAL] _on_recording_state_cleared completed for {device_serial}')
 
@@ -2809,7 +2816,7 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         # Refresh UI
         logger.info(f'📷 [MAIN THREAD] About to refresh device list')
-        self.refresh_device_list()
+        self.device_manager.force_refresh()
         logger.info(f'📷 [MAIN THREAD] About to reset screenshot button state')
         self._update_screenshot_button_state(False)
         logger.info(f'📷 [MAIN THREAD] Screenshot completion handler finished')
@@ -2904,7 +2911,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             if serial in self.device_operations and self.device_operations[serial] == 'Recording':
                 del self.device_operations[serial]
             # Force refresh device list to update display
-            self.refresh_device_list()
+            self.device_manager.force_refresh()
             # Update recording status panel
             self.update_recording_status()
         else:
@@ -2961,7 +2968,7 @@ Build Fingerprint: {device.build_fingerprint}'''
         def bluetooth_wrapper(serials):
             adb_tools.switch_bluetooth_enable(serials, True)
             # Trigger device list refresh to update status
-            QTimer.singleShot(1000, self.refresh_device_list)
+            QTimer.singleShot(1000, self.device_manager.force_refresh)
 
         # Disable progress dialog, only show completion notification
         self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'enable Bluetooth', show_progress=False)
@@ -2978,7 +2985,7 @@ Build Fingerprint: {device.build_fingerprint}'''
         def bluetooth_wrapper(serials):
             adb_tools.switch_bluetooth_enable(serials, False)
             # Trigger device list refresh to update status
-            QTimer.singleShot(1000, self.refresh_device_list)
+            QTimer.singleShot(1000, self.device_manager.force_refresh)
 
         # Disable progress dialog, only show completion notification
         self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'disable Bluetooth', show_progress=False)
@@ -3376,8 +3383,8 @@ After installation, restart lazy blacktea to use device mirroring functionality.
                 if main_output_path:
                     self.file_gen_output_path_edit.setText(main_output_path)
 
-            # Load refresh interval from new config (set minimum 10 seconds for packaged apps)
-            self.refresh_interval = max(10, config.device.refresh_interval)
+            # Load refresh interval from new config (set minimum 5 seconds for packaged apps)
+            self.refresh_interval = max(5, config.device.refresh_interval)
             self.device_manager.set_refresh_interval(self.refresh_interval)
 
             # Load UI scale from new config

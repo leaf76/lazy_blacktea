@@ -85,29 +85,48 @@ class DeviceSearchManager:
         ]
 
         medium_priority_fields = [
-            # Brand and version info
+            # Brand and version info - only if not loading
             getattr(device, 'device_brand', ''),
-            device.android_ver,
-            f"android {device.android_ver}",
         ]
 
-        status_fields = [
-            # Connectivity and status - exact match only
-            "wifi on" if device.wifi_is_on else "wifi off",
-            "bluetooth on" if device.bt_is_on else "bluetooth off",
-            "bt on" if device.bt_is_on else "bt off",
+        # Only add android version if it's available and not unknown
+        if device.android_ver and device.android_ver not in [None, 'Unknown', '加載中...', 'Loading...']:
+            medium_priority_fields.extend([
+                device.android_ver,
+                f"android {device.android_ver}",
+            ])
+
+        status_fields = []
+        # Only add WiFi/Bluetooth status if loaded (not None)
+        if device.wifi_is_on is not None:
+            status_fields.extend([
+                "wifi on" if device.wifi_is_on else "wifi off",
+            ])
+        if device.bt_is_on is not None:
+            status_fields.extend([
+                "bluetooth on" if device.bt_is_on else "bluetooth off",
+                "bt on" if device.bt_is_on else "bt off",
+            ])
+
+        # Always include operation and selection status
+        status_fields.extend([
             self._get_device_operation_status(device.device_serial_num) or "idle",
             "selected" if self._is_device_selected(device.device_serial_num) else "unselected",
             "recording" if self._get_device_recording_status(device.device_serial_num) else "",
-        ]
+        ])
 
-        version_fields = [
-            # Version specific fields - exact match preferred
-            f"api {device.android_api_level}",
-            f"android api {device.android_api_level}",
-            device.gms_version if device.gms_version and device.gms_version != 'N/A' else '',
-            f"gms {device.gms_version}" if device.gms_version and device.gms_version != 'N/A' else '',
-        ]
+        version_fields = []
+        # Only add version fields if available and not unknown
+        if device.android_api_level and device.android_api_level not in [None, 'Unknown', '加載中...', 'Loading...']:
+            version_fields.extend([
+                f"api {device.android_api_level}",
+                f"android api {device.android_api_level}",
+            ])
+        if (device.gms_version and device.gms_version not in [None, 'N/A', 'Unknown', '加載中...', 'Loading...']):
+            version_fields.extend([
+                device.gms_version,
+                f"gms {device.gms_version}",
+            ])
 
         max_score = 0.0
 
