@@ -67,6 +67,7 @@ from utils.file_generation_utils import (
 from utils.debounced_refresh import (
     DeviceListDebouncedRefresh, BatchedUIUpdater, PerformanceOptimizedRefresh
 )
+from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 
 logger = common.get_logger('lazy_blacktea')
 
@@ -3882,6 +3883,10 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
 def main():
     """Main application entry point."""
+    # Check Qt dependencies on Linux before creating QApplication
+    if not check_and_fix_qt_dependencies():
+        sys.exit(1)
+
     app = QApplication(sys.argv)
     app.setApplicationName('lazy blacktea')
     app.setApplicationVersion('0.0.1')

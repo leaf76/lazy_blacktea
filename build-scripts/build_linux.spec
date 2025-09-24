@@ -1,26 +1,47 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+import sys
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
 block_cipher = None
+
+# Collect Qt platform plugins and libraries
+qt_plugins = collect_data_files('PyQt6.Qt6.plugins', subdir='plugins')
+qt_libs = collect_dynamic_libs('PyQt6')
 
 a = Analysis(
     ['lazy_blacktea_pyqt.py'],
     pathex=[],
-    binaries=[],
+    binaries=qt_libs + [
+        # Include system libraries that might be missing
+        ('/usr/lib/x86_64-linux-gnu/libxcb-cursor.so.0*', '.'),
+        ('/usr/lib/x86_64-linux-gnu/libxcb-xkb.so.1*', '.'),
+        ('/usr/lib/x86_64-linux-gnu/libxcb-xinput.so.0*', '.'),
+        ('/usr/lib/x86_64-linux-gnu/libfontconfig.so.1*', '.'),
+        ('/usr/lib/x86_64-linux-gnu/libfreetype.so.6*', '.'),
+    ],
     datas=[
         ('assets', 'assets'),
         ('config', 'config'),
         ('ui', 'ui'),
         ('utils', 'utils'),
-    ],
+    ] + qt_plugins,
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
         'PyQt6.QtNetwork',
         'PyQt6.QtPrintSupport',
+        'PyQt6.sip',
+        'utils.qt_dependency_checker',  # Include the Qt dependency checker
     ],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={
+        'PyQt6': {
+            'plugins': ['platforms', 'platforminputcontexts', 'xcbglintegrations'],
+        }
+    },
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,

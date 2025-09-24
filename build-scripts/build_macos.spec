@@ -18,6 +18,8 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'PyQt6.QtNetwork',
         'PyQt6.QtPrintSupport',
+        'PyQt6.sip',
+        'utils.qt_dependency_checker',  # Include the Qt dependency checker
     ],
     hookspath=[],
     hooksconfig={},
