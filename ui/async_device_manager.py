@@ -14,7 +14,7 @@ import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
 
 from utils import adb_tools, common, adb_models
 
@@ -41,8 +41,8 @@ class DeviceLoadProgress:
     load_time: float = field(default_factory=time.time)
 
 
-class AsyncDeviceWorker(QThread):
-    """異步設備信息加載工作線程"""
+class AsyncDeviceWorker(QObject):
+    """異步設備信息加載工作對象 - 使用安全的worker模式"""
 
     # 漸進式加載信號定義
     device_basic_loaded = pyqtSignal(str, object)  # device_serial, basic_info
@@ -58,6 +58,7 @@ class AsyncDeviceWorker(QThread):
         self.load_detailed: bool = True
         self.max_concurrent: int = 3  # 限制並發數量
         self.stop_requested: bool = False
+        self.is_running: bool = False
         self.mutex = QMutex()
 
     def set_devices(self, device_serials: List[str], load_detailed: bool = True):
@@ -66,18 +67,25 @@ class AsyncDeviceWorker(QThread):
             self.device_serials = device_serials.copy()
             self.load_detailed = load_detailed
             self.stop_requested = False
+            self.is_running = False
 
     def request_stop(self):
         """請求停止加載"""
         with QMutexLocker(self.mutex):
             self.stop_requested = True
+            self.is_running = False
 
-    def run(self):
-        """執行異步設備加載"""
-        try:
-            self._load_devices_efficiently()
-        except Exception as e:
-            logger.error(f"異步設備加載錯誤: {e}")
+    def isRunning(self) -> bool:
+        """檢查是否正在運行"""
+        with QMutexLocker(self.mutex):
+            return self.is_running
+
+    def start_loading(self):
+        """開始異步加載 - 使用QRunnable"""
+        with QMutexLocker(self.mutex):
+            self.is_running = True
+        runnable = DeviceLoadingRunnable(self)
+        QThreadPool.globalInstance().start(runnable)
 
     def _load_devices_efficiently(self):
         """漸進式設備加載：先顯示基本信息，再異步補充詳細信息"""
@@ -99,6 +107,10 @@ class AsyncDeviceWorker(QThread):
         if not self.stop_requested:
             self.all_detailed_loaded.emit()
             logger.info(f"漸進式設備加載完成：{len(self.device_serials)} 個設備")
+
+        # 設置運行狀態為完成
+        with QMutexLocker(self.mutex):
+            self.is_running = False
 
     def _load_basic_info_immediately(self):
         """立即加載所有設備的基本信息（僅基本信息，不執行耗時檢查）"""
@@ -161,6 +173,23 @@ class AsyncDeviceWorker(QThread):
                     logger.debug(f"詳細信息加載進度: {loaded_count}/{len(self.device_serials)}")
 
             logger.info(f"詳細信息加載完成：{loaded_count} 個設備")
+
+
+class DeviceLoadingRunnable(QRunnable):
+    """設備加載任務 - 在線程池中運行"""
+
+    def __init__(self, worker: AsyncDeviceWorker):
+        super().__init__()
+        self.worker = worker
+        self.setAutoDelete(True)
+
+    def run(self):
+        """執行異步設備加載"""
+        try:
+            self.worker._load_devices_efficiently()
+        except Exception as e:
+            logger.error(f"異步設備加載錯誤: {e}")
+
 
 
 
@@ -226,21 +255,18 @@ class AsyncDeviceManager(QObject):
             self.worker.all_basic_loaded.connect(self._on_all_basic_loaded)
             self.worker.all_detailed_loaded.connect(self._on_all_detailed_loaded)
 
-            # 啟動工作線程
-            self.worker.start()
+            # 啟動工作線程池任務
+            self.worker.start_loading()
 
         except Exception as e:
             logger.error(f"設備發現啟動失敗: {e}")
 
     def stop_current_loading(self):
         """停止當前的加載過程"""
-        if self.worker and self.worker.isRunning():
+        if self.worker:
             logger.info("停止當前設備加載過程")
             self.worker.request_stop()
-            self.worker.wait(3000)  # 等待3秒
-            if self.worker.isRunning():
-                self.worker.terminate()
-                self.worker.wait(1000)
+            # 對於QRunnable，我們只能請求停止，無法強制終止
 
     def _get_basic_device_serials(self) -> List[str]:
         """快速獲取設備序號列表"""

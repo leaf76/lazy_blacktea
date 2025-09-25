@@ -312,7 +312,11 @@ class DiagnosticsManager:
         try:
             adb_version = adb_tools.get_adb_version()
             info['ADB版本'] = adb_version if adb_version else '未檢測到'
-        except:
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            logger.debug(f'ADB version detection failed: {e}')
+            info['ADB版本'] = '檢測失敗'
+        except Exception as e:
+            logger.warning(f'Unexpected error getting ADB version: {e}')
             info['ADB版本'] = '檢測失敗'
 
         return info
@@ -345,7 +349,11 @@ class DiagnosticsManager:
             # 簡單的ADB連接測試
             result = adb_tools.run_adb_command(['-s', device_serial, 'shell', 'echo', 'test'])
             return 'test' in str(result)
-        except:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
+            logger.debug(f'Connection test failed for {device_serial}: {e}')
+            return False
+        except Exception as e:
+            logger.warning(f'Unexpected error in connection test for {device_serial}: {e}')
             return False
 
     def generate_diagnostics_report(self) -> str:

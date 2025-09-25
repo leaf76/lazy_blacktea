@@ -2234,7 +2234,9 @@ class WindowMain(QMainWindow):
                 f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
             )
             return extended_tooltip
-        except:
+        except Exception as e:
+            if hasattr(self, 'logging_manager'):
+                self.logging_manager.debug(f'Failed to create device tooltip: {e}')
             return base_tooltip
 
     def _get_additional_device_info(self, serial_num):

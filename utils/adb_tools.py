@@ -1,12 +1,15 @@
 """Get devices list and use the device info to set object."""
 
 import concurrent.futures
+import glob
 import os
 import pathlib
 import platform
+import shutil
 import subprocess
 import time
-from typing import List, Callable, Any, Optional
+import traceback
+from typing import List, Callable, Any
 from functools import wraps
 
 from utils import adb_commands
@@ -41,7 +44,6 @@ def adb_operation(operation_name: str = None, default_return=None, log_errors: b
       except Exception as e:
         if log_errors:
           logger.error(f'Error in {op_name}: {e}')
-          import traceback
           logger.debug(f'Traceback for {op_name}: {traceback.format_exc()}')
         return default_return
     return wrapper
@@ -66,7 +68,6 @@ def adb_device_operation(default_return=None, log_errors: bool = True):
       except Exception as e:
         if log_errors:
           logger.error(f'Error in {func.__name__} for device {serial_num}: {e}')
-          import traceback
           logger.debug(f'Traceback for {func.__name__} (device {serial_num}): {traceback.format_exc()}')
         return default_return
     return wrapper
@@ -139,8 +140,10 @@ def is_adb_installed() -> bool:
     try:
       result = common.run_command('adb version')
       return bool(result)
-    except:
-      pass
+    except (subprocess.SubprocessError, OSError) as e:
+      logger.debug(f'ADB availability check failed: {e}')
+    except Exception as e:
+      logger.warning(f'Unexpected error checking ADB availability: {e}')
 
   # If not in PATH, try common locations based on platform
   import platform
@@ -179,7 +182,6 @@ def is_adb_installed() -> bool:
   for adb_path in common_paths:
     # Handle wildcard paths
     if '*' in adb_path:
-      import glob
       matches = glob.glob(adb_path)
       for match in matches:
         if os.path.isfile(match) and os.access(match, os.X_OK):
@@ -189,7 +191,11 @@ def is_adb_installed() -> bool:
               # Update the global PATH or set a global ADB path
               _set_adb_path(match)
               return True
-          except:
+          except (subprocess.SubprocessError, OSError) as e:
+            logger.debug(f'Failed to test ADB at {match}: {e}')
+            continue
+          except Exception as e:
+            logger.warning(f'Unexpected error testing ADB at {match}: {e}')
             continue
     else:
       if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
@@ -199,7 +205,11 @@ def is_adb_installed() -> bool:
             # Update the global PATH or set a global ADB path
             _set_adb_path(adb_path)
             return True
-        except:
+        except (subprocess.SubprocessError, OSError) as e:
+          logger.debug(f'Failed to test ADB at {adb_path}: {e}')
+          continue
+        except Exception as e:
+          logger.warning(f'Unexpected error testing ADB at {adb_path}: {e}')
           continue
 
   return False
@@ -396,7 +406,7 @@ def device_info_entry(info: List[str]) -> adb_models.DeviceInfo:
   check_bt = check_bluetooth_is_on(serial_num)
   android_ver = get_android_version(serial_num)
   android_api_level = get_android_api_level(serial_num)
-  gms_verison_str = get_gms_version(serial_num)
+  gms_version_str = get_gms_version(serial_num)
   build_fingerprint = get_build_fingerprint(serial_num)
   return adb_models.DeviceInfo(
       serial_num,
@@ -407,7 +417,7 @@ def device_info_entry(info: List[str]) -> adb_models.DeviceInfo:
       check_bt,
       android_ver,
       android_api_level,
-      gms_verison_str,
+      gms_version_str,
       build_fingerprint,
   )
 
@@ -562,7 +572,11 @@ def _is_device_available(serial_num: str) -> bool:
     cmd = f'adb -s {serial_num} get-state'
     result = common.run_command(cmd, 5)  # 5 second timeout
     return 'device' in str(result).lower()
-  except:
+  except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
+    logger.debug(f'Device {serial_num} availability check failed: {e}')
+    return False
+  except Exception as e:
+    logger.warning(f'Unexpected error checking device {serial_num}: {e}')
     return False
 
 
@@ -685,7 +699,7 @@ def extract_all_discovery_service_info(
   root_folder = common.make_gen_dir_path(root_folder)
   commands = []
   for s in serial_nums:
-    cmd = adb_commands.cmd_extact_discovery_service_info(s, root_folder)
+    cmd = adb_commands.cmd_extract_discovery_service_info(s, root_folder)
     commands.append(cmd)
 
   results = _execute_commands_parallel(commands, 'extract_to_android_device')
@@ -706,7 +720,7 @@ def extract_single_discovery_service_info(root_folder: str, serial_num: str):
   logger.info('Start to extract discovery info.')
 
   root_folder = common.get_full_path(root_folder)
-  cmd = adb_commands.cmd_extact_discovery_service_info(serial_num, root_folder)
+  cmd = adb_commands.cmd_extract_discovery_service_info(serial_num, root_folder)
   common.run_command(cmd)
   logger.info('Extract done.')
 
@@ -978,11 +992,12 @@ def start_to_record_android_devices(
       result = common.mp_run_command(cmd)
       results.append(result)
     logger.info(f'🎬 [START DEBUG] Recording commands completed. Results: {results}')
-    time.sleep(0.5)
+
+    # Instead of sleep, verify recording has started
+    _verify_recording_started(serial_nums)
 
   except Exception as e:
     logger.error(f'❌ [START DEBUG] Error starting recording: {e}')
-    import traceback
     logger.error(f'❌ [START DEBUG] Traceback: {traceback.format_exc()}')
     raise e
 
@@ -1021,7 +1036,6 @@ def stop_to_screen_record_android_devices(
 
   except Exception as e:
     logger.error(f'❌ [MULTI-STOP DEBUG] Error stopping recording: {e}')
-    import traceback
     logger.error(f'❌ [MULTI-STOP DEBUG] Traceback: {traceback.format_exc()}')
     raise e
 
@@ -1047,7 +1061,8 @@ def stop_to_screen_record_android_device(
     logger.info(f'🔴 [SINGLE-STOP DEBUG] Stop command: {stop_cmd}')
     stop_result = common.run_command(stop_cmd)
     logger.info(f'🔴 [SINGLE-STOP DEBUG] Stop command result: {stop_result}')
-    time.sleep(1.0)  # Give more time for process to stop
+    # Verify the process has stopped
+    _verify_recording_stopped(serial_num)
 
     # Step 2: Pull the screen record to output path
     logger.info(f'🔴 [SINGLE-STOP DEBUG] STEP 2: Pulling screen record from device {serial_num}')
@@ -1062,7 +1077,9 @@ def stop_to_screen_record_android_device(
 
     pull_result = common.run_command(pull_cmd)
     logger.info(f'🔴 [SINGLE-STOP DEBUG] Pull command result: {pull_result}')
-    time.sleep(0.5)
+
+    # Verify file was pulled successfully
+    _verify_file_pulled(output_path, serial_num, name)
 
     # Step 3: Remove the file from device
     logger.info(f'🔴 [SINGLE-STOP DEBUG] STEP 3: Removing screen record file from device {serial_num}')
@@ -1075,7 +1092,6 @@ def stop_to_screen_record_android_device(
 
   except Exception as e:
     logger.error(f'❌ [SINGLE-STOP DEBUG] Error stopping device {serial_num}: {e}')
-    import traceback
     logger.error(f'❌ [SINGLE-STOP DEBUG] Traceback: {traceback.format_exc()}')
     raise e
 
@@ -1185,8 +1201,8 @@ def get_additional_device_info(serial_num: str) -> dict:
             if mah_result and mah_result[0]:
               mah_value = int(mah_result[0].strip()) // 1000  # Convert from μAh to mAh
               additional_info['battery_capacity_mah'] = f'{mah_value} mAh'
-        except:
-          pass
+        except (ValueError, IndexError, subprocess.SubprocessError) as e:
+          logger.debug(f'Failed to get battery capacity: {e}')
 
       # Calculate Battery mAs (milliamp seconds) - theoretical
       try:
@@ -1196,8 +1212,8 @@ def get_additional_device_info(serial_num: str) -> dict:
             mah = int(mah_str)
             mas = mah * 3600  # Convert mAh to mAs (1 hour = 3600 seconds)
             additional_info['battery_mas'] = f'{mas:,} mAs'
-      except:
-        pass
+      except (ValueError, KeyError) as e:
+        logger.debug(f'Failed to calculate battery mAs: {e}')
 
       # Calculate DOU (Days Of Use) hours - estimated based on typical usage
       try:
@@ -1211,8 +1227,8 @@ def get_additional_device_info(serial_num: str) -> dict:
             # Estimate usage time based on average 200mA consumption (typical smartphone usage)
             estimated_hours = current_charge / 200
             additional_info['battery_dou_hours'] = f'{estimated_hours:.1f} hours'
-      except:
-        pass
+      except (ValueError, KeyError, ZeroDivisionError) as e:
+        logger.debug(f'Failed to calculate battery DOU hours: {e}')
 
   except Exception:
     additional_info['battery_level'] = 'Unknown'
@@ -1249,7 +1265,6 @@ def check_tool_availability(tool_name: str) -> tuple[bool, str]:
   # First try to find tool in PATH
   if shutil.which(tool_name):
     try:
-      import subprocess
       result = subprocess.run([tool_name, '--version'],
                             capture_output=True, text=True, timeout=5)
       if result.returncode == 0:
@@ -1283,31 +1298,30 @@ def check_tool_availability(tool_name: str) -> tuple[bool, str]:
     for scrcpy_path in common_paths:
       # Handle wildcard paths
       if '*' in scrcpy_path:
-        import glob
         matches = glob.glob(scrcpy_path)
         for match in matches:
           if os.path.isfile(match) and os.access(match, os.X_OK):
             try:
-              import subprocess
               result = subprocess.run([match, '--version'],
                                     capture_output=True, text=True, timeout=5)
               if result.returncode == 0:
                 # Update global scrcpy path for future use
                 _scrcpy_command_path = match
                 return True, result.stdout.strip()
-            except:
+            except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+              logger.debug(f'Failed to check scrcpy version at {match}: {e}')
               continue
       else:
         if os.path.isfile(scrcpy_path) and os.access(scrcpy_path, os.X_OK):
           try:
-            import subprocess
             result = subprocess.run([scrcpy_path, '--version'],
                                   capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
               # Update global scrcpy path for future use
               _scrcpy_command_path = scrcpy_path
               return True, result.stdout.strip()
-          except:
+          except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+            logger.debug(f'Failed to check scrcpy version at {scrcpy_path}: {e}')
             continue
 
   return False, ""
@@ -1406,3 +1420,97 @@ def take_screenshot_single_device(serial: str, output_path: str, filename: str) 
   except Exception as e:
     logger.error(f'Error taking screenshot for {serial}: {e}')
     return False
+
+
+def _verify_recording_started(serial_nums: List[str]) -> bool:
+  """Verify that screen recording has started on devices.
+
+  Args:
+    serial_nums: List of device serial numbers
+
+  Returns:
+    bool: True if recording verified on all devices
+  """
+  max_attempts = 10
+  for attempt in range(max_attempts):
+    all_started = True
+    for serial in serial_nums:
+      try:
+        # Check if screenrecord process is running
+        cmd = adb_commands._build_adb_shell_command(serial, 'ps | grep screenrecord')
+        result = common.run_command(cmd, 3)
+        if not result or not any('screenrecord' in str(r) for r in result):
+          all_started = False
+          break
+      except Exception as e:
+        logger.debug(f'Failed to verify recording on {serial}: {e}')
+        all_started = False
+        break
+
+    if all_started:
+      logger.info(f'Screen recording verified on all {len(serial_nums)} devices')
+      return True
+
+    # Minimal wait before retry (non-blocking)
+    time.sleep(0.01)  # Reduced from 0.1s to 0.01s
+
+  logger.warning(f'Could not verify recording started on all devices after {max_attempts} attempts')
+  return False
+
+
+def _verify_recording_stopped(serial_num: str) -> bool:
+  """Verify that screen recording has stopped on a device.
+
+  Args:
+    serial_num: Device serial number
+
+  Returns:
+    bool: True if recording stopped
+  """
+  max_attempts = 30  # Up to 3 seconds
+  for attempt in range(max_attempts):
+    try:
+      # Check if screenrecord process is still running
+      cmd = adb_commands._build_adb_shell_command(serial_num, 'ps | grep screenrecord')
+      result = common.run_command(cmd, 3)
+      if not result or not any('screenrecord' in str(r) for r in result):
+        logger.info(f'Screen recording stopped on device {serial_num}')
+        return True
+    except Exception as e:
+      logger.debug(f'Failed to verify recording stopped on {serial_num}: {e}')
+
+    # Minimal wait before retry (non-blocking)
+    time.sleep(0.01)  # Reduced from 0.1s to 0.01s
+
+  logger.warning(f'Could not verify recording stopped on {serial_num} after {max_attempts} attempts')
+  return False
+
+
+def _verify_file_pulled(output_path: str, serial_num: str, name: str) -> bool:
+  """Verify that screen recording file was pulled successfully.
+
+  Args:
+    output_path: Output directory path
+    serial_num: Device serial number
+    name: Recording name
+
+  Returns:
+    bool: True if file exists locally
+  """
+  import os
+  expected_filename = f"screenrecord_{serial_num}_{name}.mp4"
+  local_file_path = os.path.join(output_path, expected_filename)
+
+  max_attempts = 20  # Up to 2 seconds
+  for attempt in range(max_attempts):
+    if os.path.exists(local_file_path):
+      file_size = os.path.getsize(local_file_path)
+      if file_size > 0:
+        logger.info(f'Screen recording file pulled successfully: {local_file_path} ({file_size} bytes)')
+        return True
+
+    # Minimal wait before retry (non-blocking)
+    time.sleep(0.01)  # Reduced from 0.1s to 0.01s
+
+  logger.warning(f'Could not verify file was pulled: {local_file_path}')
+  return False

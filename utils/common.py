@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import pathlib
+import shlex
 import subprocess
 from typing import Optional
 
@@ -198,20 +199,29 @@ def sp_run_command(command, ignore_index=0) -> list[str]:
   # start to run the command line
   _logger.debug('Run command: %s', command)
   listing_result = []
+
+  # Convert string command to list for security
+  if isinstance(command, str):
+    command_list = shlex.split(command)
+  else:
+    command_list = command
+
   try:
     result = subprocess.run(
-        command, check=True, capture_output=True, shell=True
+        command_list, check=True, capture_output=True, shell=False,
+        text=True, encoding='utf-8'
     )
     if result.returncode == 0:
       output = result.stdout.splitlines()
-      for l in output[ignore_index:]:
-        result = l.decode('utf-8')
-        listing_result.append(result)
+      for line in output[ignore_index:]:
+        listing_result.append(line)
     else:
-      err_msg = result.stderr.decode('utf-8')
+      err_msg = result.stderr
       _logger.warning('Command error: %s', err_msg)
   except subprocess.CalledProcessError as e:
-    _logger.warning('Command process error %s', e.stderr)
+    _logger.warning('Command process error: %s', e.stderr if e.stderr else str(e))
+  except Exception as e:
+    _logger.error('Unexpected error running command: %s', str(e))
   _logger.debug('Command result: %s', listing_result)
   return listing_result
 
@@ -259,23 +269,28 @@ def mp_run_command(cmd: str, ignore_index=0) -> list[str]:
   # start to run the command line
   _logger.debug('Execute command: %s', cmd)
   listing_result = []
+  # Convert string command to list for security
+  if isinstance(cmd, str):
+    command_list = shlex.split(cmd)
+  else:
+    command_list = cmd
+
   try:
     result = subprocess.Popen(
-        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        command_list, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding='utf-8'
     )
     stdout, stderr = result.communicate()
     _logger.debug('Command stdout: %s', stdout)
     _logger.debug('Command stderr: %s', stderr)
     if result.returncode == 0:
       output = stdout.splitlines()
-      for l in output[ignore_index:]:
-        result = l.decode('utf-8')
-        listing_result.append(result)
+      for line in output[ignore_index:]:
+        listing_result.append(line)
     else:
-      err_msg = stderr.decode('utf-8')
-      if err_msg.strip():  # Only log if there's actual error content
-        _logger.warning('Command error: %s', err_msg)
-  except subprocess.CalledProcessError as e:
-    _logger.warning('Command process error %s', e.stderr)
+      if stderr and stderr.strip():  # Only log if there's actual error content
+        _logger.warning('Command error: %s', stderr)
+  except Exception as e:
+    _logger.warning('Command process error: %s', str(e))
   _logger.debug('Command result: %s', listing_result)
   return listing_result

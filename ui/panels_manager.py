@@ -324,8 +324,6 @@ class PanelsManager(QObject):
 
     def _copy_console_text(self, console_text: QTextEdit):
         """Copy all console text to clipboard."""
-        from PyQt6.QtWidgets import QApplication
-
         text = console_text.toPlainText()
         if text:
             clipboard = QApplication.clipboard()

@@ -15,6 +15,7 @@
 """
 
 import os
+import subprocess
 import threading
 import time
 from typing import Dict, List, Any, Optional, Callable
@@ -477,7 +478,6 @@ class DeviceOperationsManager(QObject):
             # 在後台啟動scrcpy
             def launch_scrcpy_thread():
                 try:
-                    import subprocess
                     process = subprocess.Popen(cmd.split(),
                                              stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE)
@@ -613,13 +613,14 @@ class DeviceOperationsManager(QObject):
     def _check_scrcpy_available(self) -> bool:
         """檢查scrcpy是否可用"""
         try:
-            import subprocess
             result = subprocess.run(['scrcpy', '--version'],
                                   capture_output=True,
                                   text=True,
                                   timeout=5)
             return result.returncode == 0
-        except:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+            if hasattr(self.parent_window, 'logging_manager'):
+                self.parent_window.logging_manager.debug(f'Scrcpy not available: {e}')
             if self.parent_window and hasattr(self.parent_window, 'show_scrcpy_installation_guide'):
                 self.parent_window.show_scrcpy_installation_guide()
             else:

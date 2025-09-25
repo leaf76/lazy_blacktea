@@ -11,7 +11,7 @@ def get_adb_command() -> str:
     # Import here to avoid circular imports
     from utils import adb_tools
     return getattr(adb_tools, '_adb_command_prefix', 'adb')
-  except:
+  except (ImportError, AttributeError):
     return 'adb'
 
 
@@ -116,7 +116,7 @@ def cmd_adb_reboot(serial_num: str):
 def cmd_adb_install(serial_num: str, apk_path: str):
   return _build_adb_command(serial_num, 'install', '-d', '-r', '-g', f'"{apk_path}"')
 
-def cmd_extact_discovery_service_info(serial_num, root_folder):
+def cmd_extract_discovery_service_info(serial_num, root_folder):
   return (
       f'adb -s {serial_num} shell dumpsys activity service DiscoveryService >'
       f' {root_folder}/{serial_num}_discovery_service_file.txt'

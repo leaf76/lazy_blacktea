@@ -18,7 +18,7 @@ def get_linux_distro():
             for line in f:
                 if line.startswith('ID='):
                     return line.split('=')[1].strip().strip('"').lower()
-    except:
+    except (FileNotFoundError, IOError, IndexError):
         pass
     return 'unknown'
 
@@ -101,8 +101,8 @@ def test_qt_platform_plugin():
                 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
                 fallback_app = QApplication([])
                 return True, None
-            except:
-                return False, "Qt xcb platform plugin dependencies missing"
+            except Exception as e:
+                return False, f"Qt xcb platform plugin dependencies missing: {e}"
         return False, f"Qt initialization failed: {e}"
 
 
