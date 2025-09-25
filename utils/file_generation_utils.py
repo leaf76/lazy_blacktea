@@ -2,7 +2,7 @@
 
 import os
 import threading
-from typing import List, Dict, Callable, Optional
+from typing import List, Callable, Optional
 from utils import adb_models, adb_tools, common
 
 
@@ -21,7 +21,6 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
         try:
             timestamp = common.current_format_time_utc()
             device_count = len(devices)
-            device_models = [d.device_model for d in devices]
 
             logger = common.get_logger('file_generation')
             logger.info(f'Starting bug report generation for {device_count} devices')
@@ -29,28 +28,54 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
             # Generate reports for each device with progress
             for index, device in enumerate(devices, 1):
                 try:
-                    filename = f"bugreport_{device.device_model}_{device.device_serial_num}_{timestamp}"
+                    filename = f"bug_report_{device.device_model}_{device.device_serial_num}_{timestamp}"
                     filepath = os.path.join(output_path, filename)
 
-                    # Progress callback if provided
-                    if callback:
-                        progress_text = f"Generating bug report {index}/{device_count} for {device.device_model}"
-                        callback('Bug Report Progress', progress_text, index, '🐛')
+                    # Log progress without callback to avoid multiple dialogs
+                    logger.info(f'Generating bug report {index}/{device_count} for {device.device_model}')
 
-                    # Use existing adb_tools functionality
-                    adb_tools.generate_bug_report_device(device.device_serial_num, filepath)
-                    logger.info(f'Bug report generated for {device.device_model}: {filename}')
+                    # Use enhanced bug report generation with timeout and validation
+                    result = adb_tools.generate_bug_report_device(
+                        device.device_serial_num,
+                        filepath,
+                        timeout=300
+                    )
+
+                    if result['success']:
+                        logger.info(f'Bug report generated for {device.device_model}: {filename} ({result.get("file_size", "unknown")} bytes)')
+                    else:
+                        error_msg = result.get('error', 'Unknown error')
+                        logger.error(f'Bug report failed for {device.device_model}: {error_msg}')
+                        continue
 
                 except Exception as e:
                     logger.error(f'Bug report failed for {device.device_model} ({device.device_serial_num}): {e}')
-                    # Log specific Samsung device issues
-                    if 'samsung' in device.device_model.lower():
-                        logger.warning(f'Samsung device {device.device_model} may require special permissions for bug reports')
+
+                    # Log manufacturer-specific guidance
+                    device_model_lower = device.device_model.lower()
+                    if 'samsung' in device_model_lower:
+                        logger.warning(f'Samsung device {device.device_model} may require:')
+                        logger.info('  - Developer options enabled')
+                        logger.info('  - USB debugging authorized for this computer')
+                        logger.info('  - "Disable permission monitoring" enabled (if available)')
+                    elif any(brand in device_model_lower for brand in ['huawei', 'honor']):
+                        logger.warning(f'Huawei device {device.device_model} may require HiSuite permissions')
+                    elif 'xiaomi' in device_model_lower or 'redmi' in device_model_lower:
+                        logger.warning(f'Xiaomi device {device.device_model} may require MIUI developer options')
+                    elif any(brand in device_model_lower for brand in ['oppo', 'realme', 'oneplus']):
+                        logger.warning(f'OPPO/OnePlus device {device.device_model} may require ColorOS/OxygenOS developer settings')
+                    elif 'vivo' in device_model_lower:
+                        logger.warning(f'Vivo device {device.device_model} may require FunTouch OS developer permissions')
+
                     # Don't break the loop, continue with other devices
 
-            # Call callback if provided
+            # Single completion callback to avoid multiple dialogs
             if callback:
-                callback('Bug Report', output_path, device_count, '🐛')
+                successful_count = sum(1 for d in devices if os.path.exists(
+                    os.path.join(output_path, f"bug_report_{d.device_model}_{d.device_serial_num}_{timestamp}.zip")
+                ))
+                completion_message = f"Bug report generation completed: {successful_count}/{device_count} devices successful"
+                callback('Bug Report Complete', completion_message, successful_count, '🐛')
 
         except Exception as e:
             common.get_logger('file_generation').error(f'Bug report batch operation failed: {e}')

@@ -460,17 +460,171 @@ def generate_the_android_bug_report(
 
 
 @adb_device_operation(default_return=None)
-def generate_bug_report_device(serial_num: str, output_path: str) -> None:
-  """Generate bug report for a single device.
+def generate_bug_report_device(serial_num: str, output_path: str, timeout: int = 300) -> dict:
+  """Generate bug report for a single device with enhanced error handling.
 
   Args:
-    serial_num: Device serial number.
-    output_path: Full path where to save the bug report.
+    serial_num: Device serial number
+    output_path: Full path where to save the bug report (will add .zip if needed)
+    timeout: Command timeout in seconds (default: 5 minutes)
+
+  Returns:
+    dict: Result with success status, output path, and any error information
   """
-  cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
-  result = common.run_command(cmd)
-  logger.info(f'Bug report generated for {serial_num}: {output_path}')
+  result = {
+    'success': False,
+    'serial': serial_num,
+    'output_path': output_path,
+    'error': None,
+    'file_size': 0
+  }
+
+  try:
+    # Ensure output path has .zip extension
+    if not output_path.endswith('.zip'):
+      output_path += '.zip'
+      result['output_path'] = output_path
+
+    logger.info(f'Generating bug report for device {serial_num}...')
+    logger.debug(f'Output path: {output_path}')
+
+    # Check if device is available
+    if not _is_device_available(serial_num):
+      result['error'] = f'Device {serial_num} is not available or not responding'
+      logger.warning(result['error'])
+      return result
+
+    # Check device manufacturer for known issues
+    device_info = _get_device_manufacturer_info(serial_num)
+    manufacturer = device_info.get('manufacturer', '').lower()
+
+    # Check if device requires special handling for bug reports
+    if manufacturer in ['samsung', 'huawei', 'xiaomi', 'oppo', 'vivo', 'oneplus']:
+      logger.info(f'Detected {manufacturer} device, checking bug report permissions...')
+      if not _check_bug_report_permissions(serial_num):
+        result['error'] = f'{manufacturer.title()} device may require developer options or USB debugging permissions for bug reports'
+        logger.warning(result['error'])
+        logger.info('Try: 1) Enable Developer Options 2) Enable USB Debugging 3) Grant computer authorization')
+        return result
+
+    # Generate the command
+    cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
+
+    # Execute with timeout (bug reports can take a long time)
+    logger.info(f'Executing: {cmd}')
+    command_result = common.run_command(cmd, timeout)
+
+    # Check command output for common Samsung/manufacturer errors
+    if command_result and isinstance(command_result, list):
+      output_str = ' '.join(str(item) for item in command_result).lower()
+      if any(error in output_str for error in ['permission denied', 'access denied', 'not allowed', 'unauthorized']):
+        result['error'] = f'Permission denied - {manufacturer.title()} device requires additional authorization'
+        logger.error(result['error'])
+        return result
+
+    # Check if file was created and has reasonable size
+    if os.path.exists(output_path):
+      file_size = os.path.getsize(output_path)
+      result['file_size'] = file_size
+
+      if file_size > 1024:  # At least 1KB
+        result['success'] = True
+        logger.info(f'✅ Bug report generated successfully for {serial_num}')
+        logger.info(f'   File: {output_path} ({file_size:,} bytes)')
+      else:
+        result['error'] = f'Bug report file too small ({file_size} bytes), likely incomplete'
+        logger.warning(result['error'])
+    else:
+      result['error'] = 'Bug report file was not created'
+      logger.error(f'Bug report file not found: {output_path}')
+
+  except subprocess.TimeoutExpired:
+    result['error'] = f'Bug report generation timed out after {timeout} seconds'
+    logger.error(result['error'])
+  except Exception as e:
+    result['error'] = f'Bug report generation failed: {str(e)}'
+    logger.error(result['error'])
+    logger.debug(f'Full error details: {e}', exc_info=True)
+
   return result
+
+
+def _is_device_available(serial_num: str) -> bool:
+  """Check if device is available and responding.
+
+  Args:
+    serial_num: Device serial number
+
+  Returns:
+    bool: True if device is available
+  """
+  try:
+    cmd = f'adb -s {serial_num} get-state'
+    result = common.run_command(cmd, 5)  # 5 second timeout
+    return 'device' in str(result).lower()
+  except:
+    return False
+
+
+def _get_device_manufacturer_info(serial_num: str) -> dict:
+  """Get device manufacturer information.
+
+  Args:
+    serial_num: Device serial number
+
+  Returns:
+    dict: Device manufacturer info
+  """
+  try:
+    # Get manufacturer property
+    manufacturer_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.manufacturer')
+    manufacturer_result = common.run_command(manufacturer_cmd, 10)
+    manufacturer = ''
+    if manufacturer_result and isinstance(manufacturer_result, list):
+      manufacturer = ' '.join(str(item) for item in manufacturer_result).strip()
+
+    # Get model property for additional context
+    model_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.model')
+    model_result = common.run_command(model_cmd, 10)
+    model = ''
+    if model_result and isinstance(model_result, list):
+      model = ' '.join(str(item) for item in model_result).strip()
+
+    return {
+      'manufacturer': manufacturer,
+      'model': model
+    }
+  except Exception as e:
+    logger.debug(f'Could not get manufacturer info for {serial_num}: {e}')
+    return {'manufacturer': '', 'model': ''}
+
+
+def _check_bug_report_permissions(serial_num: str) -> bool:
+  """Check if device has permissions for bug report generation.
+
+  Args:
+    serial_num: Device serial number
+
+  Returns:
+    bool: True if permissions are likely sufficient
+  """
+  try:
+    # Test with a simple shell command that requires similar permissions
+    test_cmd = adb_commands._build_adb_shell_command(serial_num, 'echo "permission_test"')
+    result = common.run_command(test_cmd, 5)
+
+    if result and 'permission_test' in str(result):
+      # Try to access a system service that bug reports need
+      service_cmd = adb_commands._build_adb_shell_command(serial_num, 'service list | head -1')
+      service_result = common.run_command(service_cmd, 10)
+
+      if service_result and len(service_result) > 0:
+        return True
+
+    return False
+  except Exception as e:
+    logger.debug(f'Permission check failed for {serial_num}: {e}')
+    return False
 
 
 def clear_device_logcat(serial_num) -> bool:

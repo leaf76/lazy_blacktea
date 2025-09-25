@@ -172,18 +172,20 @@ def cmd_get_device_logcat(serial_num, output_path) -> str:
   )
 
 def cmd_output_device_bug_report(serial_num, output_path) -> str:
-  """Gets device bug report.
+  """Gets device bug report using modern format.
 
   Args:
-    serial_num:
-    output_path:
+    serial_num: Device serial number
+    output_path: Full path for the output zip file
 
   Returns:
-    string
+    ADB command string for generating bug report
   """
-  # adb -s $serial bugreport $bugreportName
-  # ['adb', '-s', serialNum, 'bugreport', output_path]
-  return f'adb -s {serial_num} bugreport {output_path}'
+  # Modern format: adb -s $serial bugreport $outputPath.zip
+  # This creates a compressed zip file with complete bug report
+  if not output_path.endswith('.zip'):
+    output_path += '.zip'
+  return f'adb -s {serial_num} bugreport "{output_path}"'
 
 def cmd_get_app_version(serial_num, package_name) -> str:
   """Gets app version.
