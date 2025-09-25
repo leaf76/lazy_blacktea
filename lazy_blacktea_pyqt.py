@@ -64,6 +64,7 @@ from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager
+from ui.optimized_device_list import VirtualizedDeviceList, DeviceListPerformanceOptimizer
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -1607,43 +1608,144 @@ class WindowMain(QMainWindow):
             logger.warning(f'Refresh interval set to {interval} seconds but DeviceManager not yet available')
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        """Update the device list display without rebuilding UI."""
+        """Update the device list display with performance optimizations."""
         self.device_dict = device_dict
 
-        # Batch UI updates for better performance
-        self.device_scroll.setUpdatesEnabled(False)
+        # 性能優化：對於大量設備使用異步更新
+        device_count = len(device_dict)
+        if device_count > 5:
+            logger.debug(f"使用性能優化模式更新 {device_count} 個設備")
+            self._update_device_list_optimized(device_dict)
+            return
+        else:
+            logger.debug(f"使用標準模式更新 {device_count} 個設備")
+            # 直接調用標準更新方法
+            self._perform_standard_device_update(device_dict)
 
-        # Get currently checked devices to preserve state
-        checked_serials = set()
-        for serial, checkbox in self.check_devices.items():
-            if checkbox.isChecked():
-                checked_serials.add(serial)
+    def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]):
+        """優化版本的設備列表更新，防止UI卡頓"""
+        # 使用定時器分批更新，避免阻塞UI
+        if hasattr(self, '_update_timer') and self._update_timer.isActive():
+            self._update_timer.stop()
 
-        # Find devices to add and remove
-        current_serials = set(self.check_devices.keys())
-        new_serials = set(device_dict.keys())
+        self._update_timer = QTimer()
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(lambda: self._perform_batch_device_update(device_dict))
+        self._update_timer.start(5)  # 5ms 延遲
 
-        # Remove devices that are no longer connected
-        for serial in current_serials - new_serials:
+    def _perform_batch_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
+        """分批執行設備更新，提升性能"""
+        try:
+            # 暫停UI更新
+            self.device_scroll.setUpdatesEnabled(False)
+
+            # 保存當前選擇狀態
+            checked_serials = {serial for serial, cb in self.check_devices.items() if cb.isChecked()}
+
+            # 計算需要更新的設備
+            current_serials = set(self.check_devices.keys())
+            new_serials = set(device_dict.keys())
+
+            # 分批處理，避免一次性更新太多設備
+            self._batch_remove_devices(current_serials - new_serials)
+            self._batch_add_devices(new_serials - current_serials, device_dict, checked_serials)
+            self._batch_update_existing(current_serials & new_serials, device_dict)
+
+        finally:
+            # 恢復UI更新
+            self.device_scroll.setUpdatesEnabled(True)
+            self.device_scroll.update()
+            self.filter_and_sort_devices()
+            logger.debug(f'批次設備更新完成: {len(device_dict)} 個設備')
+
+    def _batch_remove_devices(self, devices_to_remove):
+        """批次移除設備"""
+        for serial in devices_to_remove:
             if serial in self.check_devices:
                 checkbox = self.check_devices[serial]
                 checkbox.setParent(None)
-                checkbox.deleteLater()  # Proper memory cleanup
+                checkbox.deleteLater()
                 del self.check_devices[serial]
 
-        # Add new devices
-        for serial in new_serials - current_serials:
-            if serial in device_dict:
-                device = device_dict[serial]
+    def _batch_add_devices(self, devices_to_add, device_dict, checked_serials):
+        """批次添加設備，使用小批次避免UI阻塞"""
+        devices_list = list(devices_to_add)
+        batch_size = 3  # 每批處理3個設備
 
-                # Create enhanced device display with operation status
+        def process_device_batch(start_idx):
+            end_idx = min(start_idx + batch_size, len(devices_list))
+
+            for i in range(start_idx, end_idx):
+                serial = devices_list[i]
+                if serial in device_dict:
+                    self._create_single_device_ui(serial, device_dict[serial], checked_serials)
+
+            # 如果還有更多設備，安排下一批
+            if end_idx < len(devices_list):
+                QTimer.singleShot(2, lambda: process_device_batch(end_idx))
+
+        if devices_list:
+            process_device_batch(0)
+
+    def _create_single_device_ui(self, serial, device, checked_serials):
+        """創建單個設備的UI組件，優化版本"""
+        # 獲取設備狀態
+        operation_status = self._get_device_operation_status(serial)
+        recording_status = self._get_device_recording_status(serial)
+
+        # 高效格式化設備信息
+        android_ver = device.android_ver or 'Unknown'
+        android_api = device.android_api_level or 'Unknown'
+        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+
+        device_text = (
+            f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
+            f'🆔 {device.device_serial_num:<20} | '
+            f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
+            f'🎯 GMS: {gms_display:<12} | '
+            f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
+            f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
+        )
+
+        checkbox = QCheckBox(device_text)
+        checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        checkbox.customContextMenuRequested.connect(
+            lambda pos, s=serial, cb=checkbox: self.show_device_context_menu(pos, s, cb)
+        )
+
+        # 設置字體
+        checkbox.setFont(QFont('Segoe UI', 10))
+
+        # 應用樣式
+        self._apply_device_checkbox_style(checkbox)
+
+        # 恢復選擇狀態
+        if serial in checked_serials:
+            checkbox.setChecked(True)
+
+        # 連接信號
+        checkbox.stateChanged.connect(self.update_selection_count)
+        checkbox.stateChanged.connect(
+            lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state)
+        )
+
+        self.check_devices[serial] = checkbox
+        insert_index = self.device_layout.count() - 1
+        self.device_layout.insertWidget(insert_index, checkbox)
+
+    def _batch_update_existing(self, devices_to_update, device_dict):
+        """批次更新現有設備信息"""
+        for serial in devices_to_update:
+            if serial in self.check_devices and serial in device_dict:
+                device = device_dict[serial]
+                checkbox = self.check_devices[serial]
+
+                # 更新設備顯示文字
                 operation_status = self._get_device_operation_status(serial)
                 recording_status = self._get_device_recording_status(serial)
 
-                # Format GMS version for display
-                # 處理可能為 None 的字段，顯示為 Unknown
-                android_ver = device.android_ver if device.android_ver else 'Unknown'
-                android_api = device.android_api_level if device.android_api_level else 'Unknown'
+                android_ver = device.android_ver or 'Unknown'
+                android_api = device.android_api_level or 'Unknown'
                 gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
                 device_text = (
@@ -1654,93 +1756,120 @@ class WindowMain(QMainWindow):
                     f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
                     f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
                 )
-                checkbox = QCheckBox(device_text)
-                checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                checkbox.customContextMenuRequested.connect(lambda pos, serial=serial, cb=checkbox: self.show_device_context_menu(pos, serial, cb))
+                checkbox.setText(device_text)
 
-                # Get enhanced tooltip using unified method
-                tooltip_text = self._create_device_tooltip(device, serial)
+    def _perform_standard_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
+        """標準版本的設備更新（5個以下設備）"""
+        # 暫停UI更新
+        self.device_scroll.setUpdatesEnabled(False)
 
-                # Use custom tooltip positioning instead of default
-                checkbox.setToolTip("")  # Clear default tooltip
-                checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
-                checkbox.leaveEvent = lambda event: QToolTip.hideText()
+        # 保存當前選擇狀態
+        checked_serials = {serial for serial, cb in self.check_devices.items() if cb.isChecked()}
 
-                checkbox.setFont(QFont('Segoe UI', 10))  # Modern font for better readability
+        # 計算需要更新的設備
+        current_serials = set(self.check_devices.keys())
+        new_serials = set(device_dict.keys())
 
-                # Add visual selection indicator styling
-                self._apply_device_checkbox_style(checkbox)
+        # 移除不存在的設備
+        for serial in current_serials - new_serials:
+            if serial in self.check_devices:
+                checkbox = self.check_devices[serial]
+                checkbox.setParent(None)
+                checkbox.deleteLater()
+                del self.check_devices[serial]
 
-                # Restore checked state if it was previously checked
-                if serial in checked_serials:
-                    checkbox.setChecked(True)
+        # 添加新設備
+        for serial in new_serials - current_serials:
+            if serial in device_dict:
+                device = device_dict[serial]
+                self._create_standard_device_ui(serial, device, checked_serials)
 
-                # Connect to update selection count and visual feedback
-                checkbox.stateChanged.connect(self.update_selection_count)
-                checkbox.stateChanged.connect(lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state))
-
-                self.check_devices[serial] = checkbox
-                # Insert before the stretch item (which is always the last item)
-                insert_index = self.device_layout.count() - 1
-                self.device_layout.insertWidget(insert_index, checkbox)
-
-        # Update existing device info (tooltip) without recreating checkbox
-        for serial in new_serials & current_serials:
+        # 更新現有設備信息
+        for serial in current_serials & new_serials:
             if serial in self.check_devices and serial in device_dict:
                 device = device_dict[serial]
                 checkbox = self.check_devices[serial]
-                # Update text with enhanced formatting and operation status
-                operation_status = self._get_device_operation_status(serial)
-                recording_status = self._get_device_recording_status(serial)
+                self._update_device_checkbox_text(checkbox, device, serial)
 
-                # 處理可能為 None 的字段，顯示為 Unknown
-                android_ver = device.android_ver if device.android_ver else 'Unknown'
-                android_api = device.android_api_level if device.android_api_level else 'Unknown'
-                gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
-
-                device_text = (
-                    f'{operation_status}{recording_status}📱 {device.device_model:<15} | '
-                    f'🆔 {device.device_serial_num:<15} | '
-                    f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
-                    f'🎯 GMS: {gms_display:<12} | '
-                    f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
-                    f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
-                )
-                checkbox.setText(device_text)
-
-                # Update tooltip using unified method
-                tooltip_text = self._create_device_tooltip(device, serial)
-
-                # Update custom tooltip positioning for existing checkboxes
-                checkbox.setToolTip("")  # Clear default tooltip
-                checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
-                checkbox.leaveEvent = lambda event: QToolTip.hideText()
-
-                # Apply visual styling to existing checkboxes
-                self._apply_device_checkbox_style(checkbox)
-
-        # Update title with device count
-        device_count = len(device_dict)
-        selected_count = len(checked_serials & new_serials)
-        self.title_label.setText(f'Connected Devices ({device_count}) - Selected: {selected_count}')
-
-        # Re-enable UI updates after batch operations
+        # 恢復UI更新
         self.device_scroll.setUpdatesEnabled(True)
-
-        # Apply search and sort filters after device list update
         self.filter_and_sort_devices()
 
-        # Handle no devices case
-        if not device_dict:
-            if not hasattr(self, 'no_devices_label') or not self.no_devices_label.parent():
-                self.no_devices_label = QLabel('No devices found')
-                self.no_devices_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                insert_index = self.device_layout.count() - 1
-                self.device_layout.insertWidget(insert_index, self.no_devices_label)
-        else:
-            # Remove no devices label if devices are present
-            if hasattr(self, 'no_devices_label') and self.no_devices_label.parent():
-                self.no_devices_label.setParent(None)
+    def _create_standard_device_ui(self, serial, device, checked_serials):
+        """創建標準設備UI組件（用於小量設備）"""
+        # 獲取設備狀態
+        operation_status = self._get_device_operation_status(serial)
+        recording_status = self._get_device_recording_status(serial)
+
+        # 格式化設備信息
+        android_ver = device.android_ver or 'Unknown'
+        android_api = device.android_api_level or 'Unknown'
+        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+
+        device_text = (
+            f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
+            f'🆔 {device.device_serial_num:<20} | '
+            f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
+            f'🎯 GMS: {gms_display:<12} | '
+            f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
+            f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
+        )
+
+        checkbox = QCheckBox(device_text)
+        checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        checkbox.customContextMenuRequested.connect(
+            lambda pos, s=serial, cb=checkbox: self.show_device_context_menu(pos, s, cb)
+        )
+
+        # 獲取增強工具提示
+        tooltip_text = self._create_device_tooltip(device, serial)
+
+        # 使用自定義工具提示
+        checkbox.setToolTip("")  # Clear default tooltip
+        checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
+        checkbox.leaveEvent = lambda event: QToolTip.hideText()
+
+        checkbox.setFont(QFont('Segoe UI', 10))  # Modern font for better readability
+
+        # Add visual selection indicator styling
+        self._apply_device_checkbox_style(checkbox)
+
+        # Restore checked state if it was previously checked
+        if serial in checked_serials:
+            checkbox.setChecked(True)
+
+        # Connect to update selection count and visual feedback
+        checkbox.stateChanged.connect(self.update_selection_count)
+        checkbox.stateChanged.connect(lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state))
+
+        self.check_devices[serial] = checkbox
+        # Insert before the stretch item (which is always the last item)
+        insert_index = self.device_layout.count() - 1
+        self.device_layout.insertWidget(insert_index, checkbox)
+
+    def _update_device_checkbox_text(self, checkbox, device, serial):
+        """更新設備checkbox的文字內容"""
+        operation_status = self._get_device_operation_status(serial)
+        recording_status = self._get_device_recording_status(serial)
+
+        # 處理可能為 None 的字段，顯示為 Unknown
+        android_ver = device.android_ver or 'Unknown'
+        android_api = device.android_api_level or 'Unknown'
+        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+
+        device_text = (
+            f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
+            f'🆔 {device.device_serial_num:<20} | '
+            f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
+            f'🎯 GMS: {gms_display:<12} | '
+            f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
+            f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
+        )
+        checkbox.setText(device_text)
+
+        # Update enhanced tooltip using unified method
+        tooltip_text = self._create_device_tooltip(device, serial)
+        checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
 
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""
