@@ -1,11 +1,14 @@
 """UI Inspector utility functions for performance optimization and code reuse."""
 
-import tempfile
 import os
+import shlex
+import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any, Tuple, Optional
-from utils import common
+from typing import Any, Dict, List, Optional, Tuple
+
 from utils import adb_commands
+from utils import common
 
 logger = common.get_logger('ui_inspector_utils')
 
@@ -21,6 +24,13 @@ def clear_ui_cache():
     logger.info('UI cache cleared')
 
 
+def _build_exec_out_command(device_serial: str, *args: str) -> List[str]:
+    """Create an ADB exec-out command list for subprocess execution."""
+    adb_command = adb_commands.get_adb_command()
+    base_parts = shlex.split(adb_command) if isinstance(adb_command, str) else list(adb_command)
+    return [*base_parts, '-s', device_serial, *args]
+
+
 def capture_device_screenshot(device_serial: str, output_path: str) -> bool:
     """
     Capture screenshot from device efficiently.
@@ -33,8 +43,20 @@ def capture_device_screenshot(device_serial: str, output_path: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        screenshot_cmd = f'adb -s {device_serial} exec-out screencap -p > "{output_path}"'
-        result = common.sp_run_command(screenshot_cmd)
+        directory = os.path.dirname(output_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        command = _build_exec_out_command(device_serial, 'exec-out', 'screencap', '-p')
+        result = subprocess.run(command, check=True, capture_output=True)
+        screenshot_data = result.stdout
+
+        if not screenshot_data:
+            logger.error('Failed to capture screenshot: empty response from device')
+            return False
+
+        with open(output_path, 'wb') as file_handle:
+            file_handle.write(screenshot_data)
+
         return os.path.exists(output_path) and os.path.getsize(output_path) > 0
     except Exception as e:
         logger.error(f'Failed to capture screenshot: {e}')
