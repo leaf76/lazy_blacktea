@@ -2900,8 +2900,52 @@ Build Fingerprint: {device.build_fingerprint}'''
                 # Ensure scroll to bottom
                 self.console_text.ensureCursorVisible()
         except Exception as e:
-            print(f'Error in _on_console_output: {e}')
+            logger.error(f'Error in _on_console_output: {e}')
 
+    def _handle_installation_completed(self, successful_installs: int, failed_installs: int, apk_name: str):
+        """處理APK安裝完成信號"""
+        try:
+            total_devices = successful_installs + failed_installs
+
+            if successful_installs > 0 and failed_installs == 0:
+                # 全部成功
+                self.show_info(
+                    '✅ APK Installation Successful',
+                    f'Successfully installed {apk_name} on all {successful_installs} device(s)!'
+                )
+            elif successful_installs > 0 and failed_installs > 0:
+                # 部分成功
+                self.show_warning(
+                    '⚠️ APK Installation Partially Successful',
+                    f'APK: {apk_name}\n\n'
+                    f'✅ Successful: {successful_installs}\n'
+                    f'❌ Failed: {failed_installs}\n'
+                    f'📊 Total: {total_devices}'
+                )
+            else:
+                # 全部失敗
+                self.show_error(
+                    '❌ APK Installation Failed',
+                    f'Failed to install {apk_name} on all {total_devices} device(s).'
+                )
+
+            logger.info(f'APK installation completed: {successful_installs} successful, {failed_installs} failed')
+
+        except Exception as e:
+            logger.error(f'Error in _handle_installation_completed: {e}')
+            self.show_error('Installation Error', f'Error processing installation results: {str(e)}')
+
+    def _handle_installation_progress(self, message: str, current: int, total: int):
+        """處理APK安裝進度信號（可選，用於額外的進度處理）"""
+        pass
+
+    def _handle_installation_error(self, error_message: str):
+        """處理APK安裝錯誤信號"""
+        try:
+            self.show_error('APK Installation Error', error_message)
+            logger.error(f'APK installation error: {error_message}')
+        except Exception as e:
+            logger.error(f'Error in _handle_installation_error: {e}')
 
     def _clear_device_recording(self, serial):
         """Clear recording state for a specific device."""
@@ -3111,7 +3155,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             # Use signal for thread-safe console output
             self.console_output_signal.emit(message)
         except Exception as e:
-            print(f'Error emitting console signal: {e}')
+            logger.error(f'Error emitting console signal: {e}')
 
     def _write_to_console_safe(self, message):
         """Thread-safe method to write to console."""
@@ -3122,7 +3166,7 @@ Build Fingerprint: {device.build_fingerprint}'''
             self.console_text.setTextCursor(cursor)
             self.console_text.ensureCursorVisible()
         except Exception as e:
-            print(f'Error in _write_to_console_safe: {e}')
+            logger.error(f'Error in _write_to_console_safe: {e}')
 
 
     def get_valid_commands(self):

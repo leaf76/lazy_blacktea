@@ -12,11 +12,11 @@
 
 import os
 import threading
-from typing import List, Dict, Optional, Callable
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
-from PyQt6.QtWidgets import QFileDialog, QInputDialog
+from typing import List, Dict, Optional
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QProgressDialog
 
-from utils import adb_models, adb_tools, common
+from utils import adb_models, adb_tools
 
 
 class ScrcpyManager(QObject):
@@ -57,7 +57,7 @@ class ScrcpyManager(QObject):
         """解析scrcpy版本號碼"""
         try:
             if 'scrcpy' in version_output:
-                version_line = version_output.split('\\n')[0]
+                version_line = version_output.split('\n')[0]
                 version_str = version_line.split()[1]
                 major_version = int(version_str.split('.')[0])
                 return major_version
@@ -114,7 +114,7 @@ class ScrcpyManager(QObject):
         choice, ok = QInputDialog.getItem(
             self.parent_window,
             'Select Device for Mirroring',
-            'scrcpy can only mirror one device at a time.\\nPlease select which device to mirror:',
+            'scrcpy can only mirror one device at a time.\nPlease select which device to mirror:',
             device_choices,
             0,
             False
@@ -136,7 +136,7 @@ class ScrcpyManager(QObject):
 
         self.parent_window.show_info(
             'scrcpy',
-            f'Launching device mirroring for:\\n{device_model} ({serial})\\n\\nscrcpy window will open shortly...'
+            f'Launching device mirroring for:\n{device_model} ({serial})\n\nscrcpy window will open shortly...'
         )
 
         def scrcpy_wrapper():
@@ -216,6 +216,7 @@ class ApkInstallationManager(QObject):
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
+        self.progress_dialog = None
 
     def install_apk_dialog(self):
         """顯示APK選擇對話框並開始安裝"""
@@ -233,18 +234,45 @@ class ApkInstallationManager(QObject):
                 return
 
             apk_name = os.path.basename(apk_file)
+            # Use the signal-based installation method
             self.install_apk_to_devices(devices, apk_file, apk_name)
 
     def install_apk_to_devices(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
         """安裝APK到指定設備"""
-        # 顯示進度通知
-        self.parent_window.show_info(
-            '📦 APK Installation',
-            f'Installing {apk_name} to {len(devices)} device(s)...\\n\\n'
-            f'📱 Devices: {len(devices)} selected\\n'
-            f'📄 APK: {apk_name}\\n\\n'
-            f'Please wait, installation in progress...'
+        # 創建進度對話框
+        self.progress_dialog = QProgressDialog(
+            f"🚀 Installing {apk_name}...\n\nPreparing installation...",
+            "Cancel",
+            0, len(devices),
+            self.parent_window
         )
+        self.progress_dialog.setWindowTitle("📦 APK Installation Progress")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setAutoClose(False)
+        self.progress_dialog.setAutoReset(False)
+
+        # 設置進度條樣式
+        self.progress_dialog.setStyleSheet("""
+            QProgressDialog {
+                font-size: 12px;
+                min-width: 400px;
+                min-height: 150px;
+            }
+            QProgressBar {
+                border: 2px solid #3498db;
+                border-radius: 5px;
+                text-align: center;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QProgressBar::chunk {
+                background-color: #3498db;
+                border-radius: 3px;
+            }
+        """)
+
+        self.progress_dialog.show()
 
         def install_with_progress():
             try:
@@ -253,13 +281,30 @@ class ApkInstallationManager(QObject):
                 error_msg = f'APK installation failed: {str(e)}'
                 if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
                     self.parent_window.logger.error(error_msg)
-                QTimer.singleShot(0, lambda: self.installation_error_signal.emit(error_msg))
+                self.installation_error_signal.emit(error_msg)
+                QTimer.singleShot(0, self._close_progress_dialog)
 
         # 在背景執行緒中運行
         threading.Thread(target=install_with_progress, daemon=True).start()
 
         if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
             self.parent_window.logger.info(f'Installing APK {apk_file} to {len(devices)} devices')
+
+    def _close_progress_dialog(self):
+        """關閉進度對話框"""
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+    def _update_progress(self, message: str, current: int, total: int):
+        """更新進度對話框"""
+        if self.progress_dialog:
+            def update_ui():
+                if self.progress_dialog:  # 再次檢查，防止對話框已關閉
+                    self.progress_dialog.setLabelText(message)
+                    self.progress_dialog.setValue(current)
+                    # total 參數用於進度對話框的最大值設置，已在初始化時設定
+            QTimer.singleShot(0, update_ui)
 
     def _install_apk_with_progress(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
         """帶進度的APK安裝"""
@@ -269,16 +314,23 @@ class ApkInstallationManager(QObject):
 
         for index, device in enumerate(devices, 1):
             try:
-                # 更新進度
+                # 檢查是否取消
+                if self.progress_dialog and self.progress_dialog.wasCanceled():
+                    break
+
+                # 更新進度對話框
                 progress_msg = (
-                    f'Installing {apk_name} on device {index}/{total_devices}\\n\\n'
-                    f'📱 Current: {device.device_model} ({device.device_serial_num})\\n'
-                    f'📊 Progress: {((index-1)/total_devices)*100:.0f}% complete'
+                    f'🚀 Installing {apk_name}\n'
+                    f'Device {index}/{total_devices}\n\n'
+                    f'📱 {device.device_model}\n'
+                    f'🔧 {device.device_serial_num}\n\n'
+                    f'⏱️ Please wait...'
                 )
 
-                QTimer.singleShot(0, lambda msg=progress_msg: self.installation_progress_signal.emit(
-                    msg, index-1, total_devices
-                ))
+                self._update_progress(progress_msg, index-1, total_devices)
+
+                # 也發送原有信號（保持向後兼容）
+                self.installation_progress_signal.emit(progress_msg, index-1, total_devices)
 
                 if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
                     self.parent_window.logger.info(
@@ -287,20 +339,39 @@ class ApkInstallationManager(QObject):
                     )
 
                 # 執行安裝
-                result = adb_tools.install_apk_on_device(device.device_serial_num, apk_file)
+                result = adb_tools.install_the_apk([device.device_serial_num], apk_file)
 
-                if result.get('success', False):
-                    successful_installs += 1
-                    if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                        self.parent_window.logger.info(
-                            f'✅ APK installation successful on {device.device_model}'
-                        )
+                # 檢查安裝結果 (install_the_apk 返回嵌套列表 [['Performing Streamed Install', 'Success']])
+                if result and isinstance(result, list) and len(result) > 0:
+                    # 取第一個設備的結果
+                    device_result = result[0]
+                    if isinstance(device_result, list) and len(device_result) > 0:
+                        # 檢查是否包含 'Success'
+                        success_found = any('Success' in str(line) for line in device_result)
+                        if success_found:
+                            successful_installs += 1
+                            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                                self.parent_window.logger.info(
+                                    f'✅ APK installation successful on {device.device_model}'
+                                )
+                        else:
+                            failed_installs += 1
+                            error_msg = ' | '.join(str(line) for line in device_result)
+                            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                                self.parent_window.logger.warning(
+                                    f'❌ APK installation failed on {device.device_model}: {error_msg}'
+                                )
+                    else:
+                        failed_installs += 1
+                        if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                            self.parent_window.logger.warning(
+                                f'❌ APK installation failed on {device.device_model}: Invalid result format'
+                            )
                 else:
                     failed_installs += 1
-                    error_details = result.get('error', 'Unknown error')
                     if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
                         self.parent_window.logger.warning(
-                            f'❌ APK installation failed on {device.device_model}: {error_details}'
+                            f'❌ APK installation failed on {device.device_model}: No result returned'
                         )
 
             except Exception as device_error:
@@ -310,10 +381,22 @@ class ApkInstallationManager(QObject):
                         f'Exception during APK installation on {device.device_model}: {device_error}'
                     )
 
+        # 顯示完成狀態
+        if self.progress_dialog:
+            completion_msg = (
+                f'✅ Installation Complete!\n\n'
+                f'📦 APK: {apk_name}\n'
+                f'✅ Successful: {successful_installs}\n'
+                f'❌ Failed: {failed_installs}\n'
+                f'📊 Total: {total_devices}'
+            )
+            self._update_progress(completion_msg, total_devices, total_devices)
+
+            # 延遲關閉對話框
+            QTimer.singleShot(2000, self._close_progress_dialog)
+
         # 發送完成信號
-        QTimer.singleShot(0, lambda: self.installation_completed_signal.emit(
-            successful_installs, failed_installs, apk_name
-        ))
+        self.installation_completed_signal.emit(successful_installs, failed_installs, apk_name)
 
 
 class AppManagementManager(QObject):
@@ -339,15 +422,18 @@ class AppManagementManager(QObject):
         if hasattr(self.parent_window, '_handle_scrcpy_error'):
             self.scrcpy_manager.scrcpy_error_signal.connect(self.parent_window._handle_scrcpy_error)
 
-        # APK安裝信號
+        # APK安裝信號 (使用 QueuedConnection 確保跨線程安全)
         if hasattr(self.parent_window, '_handle_installation_progress'):
-            self.apk_manager.installation_progress_signal.connect(self.parent_window._handle_installation_progress)
+            self.apk_manager.installation_progress_signal.connect(
+                self.parent_window._handle_installation_progress, Qt.ConnectionType.QueuedConnection)
 
         if hasattr(self.parent_window, '_handle_installation_completed'):
-            self.apk_manager.installation_completed_signal.connect(self.parent_window._handle_installation_completed)
+            self.apk_manager.installation_completed_signal.connect(
+                self.parent_window._handle_installation_completed, Qt.ConnectionType.QueuedConnection)
 
         if hasattr(self.parent_window, '_handle_installation_error'):
-            self.apk_manager.installation_error_signal.connect(self.parent_window._handle_installation_error)
+            self.apk_manager.installation_error_signal.connect(
+                self.parent_window._handle_installation_error, Qt.ConnectionType.QueuedConnection)
 
     def initialize(self):
         """初始化應用程式管理器"""
