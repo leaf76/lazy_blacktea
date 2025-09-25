@@ -114,6 +114,7 @@ app = BUNDLE(
         'LSMinimumSystemVersion': '10.15.0',
         'NSRequiresAquaSystemAppearance': False,
         'CFBundleDocumentTypes': [],
+        'LSBackgroundOnly': False,  # Ensure app shows in Dock and can display windows
         'NSAppleEventsUsageDescription': 'This app needs to communicate with Android devices via ADB.',
         'NSSystemAdministrationUsageDescription': 'This app needs system access to run ADB commands.',
     },
