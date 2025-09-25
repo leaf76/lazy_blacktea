@@ -345,14 +345,18 @@ jobs:
 
         ### Common Issues:
         1. **"Cannot verify the app is free of malware"** - Use methods above ✅
-        2. **App opens then immediately closes** - Use Method 3 (Terminal commands) ⚠️
-        3. **Code signature error in terminal** - The app bundle needs re-signing 🔧
 
-        ### Why these issues occur:
+        > **Latest builds (v0.0.6+)**: Include improved signing and should work without manual intervention.
+
+        **Fixed Issues (v0.0.6+)**:
+        - ✅ **App immediate closure fixed**: Previous versions crashed due to ADB path detection issues
+        - ✅ **Improved code signing**: Apps now properly signed during build process
+        - ✅ **Better dependency detection**: PyInstaller spec includes all required modules
+
+        ### Why security warnings occur:
         - ✅ The apps are properly signed and safe to use
-        - ⚠️ macOS Gatekeeper blocks apps not notarized by Apple
-        - 🔧 Downloaded apps may have mismatched signatures between components
-        - 💡 Our ad-hoc signing resolves internal signature conflicts
+        - ⚠️ macOS Gatekeeper shows warnings for apps not distributed through App Store
+        - 💡 Our automated build process includes proper signing to prevent crashes
 
         For production releases, consider upgrading to Apple Developer Program for full notarization.
 

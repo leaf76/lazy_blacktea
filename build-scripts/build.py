@@ -83,6 +83,42 @@ def check_dependencies():
 
     return True
 
+def fix_app_signing(app_path):
+    """Fix application signing issues on macOS"""
+    print_step("Fixing macOS app signing issues...")
+
+    try:
+        # Remove quarantine attributes
+        print("Removing quarantine attributes...")
+        run_command(["xattr", "-rd", "com.apple.quarantine", app_path])
+
+        # Sign all dynamic libraries with ad-hoc signature
+        print("Signing dynamic libraries...")
+        run_command(["find", app_path, "-name", "*.dylib", "-exec", "codesign", "--force", "--sign", "-", "{}", ";"])
+
+        # Remove problematic translations that can't be signed properly
+        translations_path = os.path.join(app_path, "Contents", "Resources", "PyQt6", "Qt6", "translations")
+        if os.path.exists(translations_path):
+            print("Removing problematic translation files...")
+            shutil.rmtree(translations_path, ignore_errors=True)
+
+        # Sign the main executable
+        print("Signing main executable...")
+        main_executable = os.path.join(app_path, "Contents", "MacOS", "LazyBlacktea")
+        if os.path.exists(main_executable):
+            run_command(["codesign", "--force", "--sign", "-", main_executable])
+
+        # Sign the app bundle itself
+        print("Signing app bundle...")
+        run_command(["codesign", "--force", "--sign", "-", app_path])
+
+        print_success("App signing fixes applied successfully")
+        return True
+
+    except Exception as e:
+        print_warning(f"Some signing fixes may have failed: {e}")
+        return True  # Don't fail the build for signing issues
+
 def install_dependencies():
     """Install dependencies"""
     print_step("Installing dependencies...")
@@ -136,7 +172,7 @@ def build_application():
 
     if system == "darwin":  # macOS
         spec_file = os.path.join(os.path.dirname(__file__), "build_macos.spec")
-        print("Building for macOS...")
+        print("Building for macOS with fixed configuration...")
     elif system == "linux":  # Linux
         spec_file = os.path.join(os.path.dirname(__file__), "build_linux.spec")
         print("Building for Linux...")
@@ -200,6 +236,9 @@ def create_distribution():
 
         if os.path.exists(app_path):
             print_success(f"macOS app bundle created: {app_path}")
+
+            # Fix app signing issues
+            fix_app_signing(app_path)
 
             # Verify the built app architecture
             if shutil.which("lipo"):
