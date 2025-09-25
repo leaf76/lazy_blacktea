@@ -92,7 +92,7 @@ class AsyncDeviceWorker(QObject):
         if not self.device_serials:
             return
 
-        logger.info(f"開始漸進式異步加載 {len(self.device_serials)} 個設備")
+        logger.info(f'Starting progressive async load for {len(self.device_serials)} device(s)')
 
         # Phase 1: 快速加載並顯示基本信息
         self._load_basic_info_immediately()
@@ -106,7 +106,7 @@ class AsyncDeviceWorker(QObject):
 
         if not self.stop_requested:
             self.all_detailed_loaded.emit()
-            logger.info(f"漸進式設備加載完成：{len(self.device_serials)} 個設備")
+            logger.info('Progressive async load completed for %s device(s)', len(self.device_serials))
 
         # 設置運行狀態為完成
         with QMutexLocker(self.mutex):
@@ -114,7 +114,7 @@ class AsyncDeviceWorker(QObject):
 
     def _load_basic_info_immediately(self):
         """立即加載所有設備的基本信息（僅基本信息，不執行耗時檢查）"""
-        logger.info("Phase 1: 快速加載基本設備信息")
+        logger.info('Phase 1: Loading basic device information')
 
         try:
             # 使用新的快速設備列表函數
@@ -132,14 +132,14 @@ class AsyncDeviceWorker(QObject):
                 # 更新進度
                 self.progress_updated.emit(loaded_count, len(self.device_serials))
 
-            logger.info(f"基本信息加載完成：{loaded_count} 個設備")
+            logger.info(f'Basic information loaded for {loaded_count} device(s)')
 
         except Exception as e:
-            logger.error(f"基本信息加載失敗: {e}")
+            logger.error(f'Failed to load basic device information: {e}')
 
     def _load_detailed_info_progressively(self):
         """漸進式加載詳細設備信息"""
-        logger.info("Phase 2: 異步加載詳細設備信息")
+        logger.info('Phase 2: Loading detailed device information asynchronously')
 
         import concurrent.futures
 
@@ -163,16 +163,16 @@ class AsyncDeviceWorker(QObject):
                         self.device_detailed_loaded.emit(serial, detailed_info)
                         loaded_count += 1
                     else:
-                        self.device_load_failed.emit(serial, "無法加載詳細設備信息")
+                        self.device_load_failed.emit(serial, 'Unable to load detailed device information')
                 except Exception as e:
-                    logger.error(f"設備 {serial} 詳細信息加載失敗: {e}")
+                    logger.error(f'Failed to load detailed information for device {serial}: {e}')
                     self.device_load_failed.emit(serial, str(e))
 
                 # 更新詳細信息加載進度
                 if loaded_count % max(1, len(self.device_serials) // 5) == 0:
-                    logger.debug(f"詳細信息加載進度: {loaded_count}/{len(self.device_serials)}")
+                    logger.debug(f'Detailed information load progress: {loaded_count}/{len(self.device_serials)}')
 
-            logger.info(f"詳細信息加載完成：{loaded_count} 個設備")
+            logger.info(f'Detailed information loaded for {loaded_count} device(s)')
 
 
 class DeviceLoadingRunnable(QRunnable):
@@ -188,7 +188,7 @@ class DeviceLoadingRunnable(QRunnable):
         try:
             self.worker._load_devices_efficiently()
         except Exception as e:
-            logger.error(f"異步設備加載錯誤: {e}")
+            logger.error(f'Async device loading error: {e}')
 
 
 
@@ -225,7 +225,7 @@ class AsyncDeviceManager(QObject):
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True):
         """開始異步設備發現"""
         # force_reload parameter kept for compatibility but not currently used
-        logger.info("開始異步設備發現...")
+        logger.info('Starting async device discovery')
 
         # 停止現有工作線程
         self.stop_current_loading()
@@ -237,11 +237,11 @@ class AsyncDeviceManager(QObject):
             basic_device_serials = self._get_basic_device_serials()
 
             if not basic_device_serials:
-                logger.warning("未發現任何設備")
+                logger.warning('No devices detected')
                 self.all_devices_ready.emit({})
                 return
 
-            logger.info(f"發現 {len(basic_device_serials)} 個設備，開始異步加載")
+            logger.info(f'Discovered {len(basic_device_serials)} device(s); starting async load')
 
             # 創建工作線程
             self.worker = AsyncDeviceWorker()
@@ -259,12 +259,12 @@ class AsyncDeviceManager(QObject):
             self.worker.start_loading()
 
         except Exception as e:
-            logger.error(f"設備發現啟動失敗: {e}")
+            logger.error(f'Failed to start device discovery: {e}')
 
     def stop_current_loading(self):
         """停止當前的加載過程"""
         if self.worker:
-            logger.info("停止當前設備加載過程")
+            logger.info('Stopping current device loading process')
             self.worker.request_stop()
             # 對於QRunnable，我們只能請求停止，無法強制終止
 
@@ -283,12 +283,12 @@ class AsyncDeviceManager(QObject):
 
             return device_serials
         except Exception as e:
-            logger.error(f"獲取基本設備列表失敗: {e}")
+            logger.error(f'Failed to retrieve basic device list: {e}')
             return []
 
     def _on_device_basic_loaded(self, serial: str, device_info: adb_models.DeviceInfo):
         """設備基本信息加載完成時的處理"""
-        logger.debug(f"設備基本信息已加載: {serial} - {device_info.device_model}")
+        logger.debug(f'Basic information loaded for device {serial} - {device_info.device_model}')
 
         # 智能更新緩存：保留現有的詳細信息
         if serial in self.device_cache:
@@ -314,7 +314,7 @@ class AsyncDeviceManager(QObject):
 
     def _on_device_detailed_loaded(self, serial: str, detailed_info: dict):
         """設備詳細信息加載完成時的處理"""
-        logger.debug(f"設備詳細信息已加載: {serial}")
+        logger.debug(f'Detailed information loaded for device {serial}')
 
         # 更新設備信息
         if serial in self.device_cache:
@@ -366,17 +366,17 @@ class AsyncDeviceManager(QObject):
 
     def _on_all_basic_loaded(self):
         """所有設備基本信息加載完成"""
-        logger.info("所有設備基本信息加載完成")
+        logger.info('All basic device information loaded')
         self.basic_devices_ready.emit(self.device_cache.copy())
 
     def _on_all_detailed_loaded(self):
         """所有設備詳細信息加載完成"""
-        logger.info("所有設備詳細信息加載完成")
+        logger.info('All detailed device information loaded')
         self.all_devices_ready.emit(self.device_cache.copy())
 
     def _on_device_load_failed(self, serial: str, error_message: str):
         """設備加載失敗時的處理"""
-        logger.warning(f"設備加載失敗: {serial} - {error_message}")
+        logger.warning(f'Device load failed: {serial} - {error_message}')
 
         # 更新進度
         if serial in self.device_progress:
@@ -385,13 +385,13 @@ class AsyncDeviceManager(QObject):
 
     def _on_progress_updated(self, current: int, total: int):
         """進度更新時的處理"""
-        message = f"已加載 {current}/{total} 個設備基本信息"
+        message = f'Loaded {current}/{total} device basic record(s)'
         logger.debug(message)
         self.device_load_progress.emit(current, total, message)
 
     def _on_all_devices_loaded(self):
         """所有設備加載完成時的處理"""
-        logger.info("所有設備信息加載完成")
+        logger.info('All device information loaded')
         self.all_devices_ready.emit(self.device_cache.copy())
 
     def get_device_info(self, serial: str) -> Optional[adb_models.DeviceInfo]:
@@ -410,31 +410,36 @@ class AsyncDeviceManager(QObject):
         """清空設備緩存"""
         self.device_cache.clear()
         self.device_progress.clear()
-        logger.info("設備緩存已清空")
+        logger.info('Device cache cleared')
 
     def start_periodic_refresh(self):
         """開始定時刷新"""
-        logger.info(f"嘗試啟動定時刷新 - auto_refresh_enabled: {self.auto_refresh_enabled}, timer_active: {self.refresh_timer.isActive()}, interval: {self.refresh_interval}秒")
+        logger.info(
+            'Attempting to start periodic refresh - auto_refresh_enabled: %s, timer_active: %s, interval: %s seconds',
+            self.auto_refresh_enabled,
+            self.refresh_timer.isActive(),
+            self.refresh_interval,
+        )
         if self.auto_refresh_enabled and not self.refresh_timer.isActive():
             self.refresh_timer.start(self.refresh_interval * 1000)  # 轉換為毫秒
-            logger.info(f"✅ 定時刷新已啟動，間隔: {self.refresh_interval}秒")
+            logger.info('Periodic refresh started; interval: %s seconds', self.refresh_interval)
         elif self.refresh_timer.isActive():
-            logger.warning("定時刷新已經在運行中")
+            logger.warning('Periodic refresh is already running')
         elif not self.auto_refresh_enabled:
-            logger.warning("自動刷新已禁用，無法啟動定時刷新")
+            logger.warning('Automatic refresh is disabled; cannot start periodic refresh')
 
     def stop_periodic_refresh(self):
         """停止定時刷新"""
         if self.refresh_timer.isActive():
             self.refresh_timer.stop()
-            logger.info("定時刷新已停止")
+            logger.info('Periodic refresh stopped')
 
     def set_refresh_interval(self, interval: int):
         """設置刷新間隔"""
         self.refresh_interval = max(5, interval)  # 最小5秒間隔
         if self.refresh_timer.isActive():
             self.refresh_timer.setInterval(self.refresh_interval * 1000)
-        logger.info(f"刷新間隔設置為: {self.refresh_interval}秒")
+        logger.info('Refresh interval set to %s seconds', self.refresh_interval)
 
     def set_auto_refresh_enabled(self, enabled: bool):
         """設置是否啟用自動刷新"""
@@ -443,23 +448,23 @@ class AsyncDeviceManager(QObject):
             self.start_periodic_refresh()
         else:
             self.stop_periodic_refresh()
-        logger.info(f"自動刷新: {'啟用' if enabled else '停用'}")
+        logger.info('Automatic refresh %s', 'enabled' if enabled else 'disabled')
 
     def _periodic_refresh(self):
         """定時刷新回調"""
         # 如果有工作線程正在運行，跳過這次刷新避免衝突
         if self.worker and self.worker.isRunning():
-            logger.info("🔄 跳過定時刷新 - 設備加載中，避免中斷")
+            logger.info('Skipping periodic refresh while devices are loading to avoid interruption')
             return
 
         self.refresh_cycle_count += 1
 
         # 自動刷新始終加載詳細信息，與手動刷新保持一致
-        logger.info(f"🔄 執行定時設備刷新 (第{self.refresh_cycle_count}次, 完整信息)")
+        logger.info('Running periodic device refresh cycle %s (full detail)', self.refresh_cycle_count)
         try:
             self.start_device_discovery(force_reload=True, load_detailed=True)
         except Exception as e:
-            logger.error(f"定時刷新失敗: {e}")
+            logger.error(f'Periodic refresh failed: {e}')
 
     def cleanup(self):
         """清理資源"""

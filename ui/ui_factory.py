@@ -141,7 +141,7 @@ class UIFactory:
 
         tools_layout.addWidget(tab_widget)
 
-        self.logger.debug("工具面板創建完成")
+        self.logger.debug('Tools panel created')
         return tools_widget
 
     def create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
@@ -501,7 +501,7 @@ class UIFactory:
         console_layout.addLayout(controls_layout)
 
         parent_layout.addWidget(console_group)
-        self.logger.debug("控制台面板創建完成")
+        self.logger.debug('Console panel created')
         return console_text
 
     # ===== 狀態欄創建 =====
@@ -527,7 +527,7 @@ class UIFactory:
         widgets['connection_status'] = QLabel("🔴 Disconnected")
         widgets['connection_status'].setStyleSheet("QLabel { margin: 2px 5px; }")
 
-        self.logger.debug("狀態欄組件創建完成")
+        self.logger.debug('Status bar widgets created')
         return widgets
 
     # ===== 輔助方法 =====
@@ -547,7 +547,7 @@ class UIFactory:
         if text:
             clipboard = QApplication.clipboard()
             clipboard.setText(text)
-            self.logger.info("控制台文本已復制到剪貼板")
+            self.logger.info('Console output copied to clipboard')
 
 
 class UIInspectorFactory:
@@ -706,23 +706,23 @@ class UIInspectorFactory:
 
     def _on_refresh_clicked(self):
         """刷新按鈕點擊事件"""
-        self.logger.info("刷新UI Inspector")
+        self.logger.info('Refresh button triggered for UI Inspector')
 
     def _on_screenshot_clicked(self):
         """截圖按鈕點擊事件"""
-        self.logger.info("拍攝設備截圖")
+        self.logger.info('Capture device screenshot action triggered')
 
     def _on_inspect_clicked(self):
         """檢查按鈕點擊事件"""
-        self.logger.info("開始UI檢查")
+        self.logger.info('Start UI inspection action triggered')
 
     def _on_copy_clicked(self):
         """復制按鈕點擊事件"""
-        self.logger.info("復制元素信息")
+        self.logger.info('Copy element information action triggered')
 
     def _on_save_clicked(self):
         """保存按鈕點擊事件"""
-        self.logger.info("保存UI層次結構")
+        self.logger.info('Save UI hierarchy action triggered')
 
 
 # 工廠實例創建函數

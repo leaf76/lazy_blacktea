@@ -77,7 +77,7 @@ class VirtualizedDeviceList(QObject):
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """更新設備列表，使用優化策略"""
-        logger.debug(f"更新設備列表: {len(device_dict)} 個設備")
+        logger.debug(f'Updating optimized device list with {len(device_dict)} device(s)')
 
         # 保存當前選擇狀態
         old_checked = self.checked_devices.copy()
@@ -135,7 +135,7 @@ class VirtualizedDeviceList(QObject):
                 self._update_visible_devices()
 
         except Exception as e:
-            logger.error(f"UI更新錯誤: {e}")
+            logger.error(f'UI update error: {e}')
 
     def _update_stats(self):
         """更新統計信息"""

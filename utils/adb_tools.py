@@ -347,7 +347,7 @@ def get_device_detailed_info(serial_num: str) -> dict:
   Returns:
     Dictionary with detailed device information
   """
-  logger.info(f'獲取設備詳細信息: {serial_num}')
+  logger.info('Fetching detailed information for device %s', serial_num)
 
   try:
     detailed_info = {
@@ -358,10 +358,10 @@ def get_device_detailed_info(serial_num: str) -> dict:
       'gms_version': get_gms_version(serial_num),
       'build_fingerprint': get_build_fingerprint(serial_num),
     }
-    logger.info(f'設備 {serial_num} 詳細信息獲取完成')
+    logger.info('Detailed information retrieved for device %s', serial_num)
     return detailed_info
   except Exception as e:
-    logger.error(f'獲取設備 {serial_num} 詳細信息失敗: {e}')
+    logger.error('Failed to retrieve detailed information for device %s: %s', serial_num, e)
     return {
       'wifi_status': None,
       'bluetooth_status': None,

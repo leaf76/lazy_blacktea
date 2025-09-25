@@ -9,17 +9,17 @@ import subprocess
 from typing import Optional
 
 
-# 全局變數記錄是否已經清理過今天的日志
+# Track whether log cleanup has already run for the current day.
 _logs_cleaned_today = False
 
 
 def _cleanup_old_logs(logs_dir: str):
-  """清理舊的日志文件，只保留今天的（每天只執行一次）"""
+  """Remove log files that do not belong to today (runs at most once per day)."""
   global _logs_cleaned_today
 
-  # 如果今天已經清理過，跳過
+  # Skip if cleanup already ran today.
   if _logs_cleaned_today:
-    return
+    return 0
 
   try:
     today = datetime.date.today().strftime('%Y%m%d')
@@ -27,27 +27,25 @@ def _cleanup_old_logs(logs_dir: str):
 
     for filename in os.listdir(logs_dir):
       if filename.startswith('lazy_blacktea_') and filename.endswith('.log'):
-        # 提取日期部分 (lazy_blacktea_20250924_123456.log -> 20250924)
+        # Extract date segment (lazy_blacktea_20250924_123456.log -> 20250924)
         try:
-          date_part = filename[14:22]  # 修正索引位置，提取日期部分
+          date_part = filename[14:22]
           if len(date_part) == 8 and date_part.isdigit():
             if date_part != today:
               old_log_path = os.path.join(logs_dir, filename)
               os.remove(old_log_path)
               cleaned_count += 1
         except (IndexError, ValueError):
-          # 如果文件名格式不符合預期，跳過
+          # Skip unexpected filename formats.
           continue
 
-    # 標記為已清理
+    # Mark cleanup as done.
     _logs_cleaned_today = True
 
-    # 如果清理了文件，記錄信息
-    if cleaned_count > 0:
-      print(f"清理了 {cleaned_count} 個舊日志文件")
+    return cleaned_count
   except Exception as e:
-    # 清理失敗不影響主程序運行
-    pass
+    # Cleanup failures should not interrupt the main application.
+    return 0
 
 
 def get_logger(name: str = 'my_logger') -> logging.Logger:
@@ -73,7 +71,7 @@ def get_logger(name: str = 'my_logger') -> logging.Logger:
   pathlib.Path(logs_dir).mkdir(parents=True, exist_ok=True)
 
   # Clean up old log files (keep only today's logs)
-  _cleanup_old_logs(logs_dir)
+  cleaned_count = _cleanup_old_logs(logs_dir)
 
   # Create log filename with timestamp
   current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -104,6 +102,9 @@ def get_logger(name: str = 'my_logger') -> logging.Logger:
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     logger.setLevel(logging.INFO)
+
+    if cleaned_count > 0:
+      logger.info('Removed %s old log file(s)', cleaned_count)
 
     # Only log file creation once
     if name == 'lazy_blacktea':

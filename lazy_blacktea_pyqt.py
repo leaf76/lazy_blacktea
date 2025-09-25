@@ -1624,7 +1624,6 @@ class WindowMain(QMainWindow):
         """Update the device list display with performance optimizations."""
         self.device_dict = device_dict
 
-        # 性能優化：對於大量設備使用異步更新
         device_count = len(device_dict)
         if DeviceListPerformanceOptimizer.should_use_virtualization(device_count):
             preserved_serials = set(self._get_current_checked_serials())
@@ -1640,12 +1639,11 @@ class WindowMain(QMainWindow):
         self._deactivate_virtualized_view()
 
         if device_count > 5:
-            logger.debug(f"使用性能優化模式更新 {device_count} 個設備")
+            logger.debug(f'Updating {device_count} devices using optimized mode')
             self._update_device_list_optimized(device_dict)
             return
         else:
-            logger.debug(f"使用標準模式更新 {device_count} 個設備")
-            # 直接調用標準更新方法
+            logger.debug(f'Updating {device_count} devices using standard mode')
             self._perform_standard_device_update(device_dict)
 
     def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]):
@@ -1682,7 +1680,7 @@ class WindowMain(QMainWindow):
             self.device_scroll.setUpdatesEnabled(True)
             self.device_scroll.update()
             self.filter_and_sort_devices()
-            logger.debug(f'批次設備更新完成: {len(device_dict)} 個設備')
+            logger.debug(f'Batch device update completed: {len(device_dict)} devices')
 
     def _batch_remove_devices(self, devices_to_remove):
         """批次移除設備"""
