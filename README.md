@@ -8,6 +8,8 @@
 
 A powerful and user-friendly GUI application for Android debugging and automation tasks using ADB (Android Debug Bridge).
 
+> **Current Version:** v0.0.11
+
 ## 📖 Table of Contents
 
 - [Features](#-features)

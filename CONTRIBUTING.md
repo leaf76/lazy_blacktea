@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to Lazy Blacktea! This document provides guidelines for contributors.
 
+> **Current Project Version:** v0.0.11
+
 ## 🐛 Reporting Bugs
 
 1. **Check existing issues** to avoid duplicates
