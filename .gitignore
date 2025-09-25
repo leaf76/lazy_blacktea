@@ -134,6 +134,9 @@ logs/
 temp/
 .claude/
 
+# Claude Code configuration
+CLAUDE.md
+
 # User configuration files (contain personal paths and settings)
 .lazy_blacktea_config.json
 .lazy_blacktea_logs/
