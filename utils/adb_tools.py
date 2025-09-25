@@ -651,6 +651,24 @@ def clear_device_logcat(serial_num) -> bool:
   return True
 
 
+@adb_device_operation(default_return=[])
+def get_package_pids(serial_num: str, package_name: str) -> List[str]:
+  """Return running process IDs for the given package."""
+  if not package_name:
+    return []
+
+  command = adb_commands.cmd_adb_shell(serial_num, f'pidof {package_name}')
+  output_lines = common.run_command(command)
+
+  if not output_lines:
+    return []
+
+  pids: List[str] = []
+  for line in output_lines:
+    pids.extend(pid.strip() for pid in line.split() if pid.strip())
+  return pids
+
+
 def run_adb_shell_command(
     serial_nums: list[str],
     command_str: str,

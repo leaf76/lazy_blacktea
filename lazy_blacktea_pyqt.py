@@ -1208,11 +1208,6 @@ class WindowMain(QMainWindow):
         )
         logcat_layout.addWidget(bug_report_btn, 0, 1)
 
-        # View Logcat button
-        view_logcat_btn = QPushButton('👁️ View Logcat')
-        view_logcat_btn.clicked.connect(lambda: self.show_logcat())
-        logcat_layout.addWidget(view_logcat_btn, 1, 0)
-
         layout.addWidget(logcat_group)
 
         # Device Control section
@@ -2465,6 +2460,9 @@ class WindowMain(QMainWindow):
         deselect_action = context_menu.addAction('❌ Deselect This Device')
         deselect_action.triggered.connect(lambda: self.deselect_device(device_serial))
 
+        view_logcat_action = context_menu.addAction('👁️ View Logcat')
+        view_logcat_action.triggered.connect(lambda: self.view_logcat_for_device(device_serial))
+
         context_menu.addSeparator()
 
         # UI Inspector action (always available for any device)
@@ -3344,23 +3342,41 @@ Build Fingerprint: {device.build_fingerprint}'''
         """Clear logcat on selected devices using logging manager."""
         self.logging_manager.logcat_manager.clear_logcat_selected_devices()
 
+    def _open_logcat_for_device(self, device: adb_models.DeviceInfo) -> None:
+        """Create and show the logcat window for a device."""
+        if not device:
+            self.show_error('Error', 'Selected device is not available.')
+            return
+
+        try:
+            self.logcat_window = LogcatWindow(device, self)
+            self.logcat_window.show()
+        except Exception as exc:
+            logger.error('Failed to open logcat window: %s', exc)
+            self.show_error('Logcat Error', f'Unable to launch Logcat viewer.\n\nDetails: {exc}')
+
     @ensure_devices_selected
     def show_logcat(self):
-        """Show logcat viewer for selected device."""
+        """Show logcat viewer for the single selected device."""
         selected_devices = self.get_checked_devices()
         if not selected_devices:
             self.show_error('Error', 'Please select a device.')
             return
 
-        # For now, only support single device
         if len(selected_devices) > 1:
             self.show_error('Error', 'Please select only one device for logcat viewing.')
             return
 
-        device = selected_devices[0]
-        # Create and show logcat window
-        self.logcat_window = LogcatWindow(device, self)
-        self.logcat_window.show()
+        self._open_logcat_for_device(selected_devices[0])
+
+    def view_logcat_for_device(self, device_serial: str) -> None:
+        """Launch the logcat viewer for the device under the context menu pointer."""
+        device = self.device_dict.get(device_serial)
+        if not device:
+            self.show_error('Logcat Error', 'Target device is no longer available.')
+            return
+
+        self._open_logcat_for_device(device)
 
     # Shell commands
     @ensure_devices_selected

@@ -128,7 +128,6 @@ class PanelsManager(QObject):
             ]),
             ("🔧 System Tools", [
                 ("🗑️ Clear Logcat", "clear_logcat"),
-                ("📊 Show Logcat", "show_logcat"),
                 ("ℹ️ Device Info", "device_info"),
                 ("🏠 Go Home", "go_home")
             ])

@@ -195,7 +195,6 @@ class UIFactory:
 
         system_buttons = [
             ("🗑️ Clear Logcat", "clear_logcat"),
-            ("📊 Show Logcat", "show_logcat"),
             ("ℹ️ Device Info", "device_info"),
             ("🏠 Go Home", "go_home"),
             ("📸 Take Screenshot", "take_screenshot"),
