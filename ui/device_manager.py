@@ -1,14 +1,214 @@
 """Device management module for handling ADB device operations - Simplified using AsyncDeviceManager."""
 
+import hashlib
 import logging
-from typing import Dict, List
-from PyQt6.QtWidgets import QCheckBox, QLabel
-from PyQt6.QtCore import QObject, pyqtSignal
+import threading
+import time
+from typing import Dict, List, Optional
 
-from utils import adb_models, common
-from ui.async_device_manager import AsyncDeviceManager
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal  # type: ignore
+    from PyQt6.QtWidgets import QCheckBox, QLabel  # type: ignore
+    PYQT6_AVAILABLE = True
+except ImportError:  # pragma: no cover - sandbox fallback
+    PYQT6_AVAILABLE = False
+
+    class _DummySignal:
+        def connect(self, *_args, **_kwargs) -> None:
+            return None
+
+        def emit(self, *_args, **_kwargs) -> None:
+            return None
+
+        def disconnect(self, *_args, **_kwargs) -> None:
+            return None
+
+    def pyqtSignal(*_args, **_kwargs):  # type: ignore
+        return _DummySignal()
+
+    class QObject:  # type: ignore
+        def __init__(self, *_args, **_kwargs) -> None:
+            super().__init__()
+
+    class QCheckBox:  # type: ignore
+        def __init__(self) -> None:
+            self._checked = False
+            self._parent = None
+            self.stateChanged = _DummySignal()
+            self.customContextMenuRequested = _DummySignal()
+
+        def isChecked(self) -> bool:
+            return self._checked
+
+        def setChecked(self, value: bool) -> None:
+            self._checked = bool(value)
+
+        def blockSignals(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setParent(self, parent) -> None:
+            self._parent = parent
+
+        def parent(self):  # noqa: D401
+            return self._parent
+
+        def deleteLater(self) -> None:
+            return None
+
+        def hide(self) -> None:
+            return None
+
+        def setVisible(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setText(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setContextMenuPolicy(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setFont(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setToolTip(self, *_args, **_kwargs) -> None:
+            return None
+
+        def enterEvent(self, *_args, **_kwargs) -> None:  # pragma: no cover - stub
+            return None
+
+        def leaveEvent(self, *_args, **_kwargs) -> None:  # pragma: no cover - stub
+            return None
+
+        def __getattr__(self, _name):  # pragma: no cover - defensive
+            # Provide no-op for unexpected attribute usage during tests
+            return lambda *_a, **_kw: None
+
+    class QLabel:  # type: ignore
+        def __init__(self) -> None:
+            self._parent = None
+
+        def setParent(self, parent) -> None:
+            self._parent = parent
+
+        def parent(self):  # noqa: D401
+            return self._parent
+
+        def deleteLater(self) -> None:
+            return None
+
+from utils import adb_models, adb_tools, common
+
+try:
+    from ui.async_device_manager import AsyncDeviceManager  # type: ignore
+except Exception:  # pragma: no cover - PyQt6 unavailable
+    AsyncDeviceManager = None  # type: ignore
 
 logger = common.get_logger('device_manager')
+
+
+class DeviceManagerConfig:
+    """Configuration constants retained for backwards compatibility."""
+
+    DEFAULT_CACHE_TTL: float = 5.0
+    DEFAULT_REFRESH_INTERVAL: int = 5
+    SHUTDOWN_TIMEOUT: int = 5
+    ERROR_RETRY_DELAY: int = 3
+    PROGRESSIVE_DELAY: int = 1
+    FULL_UPDATE_INTERVAL: int = 30
+
+
+class StatusMessages:
+    """Common status message templates used across legacy tests."""
+
+    DEVICES_CONNECTED = "📱 {count} device{s} connected"
+    DEVICE_FOUND = "📱 Found device: {serial}"
+    DEVICES_LOST = "📱 {count} device{s} disconnected"
+    SCAN_ERROR = "❌ Device scan error: {error}"
+    REFRESH_STARTED = "🔄 Refreshing device list..."
+    REFRESH_COMPLETED = "✅ Device list updated"
+
+
+class DeviceCache:
+    """Lightweight cache wrapper for device discovery, matching legacy expectations."""
+
+    def __init__(self, cache_ttl: float = DeviceManagerConfig.DEFAULT_CACHE_TTL):
+        self.cache_ttl = float(cache_ttl)
+        self._cache: List[adb_models.DeviceInfo] = []
+        self._last_hash = ""
+        self.last_update = 0.0
+        self._lock = threading.Lock()
+
+    def _calculate_hash(self, devices: List[adb_models.DeviceInfo]) -> str:
+        digest = hashlib.md5()
+        for device in devices:
+            fingerprint = "|".join(
+                str(getattr(device, attr, ""))
+                for attr in (
+                    "device_serial_num",
+                    "device_model",
+                    "android_ver",
+                    "android_api_level",
+                    "gms_version",
+                )
+            )
+            digest.update(fingerprint.encode("utf-8"))
+        return digest.hexdigest()
+
+    def get_devices(self) -> List[adb_models.DeviceInfo]:
+        with self._lock:
+            cached = list(self._cache)
+            cache_age = time.monotonic() - self.last_update
+            if cached and cache_age < self.cache_ttl:
+                return cached
+
+        try:
+            fresh_devices = list(adb_tools.get_devices_list())
+        except Exception as exc:  # pragma: no cover - defensive branch
+            if cached := self._cache:
+                logger.warning("Falling back to cached devices after error: %s", exc)
+                return list(cached)
+            raise
+
+        with self._lock:
+            self._cache = fresh_devices
+            self.last_update = time.monotonic()
+            self._last_hash = self._calculate_hash(fresh_devices)
+            return list(self._cache)
+
+    def force_refresh(self) -> None:
+        with self._lock:
+            self._cache = []
+            self._last_hash = ""
+            self.last_update = 0.0
+
+
+_GLOBAL_DEVICE_CACHE = DeviceCache()
+
+
+def get_devices_cached() -> List[adb_models.DeviceInfo]:
+    """Return cached device list used by legacy helpers."""
+
+    return _GLOBAL_DEVICE_CACHE.get_devices()
+
+
+class DeviceRefreshThread:
+    """Compatibility shim retained for legacy tests that expect a thread class."""
+
+    def __init__(self, manager: Optional["DeviceManager"], interval: Optional[int] = None):
+        self.manager = manager
+        self.interval = interval or DeviceManagerConfig.DEFAULT_REFRESH_INTERVAL
+        self._running = False
+
+    def run(self) -> None:
+        self._running = True
+        if self.manager is not None:
+            logger.info("DeviceRefreshThread is delegating to DeviceManager.start_device_refresh()")
+            self.manager.start_device_refresh()
+
+    def stop(self) -> None:
+        if self.manager is not None:
+            self.manager.stop_device_refresh()
+        self._running = False
 
 
 class DeviceManager(QObject):
@@ -20,6 +220,8 @@ class DeviceManager(QObject):
     status_updated = pyqtSignal(str)  # status messages
 
     def __init__(self, parent_widget):
+        if not PYQT6_AVAILABLE or AsyncDeviceManager is None:
+            raise RuntimeError('PyQt6 is required to instantiate DeviceManager')
         super().__init__()
         self.parent = parent_widget
         self.device_dict: Dict[str, adb_models.DeviceInfo] = {}

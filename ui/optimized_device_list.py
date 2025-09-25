@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QCheckBox,
@@ -25,11 +25,13 @@ class VirtualizedDeviceList(QObject):
     device_selection_changed = pyqtSignal(str, bool)  # serial, checked
     selection_count_changed = pyqtSignal(int)  # count
 
-    def __init__(self, parent_widget):
+    def __init__(self, parent_widget, main_window=None):
         super().__init__()
         self.parent_widget = parent_widget
+        self.main_window = main_window
         self.device_dict = {}
-        self.checked_devices = set()
+        self.sorted_devices: List[Tuple[str, adb_models.DeviceInfo]] = []
+        self.checked_devices: Set[str] = set()
 
         # 虛擬化參數
         self.visible_range = 20  # 一次最多顯示20個設備
@@ -38,7 +40,7 @@ class VirtualizedDeviceList(QObject):
 
         # UI組件
         self.device_widgets = {}  # 實際的UI組件
-        self.widget_pool = []     # 組件池，重用QCheckBox
+        self.widget_pool = [] if main_window is None else None  # 組件池，重用QCheckBox
 
         # 更新控制
         self.update_timer = None
@@ -83,6 +85,19 @@ class VirtualizedDeviceList(QObject):
         # 更新數據
         self.device_dict = device_dict
 
+        # 基於主視窗的搜尋與排序結果生成序列
+        if self.main_window is not None:
+            filtered_devices = self.main_window._get_filtered_sorted_devices(device_dict)
+            self.sorted_devices = [
+                (device.device_serial_num, device)
+                for device in filtered_devices
+                if device.device_serial_num in device_dict
+            ]
+            self.batch_size = DeviceListPerformanceOptimizer.calculate_batch_size(len(device_dict))
+            self.visible_range = DeviceListPerformanceOptimizer.calculate_visible_range(len(device_dict))
+        else:
+            self.sorted_devices = list(device_dict.items())
+
         # 移除不存在的設備選擇
         current_serials = set(device_dict.keys())
         self.checked_devices = self.checked_devices & current_serials
@@ -110,8 +125,10 @@ class VirtualizedDeviceList(QObject):
             # 更新統計信息
             self._update_stats()
 
+            device_source = self.sorted_devices if self.sorted_devices else list(self.device_dict.items())
+
             # 如果設備數量很少，直接全部顯示
-            if len(self.device_dict) <= 10:
+            if len(device_source) <= 10:
                 self._update_all_devices()
             else:
                 # 使用虛擬化更新
@@ -122,9 +139,13 @@ class VirtualizedDeviceList(QObject):
 
     def _update_stats(self):
         """更新統計信息"""
-        total = len(self.device_dict)
+        total_devices = len(self.device_dict)
+        visible_devices = len(self.sorted_devices)
         selected = len(self.checked_devices)
-        self.stats_label.setText(f"設備: {total} | 已選擇: {selected}")
+        if self.main_window is not None and self.main_window.device_search_manager.get_search_text():
+            self.stats_label.setText(f"設備: {visible_devices}/{total_devices} | 已選擇: {selected}")
+        else:
+            self.stats_label.setText(f"設備: {total_devices} | 已選擇: {selected}")
 
     def _update_all_devices(self):
         """小量設備時的完整更新"""
@@ -132,13 +153,13 @@ class VirtualizedDeviceList(QObject):
         self._clear_device_widgets()
 
         # 批次添加設備
-        device_list = list(self.device_dict.items())
+        device_list = self.sorted_devices if self.sorted_devices else list(self.device_dict.items())
         self._add_devices_batch(device_list, 0)
 
     def _update_visible_devices(self):
         """大量設備時的虛擬化更新"""
         # 計算可見範圍
-        device_list = list(self.device_dict.items())
+        device_list = self.sorted_devices if self.sorted_devices else list(self.device_dict.items())
         total_devices = len(device_list)
 
         # 基於滾動位置計算顯示範圍
@@ -168,25 +189,27 @@ class VirtualizedDeviceList(QObject):
     def _create_device_widget(self, serial: str, device: adb_models.DeviceInfo):
         """創建單個設備UI組件"""
         if serial in self.device_widgets:
-            # 更新現有組件
             checkbox = self.device_widgets[serial]
-            checkbox.setText(self._format_device_text(device))
+            self._update_checkbox_contents(checkbox, serial, device)
+            return
+
+        checkbox = self._get_checkbox_from_pool()
+
+        if self.main_window is not None:
+            checkbox.stateChanged.connect(lambda state, s=serial: self._on_device_check_changed(s, state))
+            self.main_window._initialize_virtualized_checkbox(checkbox, serial, device, self.checked_devices)
+            self.main_window.check_devices[serial] = checkbox
         else:
-            # 創建新組件
-            checkbox = self._get_checkbox_from_pool()
             checkbox.setText(self._format_device_text(device))
             checkbox.setChecked(serial in self.checked_devices)
-
-            # 連接信號
             checkbox.stateChanged.connect(
                 lambda state, s=serial: self._on_device_check_changed(s, state)
             )
 
-            # 添加到佈局
-            insert_index = self.device_layout.count() - 1
-            self.device_layout.insertWidget(insert_index, checkbox)
+        insert_index = self.device_layout.count() - 1
+        self.device_layout.insertWidget(insert_index, checkbox)
 
-            self.device_widgets[serial] = checkbox
+        self.device_widgets[serial] = checkbox
 
     def _format_device_text(self, device: adb_models.DeviceInfo) -> str:
         """格式化設備顯示文字"""
@@ -203,27 +226,42 @@ class VirtualizedDeviceList(QObject):
             f"🔵 BT:{bt_status}"
         )
 
+    def _update_checkbox_contents(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo):
+        """更新現有checkbox的文字/提示"""
+        if self.main_window is not None:
+            self.main_window._apply_checkbox_content(checkbox, serial, device)
+        else:
+            checkbox.setText(self._format_device_text(device))
+
+        should_check = serial in self.checked_devices
+        if checkbox.isChecked() != should_check:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(should_check)
+            checkbox.blockSignals(False)
+
     def _get_checkbox_from_pool(self) -> QCheckBox:
         """從組件池獲取QCheckBox，實現組件重用"""
+        if self.main_window is not None:
+            return self.main_window._acquire_device_checkbox()
+
         if self.widget_pool:
             checkbox = self.widget_pool.pop()
-            # 重置狀態
             checkbox.setChecked(False)
             checkbox.setText("")
             return checkbox
-        else:
-            # 創建新組件
-            checkbox = QCheckBox()
-            checkbox.setFont(QFont('Arial', 9))
-            return checkbox
+
+        checkbox = QCheckBox()
+        checkbox.setFont(QFont('Arial', 9))
+        return checkbox
 
     def _return_checkbox_to_pool(self, checkbox: QCheckBox):
         """將QCheckBox返回到組件池"""
-        # 斷開所有信號連接
+        if self.main_window is not None:
+            self.main_window._release_device_checkbox(checkbox)
+            return
+
         checkbox.stateChanged.disconnect()
-        # 從佈局中移除
         checkbox.setParent(None)
-        # 返回池中
         self.widget_pool.append(checkbox)
 
     def _cleanup_invisible_widgets(self, visible_devices):
@@ -239,12 +277,16 @@ class VirtualizedDeviceList(QObject):
         # 清理組件
         for serial in to_cleanup:
             widget = self.device_widgets[serial]
+            if self.main_window is not None:
+                self.main_window.check_devices.pop(serial, None)
             self._return_checkbox_to_pool(widget)
             del self.device_widgets[serial]
 
     def _clear_device_widgets(self):
         """清理所有設備組件"""
         for serial, widget in list(self.device_widgets.items()):
+            if self.main_window is not None:
+                self.main_window.check_devices.pop(serial, None)
             self._return_checkbox_to_pool(widget)
         self.device_widgets.clear()
 
@@ -254,7 +296,8 @@ class VirtualizedDeviceList(QObject):
         max_scroll = self.scroll_area.verticalScrollBar().maximum()
         if max_scroll > 0:
             scroll_ratio = value / max_scroll
-            self.scroll_position = int(scroll_ratio * len(self.device_dict))
+            source_length = len(self.sorted_devices) if self.sorted_devices else len(self.device_dict)
+            self.scroll_position = int(scroll_ratio * max(1, source_length))
 
         # 如果是大量設備，重新計算可見範圍
         if len(self.device_dict) > 10:
@@ -275,6 +318,8 @@ class VirtualizedDeviceList(QObject):
         # 發送信號
         self.device_selection_changed.emit(serial, is_checked)
         self.selection_count_changed.emit(len(self.checked_devices))
+        if self.main_window is not None:
+            self.main_window._handle_virtualized_selection_change(serial, is_checked)
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """獲取已選擇的設備"""
@@ -286,12 +331,16 @@ class VirtualizedDeviceList(QObject):
         self.checked_devices = set(self.device_dict.keys())
         self._update_all_checkbox_states()
         self.selection_count_changed.emit(len(self.checked_devices))
+        if self.main_window is not None:
+            self.main_window.update_selection_count()
 
     def deselect_all_devices(self):
         """取消全選"""
         self.checked_devices.clear()
         self._update_all_checkbox_states()
         self.selection_count_changed.emit(0)
+        if self.main_window is not None:
+            self.main_window.update_selection_count()
 
     def _update_all_checkbox_states(self):
         """更新所有可見checkbox的狀態"""
@@ -301,6 +350,31 @@ class VirtualizedDeviceList(QObject):
     def get_widget(self) -> QWidget:
         """獲取主UI組件"""
         return self.main_widget
+
+    def apply_search_and_sort(self):
+        """重新套用搜尋排序條件並刷新顯示"""
+        if self.main_window is not None:
+            filtered_devices = self.main_window._get_filtered_sorted_devices(self.device_dict)
+            self.sorted_devices = [
+                (device.device_serial_num, device)
+                for device in filtered_devices
+                if device.device_serial_num in self.device_dict
+            ]
+            self.scroll_position = 0
+            self._schedule_ui_update()
+
+    def set_checked_serials(self, serials: Set[str]):
+        """設定指定序號為勾選狀態"""
+        current_serials = set(self.device_dict.keys())
+        self.checked_devices = set(serials) & current_serials
+        self._update_all_checkbox_states()
+        self.selection_count_changed.emit(len(self.checked_devices))
+        if self.main_window is not None:
+            self.main_window.update_selection_count()
+
+    def clear_widgets(self):
+        """釋放目前建立的checkbox組件"""
+        self._clear_device_widgets()
 
 
 class DeviceListPerformanceOptimizer:
