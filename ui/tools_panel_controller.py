@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config.constants import PanelText
+from config.constants import PanelConfig, PanelText
 from ui.style_manager import ButtonStyle, LabelStyle, StyleManager
 from ui.ui_factory import UIFactory
 
@@ -76,7 +76,7 @@ class ToolsPanelController:
 
         layout.addWidget(output_group)
 
-        logcat_group = QGroupBox('📄 Logcat')
+        logcat_group = QGroupBox(PanelText.GROUP_LOGCAT)
         logcat_layout = QGridLayout(logcat_group)
 
         clear_logcat_btn = UIFactory.create_standard_button(
@@ -97,20 +97,15 @@ class ToolsPanelController:
 
         layout.addWidget(logcat_group)
 
-        device_control_group = QGroupBox('📱 Device Control')
+        device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
         device_control_layout = QGridLayout(device_control_group)
 
-        device_actions = [
-            ('🔄 Reboot Device', self.window.reboot_device),
-            ('📦 Install APK', self.window.install_apk),
-            ('🔵 Enable Bluetooth', self.window.enable_bluetooth),
-            ('🔴 Disable Bluetooth', self.window.disable_bluetooth),
-        ]
-
+        device_actions = list(PanelConfig.DEVICE_ACTIONS)
         if self.window.scrcpy_available:
-            device_actions.append(('🖥️ Mirror Device (scrcpy)', self.window.launch_scrcpy))
+            device_actions.append(('🖥️ Mirror Device (scrcpy)', 'launch_scrcpy'))
 
-        for idx, (text, handler) in enumerate(device_actions):
+        for idx, (text, handler_name) in enumerate(device_actions):
+            handler = getattr(self.window, handler_name)
             btn = QPushButton(text)
             btn.clicked.connect(lambda checked, func=handler: func())
             row, col = divmod(idx, 2)
@@ -118,7 +113,7 @@ class ToolsPanelController:
 
         layout.addWidget(device_control_group)
 
-        capture_group = QGroupBox('📱 Screen Capture & Recording')
+        capture_group = QGroupBox(PanelText.GROUP_CAPTURE)
         capture_layout = QGridLayout(capture_group)
 
         self.window.screenshot_btn = QPushButton('📷 Take Screenshot')
@@ -134,7 +129,7 @@ class ToolsPanelController:
         self.window.stop_record_btn.clicked.connect(lambda: self.window.stop_screen_record())
         capture_layout.addWidget(self.window.stop_record_btn, 1, 1)
 
-        self.window.recording_status_label = QLabel('No active recordings')
+        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
         StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
         capture_layout.addWidget(self.window.recording_status_label, 2, 0, 1, 2)
 
@@ -153,19 +148,10 @@ class ToolsPanelController:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        template_group = QGroupBox('📋 Command Templates')
+        template_group = QGroupBox(PanelText.GROUP_COMMAND_TEMPLATES)
         template_layout = QGridLayout(template_group)
 
-        template_commands = [
-            ('📱 Device Info', 'getprop ro.build.version.release'),
-            ('🔋 Battery Info', 'dumpsys battery'),
-            ('📊 Memory Info', 'dumpsys meminfo'),
-            ('🌐 Network Info', 'dumpsys connectivity'),
-            ('📱 App List', 'pm list packages -3'),
-            ('🗑️ Clear Cache', 'pm trim-caches 1000000000'),
-        ]
-
-        for idx, (label, command) in enumerate(template_commands):
+        for idx, (label, command) in enumerate(PanelConfig.SHELL_TEMPLATE_COMMANDS):
             btn = QPushButton(label)
             btn.clicked.connect(lambda checked, cmd=command: self.window.add_template_command(cmd))
             row, col = divmod(idx, 3)
@@ -173,7 +159,7 @@ class ToolsPanelController:
 
         layout.addWidget(template_group)
 
-        batch_group = QGroupBox('📝 Batch Commands')
+        batch_group = QGroupBox(PanelText.GROUP_BATCH_COMMANDS)
         batch_layout = QVBoxLayout(batch_group)
 
         self.window.batch_commands_edit = QTextEdit()
@@ -189,21 +175,21 @@ class ToolsPanelController:
 
         exec_buttons_layout = QHBoxLayout()
 
-        run_single_btn = QPushButton('▶️ Run Single Command')
+        run_single_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_COMMAND)
         run_single_btn.clicked.connect(lambda: self.window.run_single_command())
         exec_buttons_layout.addWidget(run_single_btn)
 
-        run_batch_btn = QPushButton('🚀 Run All Commands')
+        run_batch_btn = QPushButton(PanelText.BUTTON_RUN_ALL_COMMANDS)
         run_batch_btn.clicked.connect(lambda: self.window.run_batch_commands())
         exec_buttons_layout.addWidget(run_batch_btn)
 
         batch_layout.addLayout(exec_buttons_layout)
 
         self.window.shell_cmd_edit = QLineEdit()
-        self.window.shell_cmd_edit.setPlaceholderText('adb shell input keyevent 26')
+        self.window.shell_cmd_edit.setPlaceholderText(PanelText.PLACEHOLDER_SHELL_COMMAND)
         batch_layout.addWidget(self.window.shell_cmd_edit)
 
-        run_shell_btn = QPushButton('▶️ Run Single Shell Command')
+        run_shell_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_SHELL)
         run_shell_btn.clicked.connect(lambda: self.window.run_shell_command())
         batch_layout.addWidget(run_shell_btn)
 
@@ -250,7 +236,7 @@ class ToolsPanelController:
         output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
         output_layout = QHBoxLayout(output_group)
 
-        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
+        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR_FILE)
         output_layout.addWidget(self.window.file_gen_output_path_edit)
 
         browse_btn = UIFactory.create_standard_button(
@@ -266,13 +252,8 @@ class ToolsPanelController:
         generation_group = QGroupBox(PanelText.GROUP_FILE_GENERATION)
         generation_layout = QGridLayout(generation_group)
 
-        generation_actions = [
-            ('🔍 Device Discovery', self.window.generate_device_discovery_file),
-            ('📷 Device DCIM Pull', self.window.pull_device_dcim_with_folder),
-            ('📁 Export UI Hierarchy', self.window.dump_device_hsv),
-        ]
-
-        for idx, (text, handler) in enumerate(generation_actions):
+        for idx, (text, handler_name) in enumerate(PanelConfig.FILE_GENERATION_ACTIONS):
+            handler = getattr(self.window, handler_name)
             btn = QPushButton(text)
             btn.clicked.connect(lambda checked, func=handler: func())
             row, col = divmod(idx, 2)

@@ -31,7 +31,7 @@ from utils import json_utils
 from config.config_manager import ConfigManager
 from config.constants import (
     UIConstants, PathConstants, ADBConstants, MessageConstants,
-    LoggingConstants, ApplicationConstants
+    LoggingConstants, ApplicationConstants, PanelText
 )
 
 # Import new modular components
@@ -309,7 +309,7 @@ class WindowMain(QMainWindow):
         active_count = self.recording_manager.get_active_recordings_count()
 
         if active_count > 0:
-            status_text = f"🔴 Recording: {active_count} device(s)"
+            status_text = PanelText.LABEL_RECORDING_PREFIX.format(count=active_count)
             self.recording_status_label.setText(status_text)
             self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
 
@@ -321,7 +321,7 @@ class WindowMain(QMainWindow):
 
             self.recording_timer_label.setText('\n'.join(display_recordings))
         else:
-            self.recording_status_label.setText('No active recordings')
+            self.recording_status_label.setText(PanelText.LABEL_NO_RECORDING)
             self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_inactive'])
             self.recording_timer_label.setText('')
 

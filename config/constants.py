@@ -185,13 +185,20 @@ class PanelText:
     TAB_DEVICE_GROUPS = 'Device Groups'
 
     GROUP_OUTPUT_PATH = 'Output Path'
+    GROUP_LOGCAT = '📄 Logcat'
+    GROUP_DEVICE_CONTROL = '📱 Device Control'
+    GROUP_CAPTURE = '📱 Screen Capture & Recording'
+    GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
+    GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_FILE_GENERATION = '🛠️ File Generation Tools'
     GROUP_COMMAND_HISTORY = '📜 Command History'
     GROUP_CREATE_UPDATE = 'Create/Update Group'
     GROUP_EXISTING = 'Existing Groups'
 
     PLACEHOLDER_OUTPUT_DIR = 'Select output directory...'
+    PLACEHOLDER_OUTPUT_DIR_FILE = 'Select output directory for file generation'
     PLACEHOLDER_GROUP_NAME = 'Enter group name...'
+    PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
 
     BUTTON_BROWSE = '📂 Browse'
     BUTTON_CLEAR = '🗑️ Clear'
@@ -200,3 +207,35 @@ class PanelText:
     BUTTON_SAVE_GROUP = 'Save Current Selection as Group'
     BUTTON_SELECT_GROUP = 'Select Devices in Group'
     BUTTON_DELETE_GROUP = 'Delete Selected Group'
+    BUTTON_RUN_SINGLE_COMMAND = '▶️ Run Single Command'
+    BUTTON_RUN_ALL_COMMANDS = '🚀 Run All Commands'
+    BUTTON_RUN_SINGLE_SHELL = '▶️ Run Single Shell Command'
+
+    LABEL_NO_RECORDING = 'No active recordings'
+    LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'
+
+
+class PanelConfig:
+    """Configuration collections used by tool panels."""
+
+    DEVICE_ACTIONS = [
+        ('🔄 Reboot Device', 'reboot_device'),
+        ('📦 Install APK', 'install_apk'),
+        ('🔵 Enable Bluetooth', 'enable_bluetooth'),
+        ('🔴 Disable Bluetooth', 'disable_bluetooth'),
+    ]
+
+    SHELL_TEMPLATE_COMMANDS = [
+        ('📱 Device Info', 'getprop ro.build.version.release'),
+        ('🔋 Battery Info', 'dumpsys battery'),
+        ('📊 Memory Info', 'dumpsys meminfo'),
+        ('🌐 Network Info', 'dumpsys connectivity'),
+        ('📱 App List', 'pm list packages -3'),
+        ('🗑️ Clear Cache', 'pm trim-caches 1000000000'),
+    ]
+
+    FILE_GENERATION_ACTIONS = [
+        ('🔍 Device Discovery', 'generate_device_discovery_file'),
+        ('📷 Device DCIM Pull', 'pull_device_dcim_with_folder'),
+        ('📁 Export UI Hierarchy', 'dump_device_hsv'),
+    ]
