@@ -47,7 +47,8 @@ from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager, ConsoleHandler
-from ui.optimized_device_list import VirtualizedDeviceList, DeviceListPerformanceOptimizer
+from ui.optimized_device_list import VirtualizedDeviceList
+from ui.device_list_controller import DeviceListController
 from ui.screenshot_widget import ClickableScreenshotLabel
 from ui.ui_inspector_dialog import UIInspectorDialog
 
@@ -111,6 +112,9 @@ class WindowMain(QMainWindow):
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
+
+        # Initialize controller handling device list rendering
+        self.device_list_controller = DeviceListController(self)
 
         # Initialize UI factory for creating UI components
         self.ui_factory = UIFactory(parent_window=self)
@@ -739,360 +743,96 @@ class WindowMain(QMainWindow):
             logger.warning(f'Refresh interval set to {interval} seconds but DeviceManager not yet available')
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        """Update the device list display with performance optimizations."""
-        self.device_dict = device_dict
-
-        device_count = len(device_dict)
-        if DeviceListPerformanceOptimizer.should_use_virtualization(device_count):
-            preserved_serials = set(self._get_current_checked_serials())
-            self._activate_virtualized_view(preserved_serials)
-            if self.virtualized_device_list is not None:
-                self.virtualized_device_list.update_device_list(device_dict)
-                self.virtualized_device_list.set_checked_serials(preserved_serials)
-                self.virtualized_device_list.apply_search_and_sort()
-            self._update_virtualized_title()
-            self.update_selection_count()
-            return
-
-        self._deactivate_virtualized_view()
-
-        if device_count > 5:
-            logger.debug(f'Updating {device_count} devices using optimized mode')
-            self._update_device_list_optimized(device_dict)
-            return
-        else:
-            logger.debug(f'Updating {device_count} devices using standard mode')
-            self._perform_standard_device_update(device_dict)
+        self.device_list_controller.update_device_list(device_dict)
 
     def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        """優化版本的設備列表更新，防止UI卡頓"""
-        # 使用定時器分批更新，避免阻塞UI
-        if hasattr(self, '_update_timer') and self._update_timer.isActive():
-            self._update_timer.stop()
-
-        self._update_timer = QTimer()
-        self._update_timer.setSingleShot(True)
-        self._update_timer.timeout.connect(lambda: self._perform_batch_device_update(device_dict))
-        self._update_timer.start(5)  # 5ms 延遲
+        self.device_list_controller._update_device_list_optimized(device_dict)
 
     def _perform_batch_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        """分批執行設備更新，提升性能"""
-        try:
-            # 暫停UI更新
-            self.device_scroll.setUpdatesEnabled(False)
-
-            # 保存當前選擇狀態
-            checked_serials = self._get_current_checked_serials()
-
-            # 計算需要更新的設備
-            current_serials = set(self.check_devices.keys())
-            new_serials = set(device_dict.keys())
-
-            # 分批處理，避免一次性更新太多設備
-            self._batch_remove_devices(current_serials - new_serials)
-            self._batch_add_devices(new_serials - current_serials, device_dict, checked_serials)
-            self._batch_update_existing(current_serials & new_serials, device_dict)
-
-        finally:
-            # 恢復UI更新
-            self.device_scroll.setUpdatesEnabled(True)
-            self.device_scroll.update()
-            self.filter_and_sort_devices()
-            logger.debug(f'Batch device update completed: {len(device_dict)} devices')
+        self.device_list_controller._perform_batch_device_update(device_dict)
 
     def _batch_remove_devices(self, devices_to_remove):
-        """批次移除設備"""
-        for serial in devices_to_remove:
-            if serial in self.check_devices:
-                checkbox = self.check_devices[serial]
-                self.device_layout.removeWidget(checkbox)
-                self._release_device_checkbox(checkbox)
-                del self.check_devices[serial]
+        self.device_list_controller._batch_remove_devices(devices_to_remove)
 
     def _batch_add_devices(self, devices_to_add, device_dict, checked_serials):
-        """批次添加設備，使用小批次避免UI阻塞"""
-        devices_list = list(devices_to_add)
-        batch_size = max(1, DeviceListPerformanceOptimizer.calculate_batch_size(len(device_dict)))
+        self.device_list_controller._batch_add_devices(devices_to_add, device_dict, checked_serials)
 
-        def process_device_batch(start_idx):
-            end_idx = min(start_idx + batch_size, len(devices_list))
-
-            for i in range(start_idx, end_idx):
-                serial = devices_list[i]
-                if serial in device_dict:
-                    self._create_single_device_ui(serial, device_dict[serial], checked_serials)
-
-            # 如果還有更多設備，安排下一批
-            if end_idx < len(devices_list):
-                QTimer.singleShot(2, lambda: process_device_batch(end_idx))
-
-        if devices_list:
-            process_device_batch(0)
-
-    def _get_filtered_sorted_devices(self, device_dict: Optional[Dict[str, adb_models.DeviceInfo]] = None) -> List[adb_models.DeviceInfo]:
-        """Return devices filtered & sorted via the search manager."""
-        source = list((device_dict or self.device_dict).values())
-        return self.device_search_manager.search_and_sort_devices(
-            source,
-            self.device_search_manager.get_search_text(),
-            self.device_search_manager.get_sort_mode()
-        )
+    def _get_filtered_sorted_devices(
+        self, device_dict: Optional[Dict[str, adb_models.DeviceInfo]] = None
+    ) -> List[adb_models.DeviceInfo]:
+        return self.device_list_controller._get_filtered_sorted_devices(device_dict)
 
     def _build_device_display_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        """Compose the display string for a device checkbox."""
-        operation_status = self._get_device_operation_status(serial)
-        recording_status = self._get_device_recording_status(serial)
-
-        android_ver = device.android_ver or 'Unknown'
-        android_api = device.android_api_level or 'Unknown'
-        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
-
-        return (
-            f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
-            f'🆔 {device.device_serial_num:<20} | '
-            f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
-            f'🎯 GMS: {gms_display:<12} | '
-            f'📶 WiFi: {self._get_on_off_status(device.wifi_is_on):<3} | '
-            f'🔵 BT: {self._get_on_off_status(device.bt_is_on)}'
-        )
+        return self.device_list_controller._build_device_display_text(device, serial)
 
     def _apply_checkbox_content(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo) -> None:
-        """Update a checkbox's text and tooltip to match device data."""
-        checkbox.setText(self._build_device_display_text(device, serial))
-        tooltip_text = self._create_device_tooltip(device, serial)
-        checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt, event)
-        checkbox.leaveEvent = lambda event: QToolTip.hideText()
+        self.device_list_controller._apply_checkbox_content(checkbox, serial, device)
 
-    def _configure_device_checkbox(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo,
-                                   checked_serials: Iterable[str]) -> None:
-        """Apply common styling, state, and event bindings to a device checkbox."""
-        checked_set = set(checked_serials)
-        checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        checkbox.customContextMenuRequested.connect(
-            lambda pos, s=serial, cb=checkbox: self.show_device_context_menu(pos, s, cb)
-        )
-        checkbox.setFont(QFont('Segoe UI', 10))
-        self._apply_device_checkbox_style(checkbox)
-        self._apply_checkbox_content(checkbox, serial, device)
+    def _configure_device_checkbox(
+        self,
+        checkbox: QCheckBox,
+        serial: str,
+        device: adb_models.DeviceInfo,
+        checked_serials: Iterable[str],
+    ) -> None:
+        self.device_list_controller._configure_device_checkbox(checkbox, serial, device, checked_serials)
 
-        is_checked = serial in checked_set
-        checkbox.blockSignals(True)
-        checkbox.setChecked(is_checked)
-        checkbox.blockSignals(False)
-
-        checkbox.stateChanged.connect(self.update_selection_count)
-        checkbox.stateChanged.connect(
-            lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state)
-        )
-
-    def _initialize_virtualized_checkbox(self, checkbox: QCheckBox, serial: str,
-                                         device: adb_models.DeviceInfo, checked_serials: Iterable[str]) -> None:
-        """Wrapper so the virtualized list can configure checkboxes consistently."""
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
+    def _initialize_virtualized_checkbox(
+        self,
+        checkbox: QCheckBox,
+        serial: str,
+        device: adb_models.DeviceInfo,
+        checked_serials: Iterable[str],
+    ) -> None:
+        self.device_list_controller._initialize_virtualized_checkbox(checkbox, serial, device, checked_serials)
 
     def _get_current_checked_serials(self) -> set:
-        """Return the serials currently marked as selected across views."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            return set(self.virtualized_device_list.checked_devices)
-        selected = {serial for serial, cb in self.check_devices.items() if cb.isChecked()}
-        if selected:
-            self.pending_checked_serials = set(selected)
-            return selected
-        return set(self.pending_checked_serials)
+        return self.device_list_controller._get_current_checked_serials()
 
     def _release_all_standard_checkboxes(self) -> None:
-        """Return all standard checkboxes to the pool."""
-        for serial, checkbox in list(self.check_devices.items()):
-            if isinstance(checkbox, QCheckBox):
-                self.device_layout.removeWidget(checkbox)
-                self._release_device_checkbox(checkbox)
-        self.check_devices.clear()
+        self.device_list_controller._release_all_standard_checkboxes()
 
     def _activate_virtualized_view(self, checked_serials: Optional[Iterable[str]] = None) -> None:
-        """Switch the device list rendering to the virtualized implementation."""
-        if self.virtualized_device_list is None or self.virtualized_active:
-            return
-
-        preserved_serials = set(checked_serials or [])
-        self.pending_checked_serials = set(preserved_serials)
-
-        self._release_all_standard_checkboxes()
-
-        current_widget = self.device_scroll.takeWidget()
-        if current_widget is not None and current_widget is not self.virtualized_widget:
-            self.standard_device_widget = current_widget
-
-        if self.virtualized_widget.parent() is not None:
-            self.virtualized_widget.setParent(None)
-        self.device_scroll.setWidget(self.virtualized_widget)
-        self.virtualized_active = True
+        self.device_list_controller._activate_virtualized_view(checked_serials)
 
     def _deactivate_virtualized_view(self) -> None:
-        """Return to the standard device list rendering."""
-        if not self.virtualized_active:
-            return
-
-        if self.virtualized_device_list is not None:
-            self.pending_checked_serials = set(self.virtualized_device_list.checked_devices)
-
-        current_widget = self.device_scroll.takeWidget()
-        if current_widget is not None and current_widget is self.virtualized_widget:
-            self.virtualized_widget.setParent(None)
-
-        if self.standard_device_widget is not None:
-            self.device_scroll.setWidget(self.standard_device_widget)
-
-        # 清理虛擬化組件至池中，避免重複
-        if self.virtualized_device_list is not None:
-            self.virtualized_device_list.clear_widgets()
-
-        self.virtualized_active = False
+        self.device_list_controller._deactivate_virtualized_view()
 
     def _update_virtualized_title(self) -> None:
-        """Update the device title label to reflect virtualized counts."""
-        if not hasattr(self, 'title_label') or self.title_label is None:
-            return
-
-        total = len(self.device_dict)
-        visible = len(self.virtualized_device_list.sorted_devices) if self.virtualized_device_list else total
-        selected = len(self.virtualized_device_list.checked_devices) if self.virtualized_device_list else 0
-
-        search_text = self.device_search_manager.get_search_text() if hasattr(self, 'device_search_manager') else ''
-
-        if search_text:
-            self.title_label.setText(f'Connected Devices ({visible}/{total}) - Selected: {selected}')
-        else:
-            self.title_label.setText(f'Connected Devices ({total}) - Selected: {selected}')
+        self.device_list_controller._update_virtualized_title()
 
     def _handle_virtualized_selection_change(self, serial: str, is_checked: bool) -> None:
-        """Synchronize UI state after a virtualized checkbox toggle."""
-        if not self.virtualized_active:
-            return
-
-        checkbox = self.check_devices.get(serial)
-        if checkbox is not None and checkbox.isChecked() != is_checked:
-            checkbox.blockSignals(True)
-            checkbox.setChecked(is_checked)
-            checkbox.blockSignals(False)
-
-        self._update_virtualized_title()
+        self.device_list_controller.handle_virtualized_selection_change(serial, is_checked)
 
     def _acquire_device_checkbox(self) -> QCheckBox:
-        """Fetch a checkbox from the pool or create a new one."""
-        checkbox = self.checkbox_pool.pop() if self.checkbox_pool else QCheckBox()
-
-        # Reset connection state before reuse
-        try:
-            checkbox.stateChanged.disconnect()
-        except TypeError:
-            pass
-
-        try:
-            checkbox.customContextMenuRequested.disconnect()
-        except TypeError:
-            pass
-
-        checkbox.blockSignals(True)
-        checkbox.setChecked(False)
-        checkbox.blockSignals(False)
-        checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        checkbox.setFont(QFont('Segoe UI', 10))
-        checkbox.setToolTip('')
-        checkbox.enterEvent = lambda event, cb=checkbox: QCheckBox.enterEvent(cb, event)
-        checkbox.leaveEvent = lambda event, cb=checkbox: QCheckBox.leaveEvent(cb, event)
-        self._apply_device_checkbox_style(checkbox)
-        checkbox.setVisible(True)
-        return checkbox
+        return self.device_list_controller.acquire_device_checkbox()
 
     def _release_device_checkbox(self, checkbox: QCheckBox) -> None:
-        """Recycle checkbox widgets to reduce churn during list updates."""
-        checkbox.blockSignals(True)
-        checkbox.setChecked(False)
-        checkbox.blockSignals(False)
-        checkbox.hide()
-
-        try:
-            checkbox.stateChanged.disconnect()
-        except TypeError:
-            pass
-
-        try:
-            checkbox.customContextMenuRequested.disconnect()
-        except TypeError:
-            pass
-
-        checkbox.enterEvent = lambda event, cb=checkbox: QCheckBox.enterEvent(cb, event)
-        checkbox.leaveEvent = lambda event, cb=checkbox: QCheckBox.leaveEvent(cb, event)
-        checkbox.setParent(None)
-        self.checkbox_pool.append(checkbox)
+        self.device_list_controller.release_device_checkbox(checkbox)
 
     def _create_single_device_ui(self, serial, device, checked_serials):
-        """創建單個設備的UI組件，優化版本"""
-        checkbox = self._acquire_device_checkbox()
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-        self.check_devices[serial] = checkbox
-        insert_index = self.device_layout.count() - 1
-        self.device_layout.insertWidget(insert_index, checkbox)
+        self.device_list_controller._create_single_device_ui(serial, device, checked_serials)
 
     def _batch_update_existing(self, devices_to_update, device_dict):
-        """批次更新現有設備信息"""
-        for serial in devices_to_update:
-            if serial in self.check_devices and serial in device_dict:
-                device = device_dict[serial]
-                checkbox = self.check_devices[serial]
-                self._apply_checkbox_content(checkbox, serial, device)
+        self.device_list_controller._batch_update_existing(devices_to_update, device_dict)
 
     def _perform_standard_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        """標準版本的設備更新（5個以下設備）"""
-        # 暫停UI更新
-        self.device_scroll.setUpdatesEnabled(False)
-
-        # 保存當前選擇狀態
-        checked_serials = self._get_current_checked_serials()
-
-        # 計算需要更新的設備
-        current_serials = set(self.check_devices.keys())
-        new_serials = set(device_dict.keys())
-
-        # 移除不存在的設備
-        for serial in current_serials - new_serials:
-            if serial in self.check_devices:
-                checkbox = self.check_devices[serial]
-                self.device_layout.removeWidget(checkbox)
-                self._release_device_checkbox(checkbox)
-                del self.check_devices[serial]
-
-        # 添加新設備
-        for serial in new_serials - current_serials:
-            if serial in device_dict:
-                device = device_dict[serial]
-                self._create_standard_device_ui(serial, device, checked_serials)
-
-        # 更新現有設備信息
-        for serial in current_serials & new_serials:
-            if serial in self.check_devices and serial in device_dict:
-                device = device_dict[serial]
-                checkbox = self.check_devices[serial]
-                self._update_device_checkbox_text(checkbox, device, serial)
-
-        # 恢復UI更新
-        self.device_scroll.setUpdatesEnabled(True)
-        self.filter_and_sort_devices()
+        self.device_list_controller._perform_standard_device_update(device_dict)
 
     def _create_standard_device_ui(self, serial, device, checked_serials):
-        """創建標準設備UI組件（用於小量設備）"""
-        checkbox = self._acquire_device_checkbox()
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-        self.check_devices[serial] = checkbox
-        # Insert before the stretch item (which is always the last item)
-        insert_index = self.device_layout.count() - 1
-        self.device_layout.insertWidget(insert_index, checkbox)
+        self.device_list_controller._create_standard_device_ui(serial, device, checked_serials)
 
     def _update_device_checkbox_text(self, checkbox, device, serial):
-        """更新設備checkbox的文字內容"""
-        self._apply_checkbox_content(checkbox, serial, device)
+        self.device_list_controller._update_device_checkbox_text(checkbox, device, serial)
+
+    def filter_and_sort_devices(self):
+        self.device_list_controller.filter_and_sort_devices()
+
+    def on_search_changed(self, text: str):
+        self.device_list_controller.on_search_changed(text)
+
+    def on_sort_changed(self, sort_mode: str):
+        self.device_list_controller.on_sort_changed(sort_mode)
 
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""
