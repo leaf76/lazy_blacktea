@@ -51,7 +51,7 @@ class ConsoleHandler(logging.Handler):
                     # INFO消息使用藍色
                     self.text_widget.setTextColor(Qt.GlobalColor.blue)
 
-                self.text_widget.insertPlainText(msg + '\\n')
+                self.text_widget.insertPlainText(msg + '\n')
 
                 # 自動滾動到底部
                 cursor.movePosition(QTextCursor.MoveOperation.End)

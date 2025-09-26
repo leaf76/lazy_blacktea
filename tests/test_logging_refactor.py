@@ -15,8 +15,18 @@ import os
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 
+from PyQt6.QtWidgets import QApplication, QTextEdit
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+_TEST_HOME = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", ".test_home_logging")
+)
+os.environ["HOME"] = _TEST_HOME
+os.makedirs(os.path.join(_TEST_HOME, ".lazy_blacktea_logs"), exist_ok=True)
 
 try:
     import lazy_blacktea_pyqt
@@ -34,6 +44,7 @@ class LoggingRefactorTest(unittest.TestCase):
     def setUpClass(cls):
         """設置測試環境"""
         cls.module = lazy_blacktea_pyqt
+        cls._qt_app = QApplication.instance() or QApplication([])
 
     def test_logging_classes_exist(self):
         """測試日誌管理類的存在性"""
@@ -175,6 +186,20 @@ class LoggingRefactorTest(unittest.TestCase):
             method = getattr(console_handler, method_name)
             self.assertTrue(callable(method))
             print(f"    ✅ {method_name}")
+
+    def test_console_handler_appends_newline(self):
+        """測試控制台輸出包含換行字元"""
+        print("\n💬 測試控制台換行行為...")
+
+        text_widget = QTextEdit()
+        handler = ConsoleHandler(text_widget, Mock())
+
+        handler._update_widget("Test message", "INFO")
+
+        self.assertTrue(
+            text_widget.toPlainText().endswith("\n"),
+            "Console text should end with a newline character",
+        )
 
     def test_log_levels_functionality(self):
         """測試日誌級別功能"""
