@@ -589,8 +589,14 @@ def _is_device_available(serial_num: str) -> bool:
   """
   try:
     cmd = f'adb -s {serial_num} get-state'
-    result = common.run_command(cmd, 5)  # 5 second timeout
-    return 'device' in str(result).lower()
+    result = common.run_command(cmd)
+
+    if isinstance(result, list):
+      normalized = ' '.join(str(item).lower() for item in result)
+    else:
+      normalized = str(result).lower()
+
+    return 'device' in normalized
   except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
     logger.debug(f'Device {serial_num} availability check failed: {e}')
     return False

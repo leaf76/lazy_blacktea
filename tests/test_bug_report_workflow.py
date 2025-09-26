@@ -141,6 +141,12 @@ class BugReportWorkflowTests(unittest.TestCase):
         self.assertTrue(summary_payload.get("output_path", "").startswith("/tmp/output"))
         self.assertEqual(summary_title, "Bug Report Complete")
 
+    def test_device_availability_check(self):
+        """確認 get-state 輸出 device 時視為連線"""
+
+        with patch("utils.adb_tools.common.run_command", return_value=["device"]):
+            self.assertTrue(adb_tools._is_device_available("serial-123"))
+
 
 if __name__ == "__main__":
     unittest.main()
