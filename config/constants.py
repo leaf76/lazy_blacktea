@@ -239,3 +239,22 @@ class PanelConfig:
         ('📷 Device DCIM Pull', 'pull_device_dcim_with_folder'),
         ('📁 Export UI Hierarchy', 'dump_device_hsv'),
     ]
+
+
+class RecordingConstants:
+    """Recording-related defaults and safety limits."""
+
+    # Android screenrecord hard-limits at 180s; use a slightly smaller segment.
+    SEGMENT_DURATION_SECONDS = 170
+
+    # Poll intervals for verifying recording state (seconds)
+    SEGMENT_POLL_INTERVAL = 0.5
+    VERIFICATION_POLL_INTERVAL = 0.2
+
+    # Retry behaviour for start/stop and file pulls
+    START_RETRY_COUNT = 2
+    START_RETRY_DELAY = 1.0
+    STOP_RETRY_COUNT = 3
+    STOP_RETRY_DELAY = 1.5
+    FILE_PULL_RETRY_COUNT = 3
+    FILE_PULL_RETRY_DELAY = 1.0

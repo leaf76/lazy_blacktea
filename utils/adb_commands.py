@@ -1,5 +1,7 @@
 """Utility with commands functions for adb."""
 
+import shlex
+
 ## Scratch or grep the 'Test summary saved in ' with log
 
 test_summary_grep_word = 'Test summary saved in '
@@ -46,6 +48,34 @@ def _build_adb_shell_command(serial_num: str, shell_command: str) -> str:
     Complete ADB shell command string
   """
   return _build_adb_command(serial_num, 'shell', shell_command)
+
+
+def cmd_screencap_capture(serial_num: str, remote_path: str) -> str:
+  return _build_adb_command(
+      serial_num,
+      'shell',
+      'screencap',
+      '-p',
+      shlex.quote(remote_path)
+  )
+
+
+def cmd_pull_device_file(serial_num: str, remote_path: str, local_path: str) -> str:
+  return _build_adb_command(
+      serial_num,
+      'pull',
+      shlex.quote(remote_path),
+      shlex.quote(local_path)
+  )
+
+
+def cmd_remove_device_file(serial_num: str, remote_path: str) -> str:
+  return _build_adb_command(
+      serial_num,
+      'shell',
+      'rm',
+      shlex.quote(remote_path)
+  )
 
 
 def _build_setting_getter_command(serial_num: str, setting_key: str) -> str:
@@ -239,10 +269,11 @@ def cmd_adb_screen_shot(
     serial_num: str, file_name: str, output_folder_path: str
 ) -> str:
   screen_shot_phone_path = f'/sdcard/{serial_num}_screenshot_{file_name}.png'
+  quoted_phone_path = shlex.quote(screen_shot_phone_path)
+  quoted_output_path = shlex.quote(output_folder_path)
   return (
-      f'adb -s {serial_num} shell screencap -p'
-      f' {screen_shot_phone_path} && adb -s {serial_num} pull'
-      f' {screen_shot_phone_path} {output_folder_path}'
+      f'adb -s {serial_num} shell screencap -p {quoted_phone_path} && '
+      f'adb -s {serial_num} pull {quoted_phone_path} {quoted_output_path}'
   )
 
 
@@ -261,9 +292,10 @@ def cmd_android_screen_record_stop(serial_num) -> str:
 def cmd_pull_android_screen_record(
     serial_num: str, name: str, output_folder_path: str
 ) -> str:
+  device_path = f'/sdcard/screenrecord_{serial_num}_{name}.mp4'
   return (
-      f'adb -s {serial_num} pull /sdcard/screenrecord_{serial_num}_{name}.mp4'
-      f' {output_folder_path}'
+      f'adb -s {serial_num} pull {shlex.quote(device_path)} '
+      f'{shlex.quote(output_folder_path)}'
   )
 
 def cmd_rm_android_screen_record(serial_num, name) -> str:
@@ -283,5 +315,3 @@ def cmd_enlarge_log_buffer(serial_num: str, size: str) -> list[str]:
     A list of command strings.
   """
   return [cmd_adb_shell(serial_num, f'logcat -b main -G {size}')]
-
-

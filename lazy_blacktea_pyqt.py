@@ -75,6 +75,7 @@ class WindowMain(QMainWindow):
     # Define custom signals for thread-safe UI updates
     recording_stopped_signal = pyqtSignal(str, str, str, str, str)  # device_name, device_serial, duration, filename, output_path
     recording_state_cleared_signal = pyqtSignal(str)  # device_serial
+    recording_progress_signal = pyqtSignal(dict)  # progress payload
     screenshot_completed_signal = pyqtSignal(str, int, list)  # output_path, device_count, device_models
     file_generation_completed_signal = pyqtSignal(str, str, int, str)  # operation_name, output_path, device_count, icon
     console_output_signal = pyqtSignal(str)  # message
@@ -151,6 +152,7 @@ class WindowMain(QMainWindow):
         # Connect custom signals for thread-safe UI updates
         self.recording_stopped_signal.connect(self._on_recording_stopped)
         self.recording_state_cleared_signal.connect(self._on_recording_state_cleared)
+        self.recording_progress_signal.connect(self._on_recording_progress_event)
         self.screenshot_completed_signal.connect(self._on_screenshot_completed)
         self.file_generation_completed_signal.connect(self._on_file_generation_completed)
         self.console_output_signal.connect(self._on_console_output)
@@ -294,18 +296,51 @@ class WindowMain(QMainWindow):
 
         # Get all recording statuses from new manager
         all_statuses = self.recording_manager.get_all_recording_statuses()
-        active_recordings = []
+        active_records_text = []
+        now = datetime.datetime.now()
+        handled_serials: Set[str] = set()
+
+        for serial, record in self.device_recordings.items():
+            if not record.get('active'):
+                continue
+
+            elapsed = record.get('elapsed_before_current', 0.0)
+            ongoing_start = record.get('ongoing_start')
+            if ongoing_start:
+                elapsed += (now - ongoing_start).total_seconds()
+            elif elapsed <= 0 and serial in all_statuses and 'Recording' in all_statuses[serial]:
+                duration_part = all_statuses[serial].split('(')[1].rstrip(')')
+                elapsed = self._parse_duration_to_seconds(duration_part)
+
+            seconds_int = max(int(elapsed), 0)
+            last_display = record.get('display_seconds', 0)
+            if seconds_int < last_display:
+                seconds_int = last_display
+            else:
+                record['display_seconds'] = seconds_int
+
+            device_model = record.get('device_name') or 'Unknown'
+            if serial in self.device_dict:
+                device_model = self.device_dict[serial].device_model
+
+            active_records_text.append(
+                f"{device_model} ({serial[:8]}...): {self._format_seconds_to_clock(seconds_int)}"
+            )
+            handled_serials.add(serial)
 
         for serial, status in all_statuses.items():
-            if 'Recording' in status:
-                # Get device model for display
-                device_model = 'Unknown'
-                if serial in self.device_dict:
-                    device_model = self.device_dict[serial].device_model
+            if 'Recording' not in status or serial in handled_serials:
+                continue
 
-                # Extract duration from status (format: "Recording (MM:SS)")
-                duration_part = status.split('(')[1].rstrip(')')
-                active_recordings.append(f"{device_model} ({serial[:8]}...): {duration_part}")
+            device_model = 'Unknown'
+            if serial in self.device_dict:
+                device_model = self.device_dict[serial].device_model
+            duration_part = status.split('(')[1].rstrip(')')
+            elapsed = self._parse_duration_to_seconds(duration_part)
+            seconds_int = max(int(elapsed), 0)
+            active_records_text.append(
+                f"{device_model} ({serial[:8]}...): {self._format_seconds_to_clock(seconds_int)}"
+            )
 
         active_count = self.recording_manager.get_active_recordings_count()
 
@@ -315,16 +350,35 @@ class WindowMain(QMainWindow):
             self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
 
             # Limit display to first 8 recordings to prevent UI overflow
-            if len(active_recordings) > 8:
-                display_recordings = active_recordings[:8] + [f"... and {len(active_recordings) - 8} more device(s)"]
+            if len(active_records_text) > 8:
+                display_recordings = active_records_text[:8] + [f"... and {len(active_records_text) - 8} more device(s)"]
             else:
-                display_recordings = active_recordings
+                display_recordings = active_records_text
 
             self.recording_timer_label.setText('\n'.join(display_recordings))
         else:
             self.recording_status_label.setText(PanelText.LABEL_NO_RECORDING)
             self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_inactive'])
             self.recording_timer_label.setText('')
+
+    @staticmethod
+    def _format_seconds_to_clock(seconds: float) -> str:
+        total_seconds = max(int(seconds), 0)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        secs = total_seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    @staticmethod
+    def _parse_duration_to_seconds(duration_str: str) -> float:
+        try:
+            parts = duration_str.split(':')
+            if len(parts) == 3:
+                hours, minutes, seconds = [int(part) for part in parts]
+                return hours * 3600 + minutes * 60 + seconds
+        except (ValueError, TypeError):  # pragma: no cover - defensive parsing
+            logger.debug(f'Unable to parse duration string: {duration_str}')
+        return 0.0
 
     def show_recording_warning(self, serial):
         """Show warning when recording approaches 3-minute ADB limit."""
@@ -1146,13 +1200,43 @@ class WindowMain(QMainWindow):
             f'Files will be saved to: {validated_path}'
         )
 
-        # Use new recording manager with callback
+        # Use new recording manager with callbacks
         def recording_callback(device_name, device_serial, duration, filename, output_path):
             self.recording_stopped_signal.emit(device_name, device_serial, duration, filename, output_path)
+            self.recording_state_cleared_signal.emit(device_serial)
 
-        success = self.recording_manager.start_recording(devices, validated_path, recording_callback)
+        def recording_progress(event_payload: dict):
+            self.recording_progress_signal.emit(event_payload)
+
+        success = self.recording_manager.start_recording(
+            devices,
+            validated_path,
+            completion_callback=recording_callback,
+            progress_callback=recording_progress,
+        )
         if not success:
             self.error_handler.handle_error(ErrorCode.COMMAND_FAILED, 'Failed to start recording')
+            return
+
+        # Track active recordings locally for UI updates
+        for device in devices:
+            serial = device.device_serial_num
+            if self.recording_manager.is_recording(serial):
+                self.device_recordings[serial] = {
+                    'active': True,
+                    'output_path': validated_path,
+                    'device_name': device.device_model,
+                    'segments': [],
+                    'elapsed_before_current': 0.0,
+                    'ongoing_start': datetime.datetime.now(),
+                    'display_seconds': 0,
+                }
+                self.device_operations[serial] = 'Recording'
+                self.write_to_console(
+                    f"🎬 Recording started for {device.device_model} ({serial[:8]}...)"
+                )
+
+        self.update_recording_status()
 
     def _on_recording_stopped(self, device_name, device_serial, duration, filename, output_path):
         """Handle recording stopped signal in main thread."""
@@ -1164,6 +1248,29 @@ class WindowMain(QMainWindow):
             f'File: {filename}.mp4\n'
             f'Location: {output_path}'
         )
+
+        record = self.device_recordings.setdefault(device_serial, {
+            'segments': [],
+            'elapsed_before_current': 0.0,
+            'ongoing_start': None,
+            'display_seconds': 0,
+        })
+        record['active'] = False
+        record['last_duration'] = duration
+        record['last_filename'] = f'{filename}.mp4'
+        record['output_path'] = output_path
+        record['device_name'] = device_name
+        record['elapsed_before_current'] = self._parse_duration_to_seconds(duration)
+        record['ongoing_start'] = None
+        record['display_seconds'] = int(record['elapsed_before_current'])
+
+        if device_serial in self.device_operations:
+            del self.device_operations[device_serial]
+
+        self.write_to_console(
+            f"✅ Recording stopped for {device_name} ({device_serial[:8]}...) -> {filename}.mp4 ({duration})"
+        )
+        self.update_recording_status()
         logger.info(f'🔴 [SIGNAL] _on_recording_stopped completed for {device_serial}')
 
     def _on_recording_state_cleared(self, device_serial):
@@ -1179,6 +1286,93 @@ class WindowMain(QMainWindow):
         self.device_manager.force_refresh()
         self.update_recording_status()
         logger.info(f'🔄 [SIGNAL] _on_recording_state_cleared completed for {device_serial}')
+
+    def _on_recording_progress_event(self, event_payload: dict):
+        """Handle asynchronous recording progress updates."""
+        try:
+            event_type = event_payload.get('type')
+            device_serial = event_payload.get('device_serial')
+            if not event_type or not device_serial:
+                return
+
+            device_name = event_payload.get('device_name', device_serial)
+            record = self.device_recordings.setdefault(
+                device_serial,
+                {
+                    'active': True,
+                    'output_path': event_payload.get('output_path'),
+                    'device_name': device_name,
+                    'segments': [],
+                    'elapsed_before_current': 0.0,
+                    'ongoing_start': datetime.datetime.now(),
+                    'display_seconds': 0,
+                },
+            )
+            record['device_name'] = device_name
+
+            if event_type == 'segment_completed':
+                segment_index = event_payload.get('segment_index')
+                try:
+                    segment_index_display = int(segment_index)
+                except (TypeError, ValueError):
+                    segment_index_display = None
+
+                segment_filename = event_payload.get('segment_filename', 'unknown')
+                duration_seconds = float(event_payload.get('duration_seconds', 0.0) or 0.0)
+                total_duration = float(event_payload.get('total_duration_seconds', 0.0) or 0.0)
+
+                record['active'] = True
+                record['output_path'] = event_payload.get('output_path') or record.get('output_path')
+                record.setdefault('segments', [])
+                record['segments'].append(
+                    {
+                        'index': segment_index_display,
+                        'filename': segment_filename,
+                        'duration_seconds': duration_seconds,
+                        'total_duration_seconds': total_duration,
+                    }
+                )
+
+                # Keep only the latest 20 segments to prevent unbounded growth
+                if len(record['segments']) > 20:
+                    record['segments'] = record['segments'][-20:]
+
+                self.device_operations[device_serial] = 'Recording'
+
+                record['elapsed_before_current'] = total_duration
+                record['ongoing_start'] = None if event_payload.get('request_origin') == 'user' else datetime.datetime.now()
+                record['display_seconds'] = int(total_duration)
+
+                duration_display = f"{duration_seconds:.1f}s"
+                segment_label = (
+                    f"{segment_index_display:02d}" if isinstance(segment_index_display, int) else "?"
+                )
+                self.write_to_console(
+                    f"🎬 Segment {segment_label} saved for {device_name} ({device_serial[:8]}...) -> {segment_filename} ({duration_display})"
+                )
+                self.update_recording_status()
+
+            elif event_type == 'error':
+                message = event_payload.get('message', 'Unknown error')
+                self.write_to_console(
+                    f"❌ Recording error on {device_name} ({device_serial[:8]}...): {message}"
+                )
+                self.error_handler.show_warning(
+                    'Recording Warning',
+                    f'Device {device_name} encountered an issue:\n{message}'
+                )
+                if device_serial in self.device_recordings:
+                    self.device_recordings[device_serial]['active'] = False
+                    self.device_recordings[device_serial]['ongoing_start'] = None
+                    self.device_recordings[device_serial]['display_seconds'] = int(
+                        self.device_recordings[device_serial].get('elapsed_before_current', 0.0)
+                    )
+                if device_serial in self.device_operations:
+                    del self.device_operations[device_serial]
+                self.update_recording_status()
+
+        except Exception as exc:  # pragma: no cover - UI defensive handling
+            logger.error(f'Failed to process recording progress event: {exc}')
 
     def _on_device_operation_completed(self, operation, device_serial, success, message):
         """Handle device operation completed signal."""

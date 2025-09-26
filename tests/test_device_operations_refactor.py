@@ -62,11 +62,10 @@ class DeviceOperationsRefactorTest(unittest.TestCase):
             'helper_operations': [
                 'update_recording_status',
                 'show_recording_warning',
-                '_get_device_operation_status',
-                '_get_device_recording_status',
                 '_install_apk_with_progress',
                 '_on_recording_stopped',
                 '_on_recording_state_cleared',
+                '_on_recording_progress_event',
                 '_on_screenshot_completed',
                 '_show_screenshot_quick_actions',
                 '_handle_screenshot_completion',

@@ -962,23 +962,29 @@ def pull_devices_hsv(serial_nums: list[str], output_path: str) -> list[str]:
 def start_to_screen_shot(
     serial_nums: list[str], file_name: str, output_path: str
 ) -> None:
-  """Start to screen shot.
+  """Capture screenshots for the provided devices."""
 
-  Args:
-    serial_nums: Phones serial number.
-    file_name: Photo file name
-    output_path: The output folder path.
-  """
   logger.info('Start to screen shot.')
-
   output_path = common.make_gen_dir_path(output_path)
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_adb_screen_shot(s, file_name, output_path)
-    commands.append(cmd)
 
-  results = _execute_commands_parallel(commands, 'start_to_screen_shot')
-  logger.info('Start to screen shot results: %s', results)
+  for serial in serial_nums:
+    remote_path = f'/sdcard/{serial}_screenshot_{file_name}.png'
+    logger.info('📸 [SCREENSHOT] Processing device %s -> %s', serial, remote_path)
+
+    capture_cmd = adb_commands.cmd_screencap_capture(serial, remote_path)
+    pull_cmd = adb_commands.cmd_pull_device_file(serial, remote_path, output_path)
+    cleanup_cmd = adb_commands.cmd_remove_device_file(serial, remote_path)
+
+    for stage, command in (
+        ('capture', capture_cmd),
+        ('pull', pull_cmd),
+        ('cleanup', cleanup_cmd),
+    ):
+      logger.debug('📸 [SCREENSHOT] %s command for %s: %s', stage, serial, command)
+      result = common.run_command(command)
+      logger.debug('📸 [SCREENSHOT] %s result for %s: %s', stage, serial, result)
+
+  logger.info('Start to screen shot completed for %s device(s)', len(serial_nums))
 
 
 def start_to_record_android_devices(
@@ -1454,12 +1460,10 @@ def _verify_recording_started(serial_nums: List[str]) -> bool:
     all_started = True
     for serial in serial_nums:
       try:
-        # Check if screenrecord process is running
-        cmd = adb_commands._build_adb_shell_command(serial, 'ps | grep screenrecord')
-        result = common.run_command(cmd, 3)
-        if not result or not any('screenrecord' in str(r) for r in result):
-          all_started = False
-          break
+        if _is_screenrecord_running(serial):
+          continue
+        all_started = False
+        break
       except Exception as e:
         logger.debug(f'Failed to verify recording on {serial}: {e}')
         all_started = False
@@ -1469,10 +1473,31 @@ def _verify_recording_started(serial_nums: List[str]) -> bool:
       logger.info(f'Screen recording verified on all {len(serial_nums)} devices')
       return True
 
-    # Minimal wait before retry (non-blocking)
-    time.sleep(0.01)  # Reduced from 0.1s to 0.01s
+    time.sleep(0.05)
 
   logger.warning(f'Could not verify recording started on all devices after {max_attempts} attempts')
+  return False
+
+
+def _is_screenrecord_running(serial: str) -> bool:
+  """Check if screenrecord process is running on the device."""
+  pid_commands = [
+      'pidof screenrecord',
+      'pidof /system/bin/screenrecord',
+  ]
+
+  for command in pid_commands:
+    cmd = adb_commands._build_adb_shell_command(serial, command)
+    result = common.run_command(cmd, 3)
+    if result and any(str(line).strip() for line in result):
+      return True
+
+  # Fallback to ps listing
+  cmd = adb_commands._build_adb_shell_command(serial, 'ps -A')
+  result = common.run_command(cmd, 3)
+  if result and any('screenrecord' in str(line) for line in result):
+    return True
+
   return False
 
 
