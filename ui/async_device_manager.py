@@ -10,8 +10,10 @@
 5. 內存使用優化和設備信息緩存
 """
 
+import subprocess
+import threading
 import time
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
@@ -194,6 +196,112 @@ class DeviceLoadingRunnable(QRunnable):
 
 
 
+class TrackDevicesWorker(QObject):
+    """Background worker that follows `adb track-devices` output."""
+
+    device_list_changed = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, command_factory: Optional[Callable[[], List[str]]] = None, parent=None):
+        super().__init__(parent)
+        self._command_factory = command_factory or (lambda: ['adb', 'track-devices'])
+        self._stop_event = threading.Event()
+        self._process: Optional[subprocess.Popen] = None
+
+    def run(self):
+        """Main loop executed within a dedicated QThread."""
+        while not self._stop_event.is_set():
+            try:
+                command = self._command_factory()
+                self._process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                )
+
+                buffer: List[str] = []
+
+                while not self._stop_event.is_set():
+                    if self._process.stdout is None:
+                        break
+                    line = self._process.stdout.readline()
+
+                    if line == '' and self._process.poll() is not None:
+                        break
+
+                    line = line.strip()
+                    if not line:
+                        self._emit_from_buffer(buffer)
+                        buffer = []
+                        continue
+
+                    if line.startswith('List of devices attached'):
+                        buffer = []
+                        continue
+
+                    buffer.append(line)
+
+                if buffer:
+                    self._emit_from_buffer(buffer)
+
+                if self._process:
+                    self._process.wait(timeout=1)
+
+            except FileNotFoundError:
+                self.error_occurred.emit('ADB executable not found for track-devices')
+                self._wait_before_retry(5)
+            except Exception as exc:
+                self.error_occurred.emit(f'track-devices error: {exc}')
+                self._wait_before_retry(2)
+            finally:
+                if self._process:
+                    try:
+                        if self._process.poll() is None:
+                            self._process.terminate()
+                        self._process.wait(timeout=1)
+                    except Exception:
+                        pass
+                self._process = None
+
+    def stop(self):
+        self._stop_event.set()
+        if self._process and self._process.poll() is None:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=1)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+        self._process = None
+
+    def _emit_from_buffer(self, buffer: List[str]):
+        if not buffer:
+            return
+
+        serials: List[str] = []
+        for entry in buffer:
+            parts = entry.split()
+            if not parts:
+                continue
+            serial = parts[0].strip()
+            status = parts[1].strip() if len(parts) > 1 else ''
+            if serial and status == 'device':
+                serials.append(serial)
+
+        self.device_list_changed.emit(serials)
+
+    def _wait_before_retry(self, seconds: int):
+        for _ in range(seconds * 10):
+            if self._stop_event.is_set():
+                break
+            time.sleep(0.1)
+
+
 class AsyncDeviceManager(QObject):
     """異步設備管理器"""
 
@@ -205,11 +313,15 @@ class AsyncDeviceManager(QObject):
     basic_devices_ready = pyqtSignal(dict)  # 基本信息加載完成
     all_devices_ready = pyqtSignal(dict)  # 所有信息加載完成
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, tracker_factory: Optional[Callable[[], Optional[TrackDevicesWorker]]] = None):
         super().__init__(parent)
         self.device_cache: Dict[str, adb_models.DeviceInfo] = {}
         self.device_progress: Dict[str, DeviceLoadProgress] = {}
+        self.last_discovered_serials: Optional[Set[str]] = None
         self.worker: Optional[AsyncDeviceWorker] = None
+        self.device_tracker_thread: Optional[QThread] = None
+        self.device_tracker_worker: Optional[TrackDevicesWorker] = None
+        self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker())
 
         # 設置
         self.max_cache_size = 50  # 最大緩存設備數
@@ -218,11 +330,36 @@ class AsyncDeviceManager(QObject):
         # 定時刷新設置
         self.refresh_timer = QTimer(self)  # 確保timer有正確的parent
         self.refresh_timer.timeout.connect(self._periodic_refresh)
-        self.refresh_interval = 5   # 默認5秒刷新間隔
+        self.refresh_interval = 30   # 默認30秒刷新間隔
         self.auto_refresh_enabled = True
         self.refresh_cycle_count = 0  # 用於追踪刷新週期
 
-    def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True):
+        self._initialize_device_tracker()
+
+    def _initialize_device_tracker(self):
+        """Set up adb track-devices monitoring in background."""
+        tracker_instance: Optional[TrackDevicesWorker] = None
+
+        if self._tracker_factory:
+            try:
+                tracker_instance = self._tracker_factory()
+            except Exception as exc:
+                logger.error(f'Failed to create device tracker worker: {exc}')
+                tracker_instance = None
+
+        if tracker_instance is None:
+            logger.info('Device tracker not started (factory returned None)')
+            return
+
+        self.device_tracker_worker = tracker_instance
+        self.device_tracker_thread = QThread(self)
+        self.device_tracker_worker.moveToThread(self.device_tracker_thread)
+        self.device_tracker_thread.started.connect(self.device_tracker_worker.run)
+        self.device_tracker_worker.device_list_changed.connect(self._on_tracked_devices_changed)
+        self.device_tracker_worker.error_occurred.connect(lambda msg: logger.warning(f'Device tracker warning: {msg}'))
+        self.device_tracker_thread.start()
+
+    def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True, serials: Optional[List[str]] = None):
         """開始異步設備發現"""
         # force_reload parameter kept for compatibility but not currently used
         logger.info('Starting async device discovery')
@@ -233,8 +370,13 @@ class AsyncDeviceManager(QObject):
         self.device_discovery_started.emit()
 
         try:
-            # 快速獲取設備列表（不包含詳細信息）
-            basic_device_serials = self._get_basic_device_serials()
+            if serials is not None:
+                basic_device_serials = serials
+            else:
+                # 快速獲取設備列表（不包含詳細信息）
+                basic_device_serials = self._get_basic_device_serials()
+
+            self.last_discovered_serials = set(basic_device_serials)
 
             if not basic_device_serials:
                 logger.warning('No devices detected')
@@ -457,12 +599,23 @@ class AsyncDeviceManager(QObject):
             logger.info('Skipping periodic refresh while devices are loading to avoid interruption')
             return
 
-        self.refresh_cycle_count += 1
+        try:
+            current_serials = self._get_basic_device_serials()
+        except Exception as exc:
+            logger.error(f'Periodic refresh failed to enumerate devices: {exc}')
+            current_serials = []
 
-        # 自動刷新始終加載詳細信息，與手動刷新保持一致
+        current_set = set(current_serials)
+
+        if self.last_discovered_serials is not None and current_set == self.last_discovered_serials:
+            self.refresh_cycle_count += 1
+            logger.info('No device changes detected; skipping refresh cycle %s', self.refresh_cycle_count)
+            return
+
+        self.refresh_cycle_count += 1
         logger.info('Running periodic device refresh cycle %s (full detail)', self.refresh_cycle_count)
         try:
-            self.start_device_discovery(force_reload=True, load_detailed=True)
+            self.start_device_discovery(force_reload=True, load_detailed=True, serials=current_serials)
         except Exception as e:
             logger.error(f'Periodic refresh failed: {e}')
 
@@ -471,3 +624,23 @@ class AsyncDeviceManager(QObject):
         self.stop_periodic_refresh()
         self.stop_current_loading()
         self.clear_cache()
+        if self.device_tracker_worker:
+            self.device_tracker_worker.stop()
+        if self.device_tracker_thread:
+            self.device_tracker_thread.quit()
+            self.device_tracker_thread.wait(1000)
+            self.device_tracker_thread = None
+        self.device_tracker_worker = None
+
+    def _on_tracked_devices_changed(self, serials: List[str]):
+        """Handle change events from adb track-devices."""
+        new_set = set(serials)
+        if self.last_discovered_serials is not None and new_set == self.last_discovered_serials:
+            logger.debug('Tracked device list unchanged; ignoring update')
+            return
+
+        logger.info('Device tracker detected change: %s', serials)
+        try:
+            self.start_device_discovery(force_reload=True, load_detailed=True, serials=serials)
+        except Exception as exc:
+            logger.error(f'Failed to refresh devices after track update: {exc}')

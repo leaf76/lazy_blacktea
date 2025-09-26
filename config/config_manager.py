@@ -27,7 +27,7 @@ class UISettings:
 @dataclass
 class DeviceSettings:
     """Device-related settings."""
-    refresh_interval: int = 5
+    refresh_interval: int = 30
     auto_connect: bool = True
     show_offline_devices: bool = False
     preferred_devices: list = None
@@ -120,9 +120,9 @@ class ConfigManager:
             logger.warning('UI scale out of range, reset to 1.0')
 
         device_settings = validated.get('device', {})
-        if device_settings.get('refresh_interval', 5) < 1:
-            device_settings['refresh_interval'] = 5
-            logger.warning('Refresh interval too low, reset to 5 seconds')
+        if device_settings.get('refresh_interval', 30) < 1:
+            device_settings['refresh_interval'] = 30
+            logger.warning('Refresh interval too low, reset to 30 seconds')
 
         return validated
 

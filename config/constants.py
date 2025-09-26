@@ -11,7 +11,7 @@ class UIConstants:
     WINDOW_MIN_HEIGHT = 600
 
     # Refresh intervals (milliseconds) - Optimized for performance
-    DEVICE_REFRESH_INTERVAL_MS = 10000  # Increased from 5s to 10s
+    DEVICE_REFRESH_INTERVAL_MS = 30000  # Increased to 30s for auto refresh cadence
     RECORDING_STATUS_REFRESH_MS = 2000   # Increased from 1s to 2s
     PROGRESS_HIDE_DELAY_MS = 1500
     UI_UPDATE_DEBOUNCE_MS = 300          # Increased from 100ms to 300ms

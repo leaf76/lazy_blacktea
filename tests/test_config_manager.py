@@ -34,7 +34,7 @@ class TestConfigManager(unittest.TestCase):
         # Check default values
         self.assertEqual(config.ui.window_width, 1200)
         self.assertEqual(config.ui.window_height, 800)
-        self.assertEqual(config.device.refresh_interval, 5)
+        self.assertEqual(config.device.refresh_interval, 30)
         self.assertEqual(config.command.max_history_size, 50)
 
     def test_save_and_load_config(self):
@@ -43,7 +43,7 @@ class TestConfigManager(unittest.TestCase):
         config = self.config_manager.load_config()
         config.ui.window_width = 1600
         config.ui.window_height = 900
-        config.device.refresh_interval = 10
+        config.device.refresh_interval = 20
 
         # Save config
         self.config_manager.save_config(config)
@@ -55,7 +55,7 @@ class TestConfigManager(unittest.TestCase):
         # Verify values
         self.assertEqual(loaded_config.ui.window_width, 1600)
         self.assertEqual(loaded_config.ui.window_height, 900)
-        self.assertEqual(loaded_config.device.refresh_interval, 10)
+        self.assertEqual(loaded_config.device.refresh_interval, 20)
 
     def test_config_validation(self):
         """Test configuration validation."""
@@ -77,7 +77,7 @@ class TestConfigManager(unittest.TestCase):
         # Load and verify validation
         config = self.config_manager.load_config()
         self.assertEqual(config.ui.ui_scale, 1.0)  # Should be reset to default
-        self.assertEqual(config.device.refresh_interval, 5)  # Should be reset to default
+        self.assertEqual(config.device.refresh_interval, 30)  # Should be reset to default
 
     def test_update_settings(self):
         """Test settings update methods."""
