@@ -1,14 +1,25 @@
 """File generation utilities for creating device reports and files."""
 
 import os
+import re
 import threading
-from typing import List, Callable, Optional
+from typing import List, Callable, Optional, Dict, Any
+
 from utils import adb_models, adb_tools, common
+
+
+def _sanitize_fragment(value: str) -> str:
+    """Sanitize a string for safe filesystem usage."""
+    if not value:
+        return 'unknown'
+    sanitized = re.sub(r'[^A-Za-z0-9._-]+', '_', value)
+    return sanitized.strip('_') or 'unknown'
 
 
 def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                              output_path: str,
-                             callback: Optional[Callable] = None) -> None:
+                             callback: Optional[Callable] = None,
+                             progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
     """Generate Android bug reports for multiple devices.
 
     Args:
@@ -25,31 +36,93 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
             logger = common.get_logger('file_generation')
             logger.info(f'Starting bug report generation for {device_count} devices')
 
+            os.makedirs(output_path, exist_ok=True)
+
+            successes = 0
+            failures: List[Dict[str, str]] = []
+
             # Generate reports for each device with progress
             for index, device in enumerate(devices, 1):
                 try:
-                    filename = f"bug_report_{device.device_model}_{device.device_serial_num}_{timestamp}"
+                    sanitized_model = _sanitize_fragment(device.device_model)
+                    sanitized_serial = _sanitize_fragment(device.device_serial_num)
+                    filename = f"bug_report_{sanitized_model}_{sanitized_serial}_{timestamp}"
                     filepath = os.path.join(output_path, filename)
 
-                    # Log progress without callback to avoid multiple dialogs
-                    logger.info(f'Generating bug report {index}/{device_count} for {device.device_model}')
+                    logger.info(
+                        f'Generating bug report {index}/{device_count} for '
+                        f'{device.device_model} ({device.device_serial_num})'
+                    )
 
-                    # Use enhanced bug report generation with timeout and validation
                     result = adb_tools.generate_bug_report_device(
                         device.device_serial_num,
                         filepath,
                         timeout=300
                     )
 
-                    if result['success']:
-                        logger.info(f'Bug report generated for {device.device_model}: {filename} ({result.get("file_size", "unknown")} bytes)')
+                    success = bool(result.get('success'))
+                    if success:
+                        successes += 1
+                        logger.info(
+                            'Bug report generated for %s (%s): %s bytes',
+                            device.device_model,
+                            device.device_serial_num,
+                            result.get('file_size', 'unknown')
+                        )
                     else:
                         error_msg = result.get('error', 'Unknown error')
-                        logger.error(f'Bug report failed for {device.device_model}: {error_msg}')
-                        continue
+                        failures.append({
+                            'device_serial': device.device_serial_num,
+                            'device_model': device.device_model,
+                            'error': error_msg
+                        })
+                        logger.error(
+                            'Bug report failed for %s (%s): %s',
+                            device.device_model,
+                            device.device_serial_num,
+                            error_msg
+                        )
+
+                    progress_payload = {
+                        'success': success,
+                        'current': index,
+                        'total': device_count,
+                        'device_serial': device.device_serial_num,
+                        'device_model': device.device_model,
+                        'output_path': result.get('output_path', f'{filepath}.zip'),
+                        'error_message': result.get('error', ''),
+                        'details': result.get('details', '')
+                    }
+
+                    if progress_callback:
+                        try:
+                            progress_callback(progress_payload)
+                        except Exception as callback_error:
+                            logger.warning(f'Progress callback failed: {callback_error}')
 
                 except Exception as e:
                     logger.error(f'Bug report failed for {device.device_model} ({device.device_serial_num}): {e}')
+                    failures.append({
+                        'device_serial': device.device_serial_num,
+                        'device_model': device.device_model,
+                        'error': str(e)
+                    })
+
+                    if progress_callback:
+                        failure_payload = {
+                            'success': False,
+                            'current': index,
+                            'total': device_count,
+                            'device_serial': device.device_serial_num,
+                            'device_model': device.device_model,
+                            'output_path': f'{filepath}.zip',
+                            'error_message': str(e),
+                            'details': ''
+                        }
+                        try:
+                            progress_callback(failure_payload)
+                        except Exception as callback_error:
+                            logger.warning(f'Progress callback failed: {callback_error}')
 
                     # Log manufacturer-specific guidance
                     device_model_lower = device.device_model.lower()
@@ -71,11 +144,36 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
 
             # Single completion callback to avoid multiple dialogs
             if callback:
-                successful_count = sum(1 for d in devices if os.path.exists(
-                    os.path.join(output_path, f"bug_report_{d.device_model}_{d.device_serial_num}_{timestamp}.zip")
-                ))
-                completion_message = f"Bug report generation completed: {successful_count}/{device_count} devices successful"
-                callback('Bug Report Complete', completion_message, successful_count, '🐛')
+                failure_count = len(failures)
+                summary_lines = [
+                    f'Bug report generation completed for {device_count} device(s).',
+                    f'📁 Output directory: {output_path}',
+                    '',
+                    f'✅ Success: {successes} device(s)',
+                    f'❌ Failed: {failure_count} device(s)'
+                ]
+
+                if failures:
+                    summary_lines.append('')
+                    summary_lines.append('Failed devices:')
+                    for failure in failures:
+                        summary_lines.append(
+                            f'• {failure["device_model"]} ({failure["device_serial"]}) — {failure["error"]}'
+                        )
+
+                completion_message = '\n'.join(summary_lines)
+                completion_payload = {
+                    'summary': completion_message,
+                    'output_path': output_path,
+                    'successes': successes,
+                    'failures': failures,
+                    'timestamp': timestamp
+                }
+
+                try:
+                    callback('Bug Report Complete', completion_payload, successes, '🐛')
+                except Exception as callback_error:
+                    logger.warning(f'Completion callback failed: {callback_error}')
 
         except Exception as e:
             common.get_logger('file_generation').error(f'Bug report batch operation failed: {e}')

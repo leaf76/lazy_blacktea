@@ -29,10 +29,13 @@ class FileOperationsManager(QObject):
 
     # 信號定義
     file_generation_completed_signal = pyqtSignal(str, str, int, str)
+    file_generation_progress_signal = pyqtSignal(int, int, str)
 
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
+        self.last_generation_output_path: str = ''
+        self.last_generation_summary: str = ''
 
     def get_validated_output_path(self, path_text: str) -> Optional[str]:
         """驗證並獲取輸出路徑"""
@@ -50,22 +53,58 @@ class FileOperationsManager(QObject):
         if not validated_path:
             return
 
-        # 顯示進度通知
-        self.parent_window.show_info(
-            '📊 Generating Bug Reports',
-            f'Generating Android bug reports for {len(devices)} device(s)...\n\n'
-            f'📁 Saving to: {validated_path}\n\n'
-            f'Please wait, this may take a while...'
-        )
+        device_count = len(devices)
+        self.last_generation_output_path = validated_path
+        self.last_generation_summary = ''
 
-        def bug_report_callback(operation_name, output_path, device_count, icon):
+        # 顯示進度通知（避免阻塞，改用狀態列與信號）
+        initial_message = (
+            f'🐛 Preparing bug report generation for {device_count} device(s)... '
+            f'(Saving to: {validated_path})'
+        )
+        QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(0, device_count, initial_message))
+
+        def bug_report_callback(operation_name, payload, success_count, icon):
             """Bug report生成完成的回調"""
-            self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
+            summary_text = ''
+            output_directory = validated_path
+
+            if isinstance(payload, dict):
+                summary_text = payload.get('summary', '')
+                output_directory = payload.get('output_path', validated_path)
+            else:
+                summary_text = str(payload)
+
+            self.last_generation_summary = summary_text
+            self.last_generation_output_path = output_directory
+            self.file_generation_completed_signal.emit(operation_name, summary_text, success_count, icon)
+
+        def progress_callback(payload: dict):
+            """Bug report 進度更新回調"""
+            status_icon = '✅' if payload.get('success') else '❌'
+            current = payload.get('current', 0)
+            total = payload.get('total', device_count)
+            device_model = payload.get('device_model', 'Unknown Device')
+            serial = payload.get('device_serial', 'Unknown Serial')
+            base_message = (
+                f'{status_icon} Bug report {current}/{total}: '
+                f'{device_model} ({serial})'
+            )
+
+            if not payload.get('success') and payload.get('error_message'):
+                base_message = f"{base_message} — {payload['error_message']}"
+
+            QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(current, total, base_message))
 
         def generation_wrapper():
             """錯誤處理包裝器"""
             try:
-                generate_bug_report_batch(devices, validated_path, bug_report_callback)
+                generate_bug_report_batch(
+                    devices,
+                    validated_path,
+                    bug_report_callback,
+                    progress_callback=progress_callback
+                )
             except Exception as e:
                 QTimer.singleShot(0, lambda: self.parent_window.show_error(
                     '🐛 Bug Report Generation Failed',
@@ -84,6 +123,11 @@ class FileOperationsManager(QObject):
                     f'4. Ensure stable USB connection\n'
                     f'5. Try generating reports one device at a time\n\n'
                     f'💡 Note: Modern bug reports are saved as .zip files'
+                ))
+            finally:
+                QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(
+                    device_count, device_count,
+                    '🐛 Bug report generation finished'
                 ))
 
         threading.Thread(target=generation_wrapper, daemon=True).start()
@@ -104,6 +148,8 @@ class FileOperationsManager(QObject):
 
         def discovery_callback(operation_name, output_path, device_count, icon):
             """設備發現文件生成完成的回調"""
+            self.last_generation_summary = f'{operation_name} completed for {device_count} device(s)'
+            self.last_generation_output_path = output_path
             self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
 
         generate_device_discovery_file(devices, validated_path, discovery_callback)
@@ -138,9 +184,14 @@ class FileOperationsManager(QObject):
             from utils import adb_tools
             adb_tools.pull_device_dcim_folders_with_device_folder(serials, output_path)
 
-            QTimer.singleShot(0, lambda: self.file_generation_completed_signal.emit(
-                'DCIM Folder Pull', output_path, device_count, '📷'
-            ))
+            def emit_completion():
+                self.last_generation_summary = 'DCIM folders pulled successfully'
+                self.last_generation_output_path = output_path
+                self.file_generation_completed_signal.emit(
+                    'DCIM Folder Pull', output_path, device_count, '📷'
+                )
+
+            QTimer.singleShot(0, emit_completion)
 
         threading.Thread(target=dcim_wrapper, daemon=True).start()
 

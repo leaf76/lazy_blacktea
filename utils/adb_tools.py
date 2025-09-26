@@ -486,8 +486,12 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
     'serial': serial_num,
     'output_path': output_path,
     'error': None,
-    'file_size': 0
+    'file_size': 0,
+    'details': ''
   }
+
+  executed_command = ''
+  command_output: List[str] = []
 
   try:
     # Ensure output path has .zip extension
@@ -502,6 +506,7 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
     if not _is_device_available(serial_num):
       result['error'] = f'Device {serial_num} is not available or not responding'
       logger.warning(result['error'])
+      result['details'] = f'Command not executed because device {serial_num} was unavailable'
       return result
 
     # Check device manufacturer for known issues
@@ -515,14 +520,22 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
         result['error'] = f'{manufacturer.title()} device may require developer options or USB debugging permissions for bug reports'
         logger.warning(result['error'])
         logger.info('Try: 1) Enable Developer Options 2) Enable USB Debugging 3) Grant computer authorization')
+        result['details'] = 'Command not executed because prerequisite permissions are missing'
         return result
 
     # Generate the command
     cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
+    executed_command = cmd
 
     # Execute with timeout (bug reports can take a long time)
     logger.info(f'Executing: {cmd}')
     command_result = common.run_command(cmd, timeout)
+    if command_result and isinstance(command_result, list):
+      command_output = [str(item) for item in command_result]
+    result['details'] = f'Command: {cmd}'
+    if command_output:
+      joined_output = ' '.join(command_output)
+      result['details'] += f'\nOutput: {joined_output}'
 
     # Check command output for common Samsung/manufacturer errors
     if command_result and isinstance(command_result, list):
@@ -530,6 +543,7 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
       if any(error in output_str for error in ['permission denied', 'access denied', 'not allowed', 'unauthorized']):
         result['error'] = f'Permission denied - {manufacturer.title()} device requires additional authorization'
         logger.error(result['error'])
+        logger.debug(f'Bug report command output for {serial_num}: {command_result}')
         return result
 
     # Check if file was created and has reasonable size
@@ -541,20 +555,25 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
         result['success'] = True
         logger.info(f'✅ Bug report generated successfully for {serial_num}')
         logger.info(f'   File: {output_path} ({file_size:,} bytes)')
+        result['details'] = f'Command: {cmd}\nFile saved to {output_path} ({file_size} bytes)'
       else:
         result['error'] = f'Bug report file too small ({file_size} bytes), likely incomplete'
         logger.warning(result['error'])
+        result['details'] = f'Command: {cmd}\nFile size only {file_size} bytes'
     else:
       result['error'] = 'Bug report file was not created'
       logger.error(f'Bug report file not found: {output_path}')
+      result['details'] = f'Command: {cmd}\nNo bug report generated at {output_path}'
 
   except subprocess.TimeoutExpired:
     result['error'] = f'Bug report generation timed out after {timeout} seconds'
     logger.error(result['error'])
+    result['details'] = f'Command: {executed_command or "<unavailable>"}\nTimeout after {timeout} seconds'
   except Exception as e:
     result['error'] = f'Bug report generation failed: {str(e)}'
     logger.error(result['error'])
     logger.debug(f'Full error details: {e}', exc_info=True)
+    result['details'] = f'Command: {executed_command or "<unavailable>"}\nError: {str(e)}'
 
   return result
 

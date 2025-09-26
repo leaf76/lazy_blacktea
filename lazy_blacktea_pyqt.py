@@ -165,6 +165,7 @@ class WindowMain(QMainWindow):
 
         # Connect file operations manager signals
         self.file_operations_manager.file_generation_completed_signal.connect(self._on_file_generation_completed)
+        self.file_operations_manager.file_generation_progress_signal.connect(self._on_file_generation_progress)
 
         # Connect panels_manager signals to device operations manager
         self.panels_manager.screenshot_requested.connect(self.device_operations_manager.take_screenshot)
@@ -1539,9 +1540,14 @@ class WindowMain(QMainWindow):
             self.screenshot_btn.setStyleSheet(StyleManager.get_status_styles()['screenshot_ready'])
             logger.info('📷 [BUTTON STATE] Screenshot button reset to default state successfully')
 
-    def _on_file_generation_completed(self, operation_name, output_path, device_count, icon):
+    def _on_file_generation_completed(self, operation_name, summary_text, success_metric, icon):
         """Handle file generation completed signal in main thread."""
         logger.info(f'{icon} [SIGNAL] _on_file_generation_completed executing in main thread')
+
+        self._reset_file_generation_progress()
+
+        output_path = getattr(self.file_operations_manager, 'last_generation_output_path', '')
+        summary_content = summary_text or getattr(self.file_operations_manager, 'last_generation_summary', '')
 
         # Create enhanced success dialog similar to screenshot completion
         dialog = QDialog(self)
@@ -1552,17 +1558,25 @@ class WindowMain(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         # Success message
-        success_label = QLabel(f'✅ Successfully completed {operation_name.lower()}')
+        if summary_content:
+            success_message = summary_content
+        else:
+            success_message = f'✅ Successfully completed {operation_name.lower()}'
+
+        success_label = QLabel(success_message)
         StyleManager.apply_label_style(success_label, LabelStyle.SUCCESS)
         layout.addWidget(success_label)
 
         # Device info
-        device_label = QLabel(f'📱 Processed: {device_count} device(s)')
+        device_label = QLabel(f'📱 Processed: {success_metric} item(s)')
         StyleManager.apply_label_style(device_label, LabelStyle.INFO)
         layout.addWidget(device_label)
 
         # Path info
-        path_label = QLabel(f'📁 Location: {output_path}')
+        if output_path:
+            path_label = QLabel(f'📁 Location: {output_path}')
+        else:
+            path_label = QLabel('📁 Location: (not available)')
         StyleManager.apply_label_style(path_label, LabelStyle.INFO)
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
@@ -1573,8 +1587,9 @@ class WindowMain(QMainWindow):
         # Open folder button
         open_folder_btn = QPushButton('🗂️ Open Folder')
         StyleManager.apply_button_style(open_folder_btn, ButtonStyle.SECONDARY)
-        open_folder_btn.clicked.connect(lambda: self._open_folder(output_path))
-        button_layout.addWidget(open_folder_btn)
+        if output_path:
+            open_folder_btn.clicked.connect(lambda: self._open_folder(output_path))
+            button_layout.addWidget(open_folder_btn)
 
         # Close button
         close_btn = QPushButton('Close')
@@ -1587,6 +1602,33 @@ class WindowMain(QMainWindow):
 
         dialog.exec()
         logger.info(f'{icon} [SIGNAL] _on_file_generation_completed dialog closed')
+
+        self._reset_file_generation_progress()
+
+    def _on_file_generation_progress(self, current: int, total: int, message: str):
+        """Update status bar progress for bug report generation."""
+        logger.info(f'🐛 [PROGRESS] Bug report {current}/{total}: {message}')
+
+        if hasattr(self, 'progress_bar') and self.progress_bar:
+            maximum = total if total else 1
+            self.progress_bar.setMaximum(maximum)
+            self.progress_bar.setValue(max(0, min(current, maximum)))
+            self.progress_bar.setVisible(True)
+
+        if hasattr(self, 'status_bar') and self.status_bar:
+            self.status_bar.showMessage(message)
+
+        if total and current >= total:
+            QTimer.singleShot(1500, self._reset_file_generation_progress)
+
+    def _reset_file_generation_progress(self):
+        """Hide progress indicators once generation completes."""
+        if hasattr(self, 'progress_bar') and self.progress_bar:
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
+
+        if hasattr(self, 'status_bar') and self.status_bar:
+            self.status_bar.showMessage('Ready')
 
     def _on_console_output(self, message):
         """Handle console output signal in main thread."""
