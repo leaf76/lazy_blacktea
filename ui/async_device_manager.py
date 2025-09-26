@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Set
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
@@ -70,7 +71,7 @@ class AsyncDeviceWorker(QObject):
     all_basic_loaded = pyqtSignal()  # 所有基本信息加載完成
     all_detailed_loaded = pyqtSignal()  # 所有詳細信息加載完成
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, status_checker: Optional[Callable[[str], bool]] = None):
         super().__init__(parent)
         self.device_serials: List[str] = []
         self.load_detailed: bool = True
@@ -78,6 +79,7 @@ class AsyncDeviceWorker(QObject):
         self.stop_requested: bool = False
         self.is_running: bool = False
         self.mutex = QMutex()
+        self.status_checker: Optional[Callable[[str], bool]] = status_checker
 
     def set_devices(self, device_serials: List[str], load_detailed: bool = True):
         """設置要加載的設備列表"""
@@ -86,6 +88,11 @@ class AsyncDeviceWorker(QObject):
             self.load_detailed = load_detailed
             self.stop_requested = False
             self.is_running = False
+
+    def set_status_checker(self, checker: Optional[Callable[[str], bool]]):
+        """設定設備狀態檢查器，便於在詳細加載前確認設備仍可用"""
+        with QMutexLocker(self.mutex):
+            self.status_checker = checker
 
     def request_stop(self):
         """請求停止加載"""
@@ -155,6 +162,24 @@ class AsyncDeviceWorker(QObject):
         except Exception as e:
             logger.error(f'Failed to load basic device information: {e}')
 
+    def _load_single_device_info(self, serial: str) -> Optional[dict]:
+        """為單一設備加載詳細資訊，若設備已離線則直接跳過"""
+        with QMutexLocker(self.mutex):
+            should_stop = self.stop_requested
+            checker = self.status_checker
+
+        if should_stop:
+            return None
+
+        if checker is not None and not checker(serial):
+            logger.debug('Skipping detailed info for %s (device unavailable during load)', serial)
+            return None
+
+        if self.stop_requested:
+            return None
+
+        return adb_tools.get_device_detailed_info(serial)
+
     def _load_detailed_info_progressively(self):
         """漸進式加載詳細設備信息"""
         logger.info('Phase 2: Loading detailed device information asynchronously')
@@ -164,7 +189,7 @@ class AsyncDeviceWorker(QObject):
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
             # 提交詳細信息加載任務
             future_to_serial = {
-                executor.submit(adb_tools.get_device_detailed_info, serial): serial
+                executor.submit(self._load_single_device_info, serial): serial
                 for serial in self.device_serials
             }
 
@@ -176,12 +201,14 @@ class AsyncDeviceWorker(QObject):
                 serial = future_to_serial[future]
                 try:
                     detailed_info = future.result()
-                    if detailed_info:
-                        # 發送詳細信息更新
-                        self.device_detailed_loaded.emit(serial, detailed_info)
-                        loaded_count += 1
-                    else:
-                        self.device_load_failed.emit(serial, 'Unable to load detailed device information')
+                    if detailed_info is None:
+                        # 已跳過或沒有可用資料，不視為失敗
+                        logger.debug('Detailed info skipped for %s', serial)
+                        continue
+
+                    # 發送詳細信息更新
+                    self.device_detailed_loaded.emit(serial, detailed_info)
+                    loaded_count += 1
                 except Exception as e:
                     logger.error(f'Failed to load detailed information for device {serial}: {e}')
                     self.device_load_failed.emit(serial, str(e))
@@ -223,12 +250,14 @@ class TrackDevicesWorker(QObject):
         self._command_factory = command_factory or (lambda: ['adb', 'track-devices'])
         self._stop_event = threading.Event()
         self._process: Optional[subprocess.Popen] = None
+        self._last_emitted_entries: tuple[tuple[str, str], ...] = ()
 
     def run(self):
         """Main loop executed within a dedicated QThread."""
         while not self._stop_event.is_set():
             try:
                 command = self._command_factory()
+                logger.info('Starting adb track-devices listener: %s', command)
                 self._process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
@@ -238,7 +267,7 @@ class TrackDevicesWorker(QObject):
                     universal_newlines=True,
                 )
 
-                buffer: List[str] = []
+                buffer_snapshot = OrderedDict[str, str]()
 
                 while not self._stop_event.is_set():
                     if self._process.stdout is None:
@@ -250,18 +279,31 @@ class TrackDevicesWorker(QObject):
 
                     line = line.strip()
                     if not line:
-                        self._emit_from_buffer(buffer)
-                        buffer = []
+                        logger.debug('track-devices blank line encountered; flushing snapshot: %s', buffer_snapshot)
+                        self._emit_snapshot(buffer_snapshot)
+                        buffer_snapshot = OrderedDict()
                         continue
 
                     if line.startswith('List of devices attached'):
-                        buffer = []
+                        logger.debug('track-devices header encountered; flushing current snapshot: %s', buffer_snapshot)
+                        self._emit_snapshot(buffer_snapshot)
+                        buffer_snapshot = OrderedDict()
                         continue
 
-                    buffer.append(line)
+                    logger.debug('track-devices raw line: %s', line)
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    serial = parts[0]
+                    status = parts[1] if len(parts) > 1 else ''
+                    if serial in buffer_snapshot:
+                        buffer_snapshot.pop(serial)
+                    buffer_snapshot[serial] = status
+                    # Emit incremental snapshot so subscribers always see the latest state
+                    self._emit_snapshot(buffer_snapshot.copy())
 
-                if buffer:
-                    self._emit_from_buffer(buffer)
+                # flush any trailing snapshot when process iteration ends
+                self._emit_snapshot(buffer_snapshot)
 
                 if self._process:
                     self._process.wait(timeout=1)
@@ -273,6 +315,13 @@ class TrackDevicesWorker(QObject):
                 self.error_occurred.emit(f'track-devices error: {exc}')
                 self._wait_before_retry(2)
             finally:
+                if self._process and self._process.stderr is not None:
+                    try:
+                        stderr_output = self._process.stderr.read()
+                        if stderr_output:
+                            logger.warning('track-devices stderr: %s', stderr_output.strip())
+                    except Exception:
+                        pass
                 if self._process:
                     try:
                         if self._process.poll() is None:
@@ -296,18 +345,35 @@ class TrackDevicesWorker(QObject):
         self._process = None
 
     def _emit_from_buffer(self, buffer: List[str]):
-        entries: List[tuple[str, str]] = []
+        snapshot = OrderedDict[str, str]()
         for entry in buffer:
             parts = entry.split()
             if not parts:
                 continue
-            serial = parts[0].strip()
-            status = parts[1].strip() if len(parts) > 1 else ''
-            if serial:
-                entries.append((serial, status))
+            serial = parts[0]
+            status = parts[1] if len(parts) > 1 else ''
+            if serial in snapshot:
+                snapshot.pop(serial)
+            snapshot[serial] = status
 
-        if entries:
-            self.device_list_changed.emit(entries)
+        self._emit_snapshot(snapshot)
+
+    def _emit_snapshot(self, snapshot: OrderedDict[str, str]):
+        if not snapshot:
+            if self._last_emitted_entries:
+                self._emit_entries([])
+            return
+
+        entries = list(snapshot.items())
+        self._emit_entries(entries)
+
+    def _emit_entries(self, entries: List[tuple[str, str]]):
+        normalized = tuple(sorted(entries))
+        if normalized == self._last_emitted_entries:
+            return
+        logger.info('track-devices entries: %s', entries)
+        self._last_emitted_entries = normalized
+        self.device_list_changed.emit(entries)
 
     def _wait_before_retry(self, seconds: int):
         for _ in range(seconds * 10):
@@ -337,6 +403,11 @@ class AsyncDeviceManager(QObject):
         self.device_tracker_worker: Optional[TrackDevicesWorker] = None
         self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker())
         self.tracked_device_statuses: Dict[str, str] = {}
+        self._shutting_down = False
+        self._pending_discovery: Optional[tuple[bool, bool, Optional[List[str]]]] = None
+        self._pending_discovery_timer = QTimer(self)
+        self._pending_discovery_timer.setSingleShot(True)
+        self._pending_discovery_timer.timeout.connect(self._process_pending_discovery)
 
         # 設置
         self.max_cache_size = 50  # 最大緩存設備數
@@ -380,9 +451,23 @@ class AsyncDeviceManager(QObject):
 
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True, serials: Optional[List[str]] = None):
         """開始異步設備發現"""
-        # force_reload parameter kept for compatibility but not currently used
+        if self._shutting_down:
+            logger.debug('Discovery request ignored during shutdown')
+            return
+
         logger.info('Starting async device discovery')
 
+        if self.worker and self.worker.isRunning():
+            logger.info('Discovery already in progress; queuing another run')
+            serials_copy = list(serials) if serials else None
+            self._pending_discovery = (force_reload, load_detailed, serials_copy)
+            self._pending_discovery_timer.start(200)
+            return
+
+        self._pending_discovery = None
+        self._start_device_discovery_internal(force_reload, load_detailed, serials)
+
+    def _start_device_discovery_internal(self, force_reload: bool, load_detailed: bool, serials: Optional[List[str]]):
         # 停止現有工作線程
         self.stop_current_loading()
 
@@ -404,8 +489,8 @@ class AsyncDeviceManager(QObject):
 
             logger.info(f'Discovered {len(basic_device_serials)} device(s); starting async load')
 
-            # 創建工作線程
-            self.worker = AsyncDeviceWorker()
+            # 創建工作線程並設定狀態檢查器，避免對離線設備發送命令
+            self.worker = AsyncDeviceWorker(status_checker=self._is_device_tracked)
             self.worker.set_devices(basic_device_serials, load_detailed)
 
             # 連接信號（漸進式版）
@@ -415,6 +500,7 @@ class AsyncDeviceManager(QObject):
             self.worker.progress_updated.connect(self._on_progress_updated)
             self.worker.all_basic_loaded.connect(self._on_all_basic_loaded)
             self.worker.all_detailed_loaded.connect(self._on_all_detailed_loaded)
+            self.worker.all_detailed_loaded.connect(self._on_worker_completed)
 
             # 啟動工作線程池任務
             self.worker.start_loading()
@@ -647,6 +733,9 @@ class AsyncDeviceManager(QObject):
 
     def cleanup(self):
         """清理資源"""
+        self._shutting_down = True
+        self._pending_discovery = None
+        self._pending_discovery_timer.stop()
         self.stop_periodic_refresh()
         self.stop_current_loading()
         self.clear_cache()
@@ -655,14 +744,38 @@ class AsyncDeviceManager(QObject):
         if self.device_tracker_thread:
             self.device_tracker_thread.quit()
             self.device_tracker_thread.wait(1000)
-            self.device_tracker_thread = None
+        self.device_tracker_thread = None
         self.device_tracker_worker = None
+        self.worker = None
+
+    def _process_pending_discovery(self):
+        if self._shutting_down:
+            logger.debug('Skipping pending discovery during shutdown')
+            self._pending_discovery = None
+            return
+
+        if self.worker and self.worker.isRunning():
+            logger.debug('Discovery still running; rescheduling pending request')
+            self._pending_discovery_timer.start(200)
+            return
+
+        if not self._pending_discovery:
+            return
+
+        force_reload, load_detailed, serials = self._pending_discovery
+        self._pending_discovery = None
+        self._start_device_discovery_internal(force_reload, load_detailed, serials)
+
+    def _on_worker_completed(self):
+        self.worker = None
+        if self._pending_discovery and not self._shutting_down:
+            self._pending_discovery_timer.start(0)
 
     def _on_tracked_devices_changed(self, entries: List[tuple[str, str]]):
         """Handle change events from adb track-devices."""
-        if not entries:
+        if self._shutting_down:
+            logger.debug('Ignoring tracker update during shutdown')
             return
-
         previous_serials = set(self.tracked_device_statuses.keys())
         normalized_status: Dict[str, str] = {}
 
@@ -670,31 +783,25 @@ class AsyncDeviceManager(QObject):
             serial = (serial or '').strip()
             if not serial:
                 continue
-            status_normalized = self._normalize_status(status)
-            normalized_status[serial] = status_normalized
-
-        if not normalized_status:
-            return
+            normalized_status[serial] = self._normalize_status(status)
 
         current_serials = set(normalized_status.keys())
-        removed_serials = {
+
+        removal_candidates = {
             serial for serial, status in normalized_status.items()
             if status in TRACKER_REMOVAL_STATUSES
         }
         missing_serials = previous_serials - current_serials
-        removed_serials.update(missing_serials)
+        removed_serials = removal_candidates | missing_serials
 
-        # Refresh tracked status cache excluding removed devices
+        # Refresh tracked status cache excluding removed devices and non-ready states
         self.tracked_device_statuses = {
             serial: status
             for serial, status in normalized_status.items()
-            if status not in TRACKER_REMOVAL_STATUSES
-        }
-
-        ready_serials = {
-            serial for serial, status in self.tracked_device_statuses.items()
             if status in TRACKER_READY_STATUSES
         }
+
+        ready_serials = set(self.tracked_device_statuses.keys())
 
         removal_detected = bool(removed_serials)
         removed_any = False
@@ -707,7 +814,7 @@ class AsyncDeviceManager(QObject):
             if self.last_discovered_serials is not None:
                 self.last_discovered_serials.discard(serial)
 
-        if removed_any:
+        if removal_detected:
             logger.info('Device tracker removed devices: %s', sorted(removed_serials))
             self.basic_devices_ready.emit(self.device_cache.copy())
 
@@ -730,3 +837,14 @@ class AsyncDeviceManager(QObject):
             self.start_device_discovery(force_reload=True, load_detailed=True)
         except Exception as exc:
             logger.error(f'Failed to refresh devices after track update: {exc}')
+
+    def _is_device_tracked(self, serial: str) -> bool:
+        """檢查設備是否仍被追蹤且視為可用"""
+        status = self.tracked_device_statuses.get(serial)
+        if status is not None:
+            return status in TRACKER_READY_STATUSES
+
+        if self.last_discovered_serials is None:
+            return True
+
+        return serial in self.last_discovered_serials

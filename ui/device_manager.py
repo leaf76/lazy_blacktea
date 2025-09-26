@@ -306,6 +306,9 @@ class DeviceManager(QObject):
             self.known_device_serials.discard(serial)
             logger.info(f'Device lost: {serial}')
 
+        for serial in lost_serials:
+            self.device_dict.pop(serial, None)
+
         self.device_dict.update(device_dict)
         device_count = len(device_dict)
         self.status_updated.emit(f'Found {device_count} device(s)')
@@ -315,6 +318,9 @@ class DeviceManager(QObject):
 
     def _on_all_devices_ready(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """處理所有設備信息全部就緒"""
+        stale_serials = set(self.device_dict.keys()) - set(device_dict.keys())
+        for serial in stale_serials:
+            self.device_dict.pop(serial, None)
         self.device_dict.update(device_dict)
         device_count = len(device_dict)
         self.status_updated.emit(f'All device information loaded - {device_count} device(s)')

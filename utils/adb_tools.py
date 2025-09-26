@@ -9,8 +9,10 @@ import shutil
 import subprocess
 import time
 import traceback
-from typing import List, Callable, Any
+from typing import List, Callable, Any, Optional
 from functools import wraps
+
+from config.constants import ADBConstants
 
 from utils import adb_commands
 from utils import adb_models
@@ -22,6 +24,15 @@ from utils import dump_device_ui
 gms_package_name = 'com.google.android.gms'
 
 logger = common.get_logger('adb_tools')
+
+ACCEPTED_DEVICE_STATUSES = {
+    ADBConstants.DEVICE_STATE_DEVICE,
+    ADBConstants.DEVICE_STATE_UNAUTHORIZED,
+    ADBConstants.DEVICE_STATE_RECOVERY,
+    ADBConstants.DEVICE_STATE_BOOTLOADER,
+    getattr(ADBConstants, 'DEVICE_STATE_SIDELOAD', 'sideload'),
+    '',
+}
 
 
 def adb_operation(operation_name: str = None, default_return=None, log_errors: bool = True):
@@ -247,16 +258,31 @@ def get_devices_list() -> list[adb_models.DeviceInfo]:
   result = []
   init_devices = common.run_command(adb_commands.cmd_get_adb_devices(), 1)
   logger.info('Get init devices: %s', init_devices)
-  all_devices_info = [item for item in init_devices if item]
-  logger.info(all_devices_info)
-  if not any(all_devices_info):
+
+  parsed_devices: list[list[str]] = []
+  for raw_line in init_devices:
+    if not raw_line:
+      continue
+
+    parts = [x for x in raw_line.split() if x]
+    if not parts:
+      continue
+
+    status = parts[1].lower() if len(parts) > 1 else ''
+    if status and status not in ACCEPTED_DEVICE_STATUSES:
+      logger.debug('Skipping device %s due to status %s', parts[0], status)
+      continue
+
+    parsed_devices.append(parts)
+
+  if not parsed_devices:
     logger.warning('Not found device')
     return result
 
   # Prepare function calls for parallel execution
-  functions = [device_info_entry] * len(all_devices_info)
+  functions = [device_info_entry] * len(parsed_devices)
   # Each device_info_entry expects a single list argument, not multiple args
-  args_list = [([x for x in i.split() if x],) for i in all_devices_info]
+  args_list = [(parts,) for parts in parsed_devices]
 
   # Execute device info collection in parallel
   results = _execute_functions_parallel(functions, args_list, 'get_devices_list')
@@ -275,15 +301,29 @@ def get_devices_list_fast() -> list[adb_models.DeviceInfo]:
   result = []
   init_devices = common.run_command(adb_commands.cmd_get_adb_devices(), 1)
   logger.info('Get init devices (fast): %s', init_devices)
-  all_devices_info = [item for item in init_devices if item]
+  filtered_devices: list[list[str]] = []
+  for raw_line in init_devices:
+    if not raw_line:
+      continue
 
-  if not any(all_devices_info):
+    parts = [x for x in raw_line.split() if x]
+    if not parts:
+      continue
+
+    status = parts[1].lower() if len(parts) > 1 else ''
+    if status and status not in ACCEPTED_DEVICE_STATUSES:
+      logger.debug('Skipping device %s due to status %s', parts[0], status)
+      continue
+
+    filtered_devices.append(parts)
+
+  if not filtered_devices:
     logger.warning('Not found device')
     return result
 
   # Prepare function calls for parallel execution (basic info only)
-  functions = [device_basic_info_entry] * len(all_devices_info)
-  args_list = [([x for x in i.split() if x],) for i in all_devices_info]
+  functions = [device_basic_info_entry] * len(filtered_devices)
+  args_list = [(info,) for info in filtered_devices]
 
   # Execute basic device info collection in parallel
   results = _execute_functions_parallel(functions, args_list, 'get_devices_list_fast')
@@ -294,7 +334,7 @@ def get_devices_list_fast() -> list[adb_models.DeviceInfo]:
   return result
 
 
-def device_basic_info_entry(info: List[str]) -> adb_models.DeviceInfo:
+def device_basic_info_entry(info: List[str]) -> Optional[adb_models.DeviceInfo]:
   """Organize basic device info only (fast version without detailed checks).
 
   Args:
@@ -305,6 +345,12 @@ def device_basic_info_entry(info: List[str]) -> adb_models.DeviceInfo:
   """
   logger.info(f'Getting basic info for: {info}')
   serial_num = info[0]
+
+  if len(info) > 1:
+    device_status = info[1].lower()
+    if device_status and device_status not in ACCEPTED_DEVICE_STATUSES:
+      logger.debug('Filtered out %s during basic device entry (status=%s)', serial_num, device_status)
+      return None
 
   # usb: ?#
   device_usb = 'None'

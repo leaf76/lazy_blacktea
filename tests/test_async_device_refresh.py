@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import QApplication
 
 from ui.async_device_manager import (
     AsyncDeviceManager,
+    AsyncDeviceWorker,
     DeviceLoadProgress,
     DeviceLoadStatus,
 )
@@ -147,6 +148,32 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.assertNotIn(serial, self.manager.device_progress)
         basic_spy.assert_called_once()
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+
+    def test_worker_skips_detailed_info_for_untracked_device(self):
+        worker = AsyncDeviceWorker()
+        worker.set_status_checker(lambda _serial: False)
+
+        with patch('utils.adb_tools.get_device_detailed_info') as mock_get_info:
+            result = worker._load_single_device_info('ghost-device')
+
+        mock_get_info.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_missing_device_emits_basic_ready(self):
+        self.manager.tracked_device_statuses = {'phantom': 'device'}
+        self.manager.last_discovered_serials = {'phantom'}
+
+        basic_spy = MagicMock()
+        self.manager.basic_devices_ready.connect(basic_spy)
+
+        try:
+            with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+                self.manager._on_tracked_devices_changed([('other', 'device')])
+        finally:
+            self.manager.basic_devices_ready.disconnect(basic_spy)
+
+        basic_spy.assert_called_once()
+        mock_discovery.assert_called_once()
 
     def test_periodic_refresh_triggers_when_no_previous_cache(self):
         self.manager.last_discovered_serials = None
