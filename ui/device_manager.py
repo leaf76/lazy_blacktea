@@ -264,6 +264,10 @@ class DeviceManager(QObject):
         """Set refresh interval."""
         self.async_device_manager.set_refresh_interval(interval)
 
+    def set_auto_refresh_enabled(self, enabled: bool):
+        """Enable or disable automatic refresh."""
+        self.async_device_manager.set_auto_refresh_enabled(enabled)
+
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
         checked_devices = []

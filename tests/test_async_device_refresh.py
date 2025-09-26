@@ -3,7 +3,7 @@
 
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -29,6 +29,9 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.manager = AsyncDeviceManager(tracker_factory=lambda: None)
         self.manager.last_discovered_serials = {"device1", "device2"}
         self.manager.refresh_cycle_count = 0
+
+    def tearDown(self):
+        self.manager.cleanup()
 
     def test_periodic_refresh_skips_when_devices_unchanged(self):
         with patch.object(self.manager, '_get_basic_device_serials', return_value=['device1', 'device2']), \
@@ -65,6 +68,17 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
             self.manager._periodic_refresh()
 
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True, serials=['deviceA'])
+
+    def test_disabling_auto_refresh_stops_timer(self):
+        self.manager.set_refresh_interval(10)
+        self.manager.start_periodic_refresh()
+        self.assertTrue(self.manager.refresh_timer.isActive())
+
+        self.manager.set_auto_refresh_enabled(False)
+        self.assertFalse(self.manager.refresh_timer.isActive())
+
+        self.manager.set_auto_refresh_enabled(True)
+        self.assertTrue(self.manager.refresh_timer.isActive())
 
 
 if __name__ == '__main__':

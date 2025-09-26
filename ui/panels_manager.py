@@ -372,11 +372,32 @@ class PanelsManager(QObject):
         """Create the menu bar."""
         menubar = main_window.menuBar()
 
+        # Prepare tracking dictionaries on main window
+        main_window.refresh_interval_actions = {}
+
         # File menu
         file_menu = menubar.addMenu('File')
         exit_action = QAction('Exit', main_window)
         exit_action.triggered.connect(main_window.close)
         file_menu.addAction(exit_action)
+
+        # Devices menu
+        devices_menu = menubar.addMenu('Devices')
+
+        refresh_now_action = QAction('Refresh Now', main_window)
+        refresh_now_action.setShortcut('Ctrl+R')
+        refresh_now_action.triggered.connect(main_window.refresh_device_list)
+        devices_menu.addAction(refresh_now_action)
+
+        auto_refresh_action = QAction('Auto Refresh Enabled', main_window, checkable=True)
+        current_auto_state = True
+        if hasattr(main_window, 'device_manager'):
+            current_auto_state = main_window.device_manager.async_device_manager.auto_refresh_enabled
+        auto_refresh_action.setChecked(current_auto_state)
+        auto_refresh_action.triggered.connect(lambda checked: main_window.set_auto_refresh_enabled(checked))
+        devices_menu.addAction(auto_refresh_action)
+        main_window.auto_refresh_action = auto_refresh_action
+        main_window._update_auto_refresh_action(current_auto_state)
 
         # ADB Server menu
         adb_menu = menubar.addMenu('ADB Server')
@@ -406,20 +427,22 @@ class PanelsManager(QObject):
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)
-        intervals = [5, 10, 20, 30, 60]
+        refresh_group.setExclusive(True)
+        intervals = [10, 20, 30, 60, 120]
         for interval in intervals:
             action = QAction(f'{interval} Seconds', main_window, checkable=True)
             refresh_group.addAction(action)
-            if interval == 5:  # Default to 5 seconds
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, i=interval: main_window.set_refresh_interval(i))
             refresh_menu.addAction(action)
+            main_window.refresh_interval_actions[interval] = action
+            action.triggered.connect(lambda checked, i=interval: main_window.set_refresh_interval(i))
 
         # Help menu
         help_menu = menubar.addMenu('Help')
         about_action = QAction('About', main_window)
         about_action.triggered.connect(main_window.show_about_dialog)
         help_menu.addAction(about_action)
+
+        main_window._update_refresh_interval_actions(getattr(main_window, 'refresh_interval', 30))
 
     def create_device_panel(self, parent, main_window) -> dict:
         """Create the device list panel."""

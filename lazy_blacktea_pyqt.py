@@ -110,7 +110,10 @@ class WindowMain(QMainWindow):
         self.standard_device_widget = None
         self.pending_checked_serials: Set[str] = set()
         self.device_groups: Dict[str, List[str]] = {}
-        self.refresh_interval = 5
+        self.refresh_interval = 30
+        self.refresh_interval_actions: Dict[int, QAction] = {}
+        self.auto_refresh_action: Optional[QAction] = None
+        self.auto_refresh_enabled = True
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -478,12 +481,40 @@ class WindowMain(QMainWindow):
 
     def set_refresh_interval(self, interval: int):
         """Set device refresh interval."""
+        interval = max(5, interval)
         self.refresh_interval = interval
         if hasattr(self, 'device_manager'):
             self.device_manager.set_refresh_interval(interval)
             logger.info(f'Refresh interval set to {interval} seconds and applied to DeviceManager')
         else:
             logger.warning(f'Refresh interval set to {interval} seconds but DeviceManager not yet available')
+        self._update_refresh_interval_actions(interval)
+
+    def set_auto_refresh_enabled(self, enabled: bool):
+        """Enable or disable automatic device refresh."""
+        self.auto_refresh_enabled = enabled
+        if hasattr(self, 'device_manager'):
+            self.device_manager.set_auto_refresh_enabled(enabled)
+        self._update_auto_refresh_action(enabled)
+        if hasattr(self, 'status_bar'):
+            message = '🔁 Auto refresh enabled' if enabled else '⏸️ Auto refresh paused'
+            self.status_bar.showMessage(message, 4000)
+
+    def _update_refresh_interval_actions(self, interval: int):
+        """Sync refresh interval menu state with the current value."""
+        for value, action in getattr(self, 'refresh_interval_actions', {}).items():
+            block = action.blockSignals(True)
+            action.setChecked(value == interval)
+            action.blockSignals(block)
+
+    def _update_auto_refresh_action(self, enabled: bool):
+        """Sync auto refresh menu action state."""
+        action = getattr(self, 'auto_refresh_action', None)
+        if action is None:
+            return
+        block = action.blockSignals(True)
+        action.setChecked(enabled)
+        action.blockSignals(block)
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         self.device_list_controller.update_device_list(device_dict)
@@ -2205,8 +2236,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
                     self.file_gen_output_path_edit.setText(main_output_path)
 
             # Load refresh interval from new config (set minimum 5 seconds for packaged apps)
-            self.refresh_interval = max(5, config.device.refresh_interval)
-            self.device_manager.set_refresh_interval(self.refresh_interval)
+            self.set_refresh_interval(max(5, config.device.refresh_interval))
 
             # Load UI scale from new config
             self.set_ui_scale(config.ui.ui_scale)
