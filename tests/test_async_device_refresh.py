@@ -46,20 +46,26 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
              patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._periodic_refresh()
 
-        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True, serials=['device1', 'device3'])
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
         self.assertEqual(self.manager.refresh_cycle_count, 1)
 
     def test_tracked_devices_change_triggers_refresh(self):
         with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
-            self.manager._on_tracked_devices_changed(['device1', 'device3'])
+            self.manager._on_tracked_devices_changed([('device1', 'device'), ('device3', 'device')])
 
-        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True, serials=['device1', 'device3'])
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
 
     def test_tracked_devices_no_change_skips_refresh(self):
         with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
-            self.manager._on_tracked_devices_changed(['device1', 'device2'])
+            self.manager._on_tracked_devices_changed([('device1', 'device'), ('device2', 'device')])
 
         mock_discovery.assert_not_called()
+
+    def test_tracked_devices_offline_triggers_refresh(self):
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+            self.manager._on_tracked_devices_changed([('device1', 'offline')])
+
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
 
     def test_periodic_refresh_triggers_when_no_previous_cache(self):
         self.manager.last_discovered_serials = None
@@ -67,7 +73,7 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
              patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._periodic_refresh()
 
-        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True, serials=['deviceA'])
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
 
     def test_disabling_auto_refresh_stops_timer(self):
         self.manager.set_refresh_interval(10)

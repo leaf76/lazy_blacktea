@@ -199,7 +199,7 @@ class DeviceLoadingRunnable(QRunnable):
 class TrackDevicesWorker(QObject):
     """Background worker that follows `adb track-devices` output."""
 
-    device_list_changed = pyqtSignal(list)
+    device_list_changed = pyqtSignal(list)  # List[Tuple[str, str]] -> (serial, status)
     error_occurred = pyqtSignal(str)
 
     def __init__(self, command_factory: Optional[Callable[[], List[str]]] = None, parent=None):
@@ -280,20 +280,18 @@ class TrackDevicesWorker(QObject):
         self._process = None
 
     def _emit_from_buffer(self, buffer: List[str]):
-        if not buffer:
-            return
-
-        serials: List[str] = []
+        entries: List[tuple[str, str]] = []
         for entry in buffer:
             parts = entry.split()
             if not parts:
                 continue
             serial = parts[0].strip()
             status = parts[1].strip() if len(parts) > 1 else ''
-            if serial and status == 'device':
-                serials.append(serial)
+            if serial:
+                entries.append((serial, status))
 
-        self.device_list_changed.emit(serials)
+        if entries:
+            self.device_list_changed.emit(entries)
 
     def _wait_before_retry(self, seconds: int):
         for _ in range(seconds * 10):
@@ -615,7 +613,7 @@ class AsyncDeviceManager(QObject):
         self.refresh_cycle_count += 1
         logger.info('Running periodic device refresh cycle %s (full detail)', self.refresh_cycle_count)
         try:
-            self.start_device_discovery(force_reload=True, load_detailed=True, serials=current_serials)
+            self.start_device_discovery(force_reload=True, load_detailed=True)
         except Exception as e:
             logger.error(f'Periodic refresh failed: {e}')
 
@@ -632,15 +630,23 @@ class AsyncDeviceManager(QObject):
             self.device_tracker_thread = None
         self.device_tracker_worker = None
 
-    def _on_tracked_devices_changed(self, serials: List[str]):
+    def _on_tracked_devices_changed(self, entries: List[tuple[str, str]]):
         """Handle change events from adb track-devices."""
-        new_set = set(serials)
-        if self.last_discovered_serials is not None and new_set == self.last_discovered_serials:
-            logger.debug('Tracked device list unchanged; ignoring update')
+        if not entries:
             return
 
-        logger.info('Device tracker detected change: %s', serials)
+        device_serials = {serial for serial, status in entries if status == 'device'}
+
+        if self.last_discovered_serials is not None and device_serials == self.last_discovered_serials:
+            logger.debug('Tracked device list unchanged; ignoring update')
+            # Still check if any entries indicate lost devices
+            if any(status not in ('device', '') for _, status in entries):
+                logger.info('Device tracker reports status changes; triggering discovery')
+                self.start_device_discovery(force_reload=True, load_detailed=True)
+            return
+
+        logger.info('Device tracker detected change: %s', entries)
         try:
-            self.start_device_discovery(force_reload=True, load_detailed=True, serials=serials)
+            self.start_device_discovery(force_reload=True, load_detailed=True)
         except Exception as exc:
             logger.error(f'Failed to refresh devices after track update: {exc}')
