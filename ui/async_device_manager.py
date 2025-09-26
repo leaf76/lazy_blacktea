@@ -18,9 +18,25 @@ from dataclasses import dataclass, field
 from enum import Enum
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
 
+from config.constants import ADBConstants
 from utils import adb_tools, common, adb_models
 
 logger = common.get_logger('async_device_manager')
+
+
+TRACKER_READY_STATUSES = frozenset({
+    ADBConstants.DEVICE_STATE_DEVICE,
+    ADBConstants.DEVICE_STATE_UNAUTHORIZED,
+    ADBConstants.DEVICE_STATE_RECOVERY,
+    ADBConstants.DEVICE_STATE_BOOTLOADER,
+    ADBConstants.DEVICE_STATE_SIDELOAD,
+})
+
+TRACKER_REMOVAL_STATUSES = frozenset({
+    ADBConstants.DEVICE_STATE_OFFLINE,
+})
+
+BASIC_ACCEPTED_STATUSES = TRACKER_READY_STATUSES
 
 
 class DeviceLoadStatus(Enum):
@@ -320,6 +336,7 @@ class AsyncDeviceManager(QObject):
         self.device_tracker_thread: Optional[QThread] = None
         self.device_tracker_worker: Optional[TrackDevicesWorker] = None
         self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker())
+        self.tracked_device_statuses: Dict[str, str] = {}
 
         # 設置
         self.max_cache_size = 50  # 最大緩存設備數
@@ -356,6 +373,10 @@ class AsyncDeviceManager(QObject):
         self.device_tracker_worker.device_list_changed.connect(self._on_tracked_devices_changed)
         self.device_tracker_worker.error_occurred.connect(lambda msg: logger.warning(f'Device tracker warning: {msg}'))
         self.device_tracker_thread.start()
+
+    @staticmethod
+    def _normalize_status(status: Optional[str]) -> str:
+        return (status or '').strip().lower()
 
     def start_device_discovery(self, force_reload: bool = False, load_detailed: bool = True, serials: Optional[List[str]] = None):
         """開始異步設備發現"""
@@ -415,7 +436,7 @@ class AsyncDeviceManager(QObject):
             result = common.run_command('adb devices')
             device_serials = []
 
-            valid_statuses = {'device', 'offline', 'unauthorized', 'recovery', 'bootloader'}
+            valid_statuses = BASIC_ACCEPTED_STATUSES
 
             for line in result:
                 if not line or line.startswith('*'):
@@ -424,8 +445,8 @@ class AsyncDeviceManager(QObject):
                 if not parts:
                     continue
                 serial = parts[0].strip()
-                status = parts[1].strip() if len(parts) > 1 else ''
-                if serial and (status in valid_statuses or not status):
+                status = self._normalize_status(parts[1] if len(parts) > 1 else '')
+                if serial and (not status or status in valid_statuses):
                     device_serials.append(serial)
 
             return device_serials
@@ -642,14 +663,54 @@ class AsyncDeviceManager(QObject):
         if not entries:
             return
 
-        device_serials = {serial for serial, status in entries if status == 'device'}
+        latest_status: Dict[str, str] = {}
+        for serial, status in entries:
+            serial = (serial or '').strip()
+            if not serial:
+                continue
+            latest_status[serial] = self._normalize_status(status)
 
-        if self.last_discovered_serials is not None and device_serials == self.last_discovered_serials:
+        if not latest_status:
+            return
+
+        self.tracked_device_statuses.update(latest_status)
+
+        removed_serials = [
+            serial for serial, status in latest_status.items()
+            if status in TRACKER_REMOVAL_STATUSES
+        ]
+
+        removed_any = False
+        for serial in removed_serials:
+            self.tracked_device_statuses.pop(serial, None)
+            if serial in self.device_cache:
+                removed_any = True
+                self.device_cache.pop(serial, None)
+            if serial in self.device_progress:
+                self.device_progress.pop(serial, None)
+            if self.last_discovered_serials is not None and serial in self.last_discovered_serials:
+                self.last_discovered_serials.discard(serial)
+
+        if removed_any:
+            logger.info('Device tracker removed offline devices: %s', sorted(removed_serials))
+            self.basic_devices_ready.emit(self.device_cache.copy())
+
+        ready_serials = {
+            serial for serial, status in latest_status.items()
+            if status in TRACKER_READY_STATUSES
+        }
+
+        need_refresh = False
+        if self.last_discovered_serials is None:
+            need_refresh = True
+        elif ready_serials != self.last_discovered_serials:
+            need_refresh = True
+        elif any(status not in TRACKER_READY_STATUSES for status in latest_status.values()):
+            logger.info('Device tracker reports status changes; triggering discovery')
+            need_refresh = True
+
+        if not need_refresh:
             logger.debug('Tracked device list unchanged; ignoring update')
-            # Still check if any entries indicate lost devices
-            if any(status not in ('device', '') for _, status in entries):
-                logger.info('Device tracker reports status changes; triggering discovery')
-                self.start_device_discovery(force_reload=True, load_detailed=True)
             return
 
         logger.info('Device tracker detected change: %s', entries)

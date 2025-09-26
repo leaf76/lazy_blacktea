@@ -73,6 +73,7 @@ class ADBConstants:
     DEVICE_STATE_UNAUTHORIZED = 'unauthorized'
     DEVICE_STATE_RECOVERY = 'recovery'
     DEVICE_STATE_BOOTLOADER = 'bootloader'
+    DEVICE_STATE_SIDELOAD = 'sideload'
 
     # Common ADB commands
     CMD_DEVICES = 'adb devices -l'

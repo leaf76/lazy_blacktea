@@ -3,7 +3,7 @@
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,7 +15,12 @@ os.environ["HOME"] = str(_TEST_HOME)
 
 from PyQt6.QtWidgets import QApplication
 
-from ui.async_device_manager import AsyncDeviceManager
+from ui.async_device_manager import (
+    AsyncDeviceManager,
+    DeviceLoadProgress,
+    DeviceLoadStatus,
+)
+from utils import adb_models
 
 
 class AsyncDeviceRefreshTests(unittest.TestCase):
@@ -29,6 +34,21 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.manager = AsyncDeviceManager(tracker_factory=lambda: None)
         self.manager.last_discovered_serials = {"device1", "device2"}
         self.manager.refresh_cycle_count = 0
+
+    def _fake_device(self, serial: str = "ghost") -> adb_models.DeviceInfo:
+        """Create a minimal device info stub for tests."""
+        return adb_models.DeviceInfo(
+            device_serial_num=serial,
+            device_usb="usb",
+            device_prod="prod",
+            device_model="Model",
+            wifi_is_on=False,
+            bt_is_on=False,
+            android_ver="13",
+            android_api_level="33",
+            gms_version="1.0",
+            build_fingerprint="fingerprint",
+        )
 
     def tearDown(self):
         self.manager.cleanup()
@@ -65,6 +85,43 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._on_tracked_devices_changed([('device1', 'offline')])
 
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+
+    def test_tracked_devices_prefers_latest_status_from_tracker(self):
+        self.manager.last_discovered_serials = {"device1"}
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+            self.manager._on_tracked_devices_changed([
+                ('device1', 'device'),
+                ('device1', 'offline'),
+            ])
+
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+
+    def test_tracked_offline_devices_are_removed_from_cache(self):
+        serial = "ghost"
+        self.manager.device_cache[serial] = self._fake_device(serial)
+        self.manager.device_progress[serial] = DeviceLoadProgress(
+            serial=serial,
+            status=DeviceLoadStatus.BASIC_LOADED,
+        )
+
+        basic_spy = MagicMock()
+        all_spy = MagicMock()
+        self.manager.basic_devices_ready.connect(basic_spy)
+        self.manager.all_devices_ready.connect(all_spy)
+
+        try:
+            with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+                self.manager._on_tracked_devices_changed([(serial, 'offline')])
+        finally:
+            self.manager.basic_devices_ready.disconnect(basic_spy)
+            self.manager.all_devices_ready.disconnect(all_spy)
+
+        self.assertNotIn(serial, self.manager.device_cache)
+        self.assertNotIn(serial, self.manager.device_progress)
+        basic_spy.assert_called_once()
+        all_spy.assert_not_called()
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
 
     def test_periodic_refresh_triggers_when_no_previous_cache(self):
