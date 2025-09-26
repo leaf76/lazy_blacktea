@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PyQt6.QtCore import Qt
 
 from config.constants import PanelConfig, PanelText
 from ui.style_manager import ButtonStyle, LabelStyle, StyleManager
@@ -31,6 +32,21 @@ class ToolsPanelController:
 
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
+        self._default_button_height = 38
+
+    def _style_button(
+        self,
+        button: QPushButton,
+        style: ButtonStyle = ButtonStyle.SECONDARY,
+        *,
+        height: int | None = None,
+        min_width: int | None = None,
+    ) -> None:
+        """Apply consistent styling to buttons inside tools panel."""
+        StyleManager.apply_button_style(button, style, fixed_height=height or self._default_button_height)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if min_width:
+            button.setMinimumWidth(min_width)
 
     def create_tools_panel(self, parent) -> None:
         """Create the tabbed tools panel and attach it to the parent widget."""
@@ -108,6 +124,8 @@ class ToolsPanelController:
             handler = getattr(self.window, handler_name)
             btn = QPushButton(text)
             btn.clicked.connect(lambda checked, func=handler: func())
+            style = ButtonStyle.PRIMARY if 'reboot' in handler_name else ButtonStyle.SECONDARY
+            self._style_button(btn, style, height=36, min_width=180)
             row, col = divmod(idx, 2)
             device_control_layout.addWidget(btn, row, col)
 
@@ -118,15 +136,17 @@ class ToolsPanelController:
 
         self.window.screenshot_btn = QPushButton('📷 Take Screenshot')
         self.window.screenshot_btn.clicked.connect(lambda: self.window.take_screenshot())
-        StyleManager.apply_button_style(self.window.screenshot_btn, ButtonStyle.PRIMARY)
+        self._style_button(self.window.screenshot_btn, ButtonStyle.PRIMARY, height=44, min_width=220)
         capture_layout.addWidget(self.window.screenshot_btn, 0, 0)
 
         self.window.start_record_btn = QPushButton('🎥 Start Screen Record')
         self.window.start_record_btn.clicked.connect(lambda: self.window.start_screen_record())
+        self._style_button(self.window.start_record_btn, ButtonStyle.SECONDARY, height=40, min_width=220)
         capture_layout.addWidget(self.window.start_record_btn, 1, 0)
 
         self.window.stop_record_btn = QPushButton('⏹️ Stop Screen Record')
         self.window.stop_record_btn.clicked.connect(lambda: self.window.stop_screen_record())
+        self._style_button(self.window.stop_record_btn, ButtonStyle.NEUTRAL, height=40, min_width=220)
         capture_layout.addWidget(self.window.stop_record_btn, 1, 1)
 
         self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
@@ -154,6 +174,7 @@ class ToolsPanelController:
         for idx, (label, command) in enumerate(PanelConfig.SHELL_TEMPLATE_COMMANDS):
             btn = QPushButton(label)
             btn.clicked.connect(lambda checked, cmd=command: self.window.add_template_command(cmd))
+            self._style_button(btn, ButtonStyle.SECONDARY, height=34, min_width=180)
             row, col = divmod(idx, 3)
             template_layout.addWidget(btn, row, col)
 
@@ -177,10 +198,12 @@ class ToolsPanelController:
 
         run_single_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_COMMAND)
         run_single_btn.clicked.connect(lambda: self.window.run_single_command())
+        self._style_button(run_single_btn, ButtonStyle.PRIMARY, height=36, min_width=200)
         exec_buttons_layout.addWidget(run_single_btn)
 
         run_batch_btn = QPushButton(PanelText.BUTTON_RUN_ALL_COMMANDS)
         run_batch_btn.clicked.connect(lambda: self.window.run_batch_commands())
+        self._style_button(run_batch_btn, ButtonStyle.SECONDARY, height=36, min_width=220)
         exec_buttons_layout.addWidget(run_batch_btn)
 
         batch_layout.addLayout(exec_buttons_layout)
@@ -191,6 +214,7 @@ class ToolsPanelController:
 
         run_shell_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_SHELL)
         run_shell_btn.clicked.connect(lambda: self.window.run_shell_command())
+        self._style_button(run_shell_btn, ButtonStyle.PRIMARY, height=36, min_width=220)
         batch_layout.addWidget(run_shell_btn)
 
         layout.addWidget(batch_group)
@@ -215,10 +239,12 @@ class ToolsPanelController:
 
         export_history_btn = QPushButton(PanelText.BUTTON_EXPORT)
         export_history_btn.clicked.connect(lambda: self.window.export_command_history())
+        self._style_button(export_history_btn, ButtonStyle.SECONDARY, height=32, min_width=140)
         history_buttons_layout.addWidget(export_history_btn)
 
         import_history_btn = QPushButton(PanelText.BUTTON_IMPORT)
         import_history_btn.clicked.connect(lambda: self.window.import_command_history())
+        self._style_button(import_history_btn, ButtonStyle.SECONDARY, height=32, min_width=140)
         history_buttons_layout.addWidget(import_history_btn)
 
         history_layout.addLayout(history_buttons_layout)
@@ -256,6 +282,7 @@ class ToolsPanelController:
             handler = getattr(self.window, handler_name)
             btn = QPushButton(text)
             btn.clicked.connect(lambda checked, func=handler: func())
+            self._style_button(btn, ButtonStyle.SECONDARY, height=40, min_width=220)
             row, col = divmod(idx, 2)
             generation_layout.addWidget(btn, row, col)
 
@@ -279,6 +306,7 @@ class ToolsPanelController:
 
         save_group_btn = QPushButton(PanelText.BUTTON_SAVE_GROUP)
         save_group_btn.clicked.connect(lambda: self.window.save_group())
+        self._style_button(save_group_btn, ButtonStyle.PRIMARY, height=36, min_width=240)
         left_layout.addWidget(save_group_btn)
 
         left_layout.addStretch()
@@ -294,10 +322,12 @@ class ToolsPanelController:
 
         select_group_btn = QPushButton(PanelText.BUTTON_SELECT_GROUP)
         select_group_btn.clicked.connect(lambda: self.window.select_devices_in_group())
+        self._style_button(select_group_btn, ButtonStyle.SECONDARY, height=34, min_width=220)
         group_buttons_layout.addWidget(select_group_btn)
 
         delete_group_btn = QPushButton(PanelText.BUTTON_DELETE_GROUP)
         delete_group_btn.clicked.connect(lambda: self.window.delete_group())
+        self._style_button(delete_group_btn, ButtonStyle.DANGER, height=34, min_width=220)
         group_buttons_layout.addWidget(delete_group_btn)
 
         group_buttons_layout.addStretch()

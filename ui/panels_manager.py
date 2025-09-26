@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QAction, QActionGroup
 
 from utils import common
+from ui.style_manager import StyleManager, ButtonStyle
 
 
 class PanelsManager(QObject):
@@ -24,6 +25,16 @@ class PanelsManager(QObject):
         super().__init__(parent)
         self.parent = parent
         self.logger = common.get_logger('panels_manager')
+        self._default_button_height = 38
+
+    def _style_button(self, button: QPushButton, style: ButtonStyle = ButtonStyle.SECONDARY,
+                      height: Optional[int] = None, min_width: Optional[int] = None) -> None:
+        """Apply unified styling to buttons across panels."""
+        final_height = height or self._default_button_height
+        StyleManager.apply_button_style(button, style, fixed_height=final_height)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if min_width:
+            button.setMinimumWidth(min_width)
 
     def create_screenshot_panel(self) -> QWidget:
         """Create screenshot panel with controls."""
@@ -32,7 +43,7 @@ class PanelsManager(QObject):
 
         # Screenshot button
         screenshot_btn = QPushButton("📷 Take Screenshot")
-        screenshot_btn.setMinimumHeight(40)
+        self._style_button(screenshot_btn, ButtonStyle.PRIMARY, height=44, min_width=180)
         screenshot_btn.clicked.connect(self.screenshot_requested.emit)
         layout.addWidget(screenshot_btn)
 
@@ -45,6 +56,7 @@ class PanelsManager(QObject):
         path_layout.addWidget(path_edit)
 
         browse_btn = QPushButton("Browse")
+        self._style_button(browse_btn, ButtonStyle.NEUTRAL, height=34, min_width=90)
         browse_btn.clicked.connect(lambda: self._browse_folder(path_edit))
         path_layout.addWidget(browse_btn)
 
@@ -61,12 +73,12 @@ class PanelsManager(QObject):
         button_layout = QHBoxLayout()
 
         start_btn = QPushButton("🔴 Start Recording")
-        start_btn.setMinimumHeight(40)
+        self._style_button(start_btn, ButtonStyle.PRIMARY, height=44, min_width=180)
         start_btn.clicked.connect(self.recording_start_requested.emit)
         button_layout.addWidget(start_btn)
 
         stop_btn = QPushButton("⏹️ Stop Recording")
-        stop_btn.setMinimumHeight(40)
+        self._style_button(stop_btn, ButtonStyle.SECONDARY, height=44, min_width=160)
         stop_btn.clicked.connect(self.recording_stop_requested.emit)
         button_layout.addWidget(stop_btn)
 
@@ -140,6 +152,7 @@ class PanelsManager(QObject):
             for i, (button_text, action) in enumerate(buttons):
                 btn = QPushButton(button_text)
                 btn.setObjectName(action)  # For identification
+                self._style_button(btn, ButtonStyle.SECONDARY, height=36, min_width=160)
                 row, col = divmod(i, 2)
                 group_layout.addWidget(btn, row, col)
 
@@ -165,14 +178,15 @@ class PanelsManager(QObject):
         button_layout = QHBoxLayout()
 
         run_btn = QPushButton("▶️ Run Command")
-        run_btn.setMinimumHeight(35)
+        self._style_button(run_btn, ButtonStyle.PRIMARY, height=36, min_width=160)
         button_layout.addWidget(run_btn)
 
         run_all_btn = QPushButton("⚡ Run All Commands")
-        run_all_btn.setMinimumHeight(35)
+        self._style_button(run_all_btn, ButtonStyle.SECONDARY, height=36, min_width=180)
         button_layout.addWidget(run_all_btn)
 
         clear_btn = QPushButton("🗑️ Clear")
+        self._style_button(clear_btn, ButtonStyle.NEUTRAL, height=34, min_width=120)
         clear_btn.clicked.connect(command_edit.clear)
         button_layout.addWidget(clear_btn)
 
@@ -208,6 +222,7 @@ class PanelsManager(QObject):
         path_layout.addWidget(path_edit)
 
         browse_btn = QPushButton("Browse")
+        self._style_button(browse_btn, ButtonStyle.NEUTRAL, height=34, min_width=90)
         browse_btn.clicked.connect(lambda: self._browse_folder(path_edit))
         path_layout.addWidget(browse_btn)
 
@@ -227,7 +242,7 @@ class PanelsManager(QObject):
         for i, (tool_text, action) in enumerate(tools):
             btn = QPushButton(tool_text)
             btn.setObjectName(action)
-            btn.setMinimumHeight(40)
+            self._style_button(btn, ButtonStyle.SECONDARY, height=40, min_width=200)
             row, col = divmod(i, 2)
             tools_layout.addWidget(btn, row, col)
 
@@ -253,12 +268,15 @@ class PanelsManager(QObject):
         controls_layout = QHBoxLayout()
 
         new_group_btn = QPushButton("➕ New Group")
+        self._style_button(new_group_btn, ButtonStyle.PRIMARY, height=34, min_width=150)
         controls_layout.addWidget(new_group_btn)
 
         edit_group_btn = QPushButton("✏️ Edit Group")
+        self._style_button(edit_group_btn, ButtonStyle.SECONDARY, height=34, min_width=150)
         controls_layout.addWidget(edit_group_btn)
 
         delete_group_btn = QPushButton("🗑️ Delete Group")
+        self._style_button(delete_group_btn, ButtonStyle.DANGER, height=34, min_width=150)
         controls_layout.addWidget(delete_group_btn)
 
         groups_layout.addLayout(controls_layout)
@@ -308,10 +326,12 @@ class PanelsManager(QObject):
         controls_layout = QHBoxLayout()
 
         clear_btn = QPushButton("🗑️ Clear")
+        self._style_button(clear_btn, ButtonStyle.NEUTRAL, height=32, min_width=120)
         clear_btn.clicked.connect(console_text.clear)
         controls_layout.addWidget(clear_btn)
 
         copy_btn = QPushButton("📋 Copy All")
+        self._style_button(copy_btn, ButtonStyle.SECONDARY, height=32, min_width=120)
         copy_btn.clicked.connect(lambda: self._copy_console_text(console_text))
         controls_layout.addWidget(copy_btn)
 
