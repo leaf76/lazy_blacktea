@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QTimer, QPoint
+from PyQt6.QtGui import QCursor, QFont
 from PyQt6.QtWidgets import QCheckBox, QToolTip
 
-from utils import adb_models, common
+from utils import adb_models, adb_tools, common
+from ui.style_manager import StyleManager
 from ui.optimized_device_list import DeviceListPerformanceOptimizer
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -248,15 +249,15 @@ class DeviceListController:
         )
 
     def _build_device_display_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        operation_status = self.window._get_device_operation_status(serial)
-        recording_status = self.window._get_device_recording_status(serial)
+        operation_status = self.get_device_operation_status(serial)
+        recording_status = self.get_device_recording_status(serial)
 
         android_ver = device.android_ver or 'Unknown'
         android_api = device.android_api_level or 'Unknown'
         gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
-        wifi_status = self.window._get_on_off_status(device.wifi_is_on)
-        bt_status = self.window._get_on_off_status(device.bt_is_on)
+        wifi_status = self.get_on_off_status(device.wifi_is_on)
+        bt_status = self.get_on_off_status(device.bt_is_on)
 
         return (
             f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
@@ -269,10 +270,8 @@ class DeviceListController:
 
     def _apply_checkbox_content(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo) -> None:
         checkbox.setText(self._build_device_display_text(device, serial))
-        tooltip_text = self.window._create_device_tooltip(device, serial)
-        checkbox.enterEvent = (
-            lambda event, txt=tooltip_text, cb=checkbox: self.window._show_custom_tooltip(cb, txt, event)
-        )
+        tooltip_text = self._create_device_tooltip(device, serial)
+        checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt)
         checkbox.leaveEvent = lambda event: QToolTip.hideText()
 
     def _configure_device_checkbox(
@@ -285,10 +284,10 @@ class DeviceListController:
         checked_set = set(checked_serials)
         checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         checkbox.customContextMenuRequested.connect(
-            lambda pos, s=serial, cb=checkbox: self.window.show_device_context_menu(pos, s, cb)
+            lambda pos, s=serial, cb=checkbox: self.window.device_actions_controller.show_context_menu(pos, s, cb)
         )
         checkbox.setFont(QFont('Segoe UI', 10))
-        self.window._apply_device_checkbox_style(checkbox)
+        self._apply_device_checkbox_style(checkbox)
         self._apply_checkbox_content(checkbox, serial, device)
 
         is_checked = serial in checked_set
@@ -298,7 +297,7 @@ class DeviceListController:
 
         checkbox.stateChanged.connect(self.window.update_selection_count)
         checkbox.stateChanged.connect(
-            lambda state, cb=checkbox: self.window._update_checkbox_visual_state(cb, state)
+            lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state)
         )
 
     def _initialize_virtualized_checkbox(
@@ -452,6 +451,99 @@ class DeviceListController:
         self, checkbox: QCheckBox, device: adb_models.DeviceInfo, serial: str
     ) -> None:
         self._apply_checkbox_content(checkbox, serial, device)
+
+    # ------------------------------------------------------------------
+    # Shared formatting helpers
+    # ------------------------------------------------------------------
+    def get_on_off_status(self, status) -> str:
+        if status is None or status == 'None':
+            return 'Unknown'
+        return 'On' if status else 'Off'
+
+    def get_device_operation_status(self, serial: str) -> str:
+        operation = self.window.device_operations.get(serial)
+        if operation:
+            return f'⚙️ {operation.upper()} | '
+        return ''
+
+    def get_device_recording_status(self, serial: str) -> str:
+        record_info = self.window.device_recordings.get(serial)
+        if record_info and record_info.get('active', False):
+            return '🔴 REC | '
+        return ''
+
+    def _create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        base_tooltip = (
+            f'📱 Device Information\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'Model: {device.device_model}\n'
+            f'Serial: {device.device_serial_num}\n'
+            f'Android: {device.android_ver if device.android_ver else "Unknown"} '
+            f'(API Level {device.android_api_level if device.android_api_level else "Unknown"})\n'
+            f'GMS Version: {device.gms_version if device.gms_version else "Unknown"}\n'
+            f'Product: {device.device_prod}\n'
+            f'USB: {device.device_usb}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'📡 Connectivity\n'
+            f'WiFi: {self.get_on_off_status(device.wifi_is_on)}\n'
+            f'Bluetooth: {self.get_on_off_status(device.bt_is_on)}\n'
+            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f'🔧 Build Information\n'
+            f'Build Fingerprint: {(device.build_fingerprint[:50] + "...") if device.build_fingerprint else "Unknown"}'
+        )
+
+        try:
+            additional_info = self._get_additional_device_info(serial)
+            return base_tooltip + (
+                f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🖥️ Hardware Information\n'
+                f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
+                f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
+                f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
+                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🔋 Battery Information\n'
+                f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
+                f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
+                f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
+                f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
+            )
+        except Exception as exc:
+            logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
+            return base_tooltip
+
+    def _get_additional_device_info(self, serial: str) -> Dict[str, str]:
+        try:
+            return adb_tools.get_additional_device_info(serial)
+        except Exception as exc:
+            logger.error('Error getting additional device info for %s: %s', serial, exc)
+            return {
+                'screen_density': 'Unknown',
+                'screen_size': 'Unknown',
+                'battery_level': 'Unknown',
+                'battery_capacity_mah': 'Unknown',
+                'battery_mas': 'Unknown',
+                'battery_dou_hours': 'Unknown',
+                'cpu_arch': 'Unknown',
+            }
+
+    def _apply_device_checkbox_style(self, checkbox: QCheckBox) -> None:
+        checkbox.setStyleSheet(StyleManager.get_checkbox_style())
+
+    def _update_checkbox_visual_state(self, checkbox: QCheckBox, state: int) -> None:
+        # Styling handled by stylesheet; method retained for potential future hooks.
+        if state not in (0, 2):
+            return
+
+    def _show_custom_tooltip(self, widget: QCheckBox, tooltip_text: str) -> None:
+        cursor_pos = QCursor.pos()
+        tooltip_pos = QPoint(cursor_pos.x() + 5, cursor_pos.y() + 5)
+        QToolTip.showText(tooltip_pos, tooltip_text, widget)
+
+    def get_additional_device_info(self, serial: str) -> Dict[str, str]:
+        return self._get_additional_device_info(serial)
+
+    def create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        return self._create_device_tooltip(device, serial)
 
 
 __all__ = ["DeviceListController"]

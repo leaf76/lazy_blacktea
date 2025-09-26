@@ -16,11 +16,10 @@ from PyQt6.QtWidgets import (
     QCheckBox, QPushButton, QLabel,
     QGroupBox, QFileDialog,
     QMessageBox, QMenu, QStatusBar, QProgressBar,
-    QInputDialog, QDialog, QTreeWidget, QTreeWidgetItem
+    QDialog
 )
-from PyQt6.QtCore import (Qt, QTimer, pyqtSignal, QPoint)
-from PyQt6.QtGui import (QFont, QTextCursor, QAction, QIcon, QGuiApplication, QCursor)
-from PyQt6.QtWidgets import QToolTip
+from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
+from PyQt6.QtGui import (QFont, QTextCursor, QAction, QIcon, QGuiApplication)
 
 from utils import adb_models
 from utils import adb_tools
@@ -49,6 +48,7 @@ from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager, ConsoleHandler
 from ui.optimized_device_list import VirtualizedDeviceList
 from ui.device_list_controller import DeviceListController
+from ui.device_actions_controller import DeviceActionsController
 from ui.tools_panel_controller import ToolsPanelController
 from ui.screenshot_widget import ClickableScreenshotLabel
 from ui.ui_inspector_dialog import UIInspectorDialog
@@ -117,6 +117,7 @@ class WindowMain(QMainWindow):
         # Initialize controller handling device list rendering
         self.device_list_controller = DeviceListController(self)
         self.tools_panel_controller = ToolsPanelController(self)
+        self.device_actions_controller = DeviceActionsController(self)
 
         # Initialize UI factory for creating UI components
         self.ui_factory = UIFactory(parent_window=self)
@@ -737,74 +738,7 @@ class WindowMain(QMainWindow):
         context_menu.exec(global_pos)
 
     def copy_selected_device_info(self):
-        """Copy selected device information to clipboard with comprehensive details."""
-        checked_devices = self.get_checked_devices()
-        if not checked_devices:
-            self.error_handler.show_info('Info', 'No devices selected.')
-            return
-
-        device_info_sections = []
-
-        for i, device in enumerate(checked_devices):
-            # Generate comprehensive device information in plain text
-            device_info = []
-            device_info.append(f"Device #{i+1}")
-            device_info.append("=" * 50)
-
-            # Basic Information
-            device_info.append("BASIC INFORMATION:")
-            device_info.append(f"Model: {device.device_model}")
-            device_info.append(f"Serial Number: {device.device_serial_num}")
-            device_info.append(f"Product: {device.device_prod}")
-            device_info.append(f"USB: {device.device_usb}")
-            device_info.append("")
-
-            # System Information
-            device_info.append("SYSTEM INFORMATION:")
-            device_info.append(f"Android Version: {device.android_ver if device.android_ver else 'Unknown'}")
-            device_info.append(f"API Level: {device.android_api_level if device.android_api_level else 'Unknown'}")
-            device_info.append(f"GMS Version: {device.gms_version if device.gms_version else 'Unknown'}")
-            device_info.append(f"Build Fingerprint: {device.build_fingerprint if device.build_fingerprint else 'Unknown'}")
-            device_info.append("")
-
-            # Connectivity
-            device_info.append("CONNECTIVITY:")
-            device_info.append(f"WiFi Status: {self._get_on_off_status(device.wifi_is_on)}")
-            device_info.append(f"Bluetooth Status: {self._get_on_off_status(device.bt_is_on)}")
-            device_info.append("")
-
-            # Try to get additional hardware information
-            try:
-                additional_info = self._get_additional_device_info(device.device_serial_num)
-                device_info.append("HARDWARE INFORMATION:")
-                device_info.append(f"Screen Size: {additional_info.get('screen_size', 'Unknown')}")
-                device_info.append(f"Screen Density: {additional_info.get('screen_density', 'Unknown')}")
-                device_info.append(f"CPU Architecture: {additional_info.get('cpu_arch', 'Unknown')}")
-                device_info.append("")
-                device_info.append("BATTERY INFORMATION:")
-                device_info.append(f"Battery Level: {additional_info.get('battery_level', 'Unknown')}")
-                device_info.append(f"Battery Capacity: {additional_info.get('battery_capacity_mah', 'Unknown')}")
-                device_info.append(f"Battery mAs: {additional_info.get('battery_mas', 'Unknown')}")
-                device_info.append(f"Estimated DOU: {additional_info.get('battery_dou_hours', 'Unknown')}")
-            except Exception as e:
-                device_info.append("HARDWARE INFORMATION:")
-                device_info.append("Hardware information unavailable")
-                logger.warning(f"Could not get additional info for {device.device_serial_num}: {e}")
-
-            device_info_sections.append('\n'.join(device_info))
-
-        # Combine all device information
-        header = f"ANDROID DEVICE INFORMATION REPORT\nGenerated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nTotal Devices: {len(checked_devices)}\n\n"
-        footer = "\n" + "=" * 50 + "\nReport generated by lazy blacktea PyQt6 version"
-
-        full_info_text = header + '\n\n'.join(device_info_sections) + footer
-
-        # Copy to clipboard
-        clipboard = QApplication.clipboard()
-        clipboard.setText(full_info_text)
-
-        self.show_info('Success', f'Copied comprehensive information for {len(checked_devices)} device(s) to clipboard.\n\nInformation includes:\n• Basic device details\n• System information\n• Connectivity status\n• Hardware specifications')
-        logger.info(f'Copied comprehensive device info to clipboard: {len(checked_devices)} devices')
+        self.device_actions_controller.copy_selected_device_info()
 
     def show_console_context_menu(self, position):
         """Show context menu for console."""
@@ -842,122 +776,6 @@ class WindowMain(QMainWindow):
         self.console_text.clear()
         logger.info('Console cleared')
 
-    def _get_on_off_status(self, status):
-        """Convert boolean status to On/Off string, similar to original Tkinter version."""
-        if status is None or status == 'None':
-            return 'Unknown'
-        return 'On' if status else 'Off'
-
-    def _get_device_operation_status(self, serial: str) -> str:
-        """Get operation status indicator for device."""
-        if serial in self.device_operations:
-            operation = self.device_operations[serial]
-            return f'⚙️ {operation.upper()} | '
-        return ''
-
-    def _get_device_recording_status(self, serial: str) -> str:
-        """Get recording status indicator for device."""
-        if (serial in self.device_recordings and
-            self.device_recordings[serial] and
-            self.device_recordings[serial].get('active', False)):
-            return '🔴 REC | '
-        return ''
-
-    def _create_device_tooltip(self, device, serial):
-        """Create enhanced tooltip with device information - unified method."""
-        base_tooltip = (
-            f'📱 Device Information\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'Model: {device.device_model}\n'
-            f'Serial: {device.device_serial_num}\n'
-            f'Android: {device.android_ver if device.android_ver else "Unknown"} (API Level {device.android_api_level if device.android_api_level else "Unknown"})\n'
-            f'GMS Version: {device.gms_version if device.gms_version else "Unknown"}\n'
-            f'Product: {device.device_prod}\n'
-            f'USB: {device.device_usb}\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'📡 Connectivity\n'
-            f'WiFi: {self._get_on_off_status(device.wifi_is_on)}\n'
-            f'Bluetooth: {self._get_on_off_status(device.bt_is_on)}\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'🔧 Build Information\n'
-            f'Build Fingerprint: {(device.build_fingerprint[:50] + "...") if device.build_fingerprint else "Unknown"}'
-        )
-
-        # Try to get additional info, but don't block UI for it
-        try:
-            additional_info = self._get_additional_device_info(serial)
-            extended_tooltip = base_tooltip + (
-                f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🖥️ Hardware Information\n'
-                f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
-                f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
-                f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
-                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🔋 Battery Information\n'
-                f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
-                f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
-                f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
-                f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
-            )
-            return extended_tooltip
-        except Exception as e:
-            if hasattr(self, 'logging_manager'):
-                self.logging_manager.debug(f'Failed to create device tooltip: {e}')
-            return base_tooltip
-
-    def _get_additional_device_info(self, serial_num):
-        """Get additional device information for enhanced display."""
-        try:
-            # Use utils functions where possible
-            return adb_tools.get_additional_device_info(serial_num)
-        except Exception as e:
-            logger.error(f'Error getting additional device info for {serial_num}: {e}')
-            return {
-                'screen_density': 'Unknown',
-                'screen_size': 'Unknown',
-                'battery_level': 'Unknown',
-                'battery_capacity_mah': 'Unknown',
-                'battery_mas': 'Unknown',
-                'battery_dou_hours': 'Unknown',
-                'cpu_arch': 'Unknown'
-            }
-
-    def _apply_device_checkbox_style(self, checkbox):
-        """Apply visual styling to device checkbox for better selection feedback."""
-        checkbox.setStyleSheet(StyleManager.get_checkbox_style())
-
-    def _update_checkbox_visual_state(self, checkbox, state):
-        """Update visual state of checkbox when selection changes."""
-        # The styling is handled by CSS, but we can add additional visual feedback here if needed
-        if state == 2:  # Checked state
-            # Add selected visual indicator (handled by CSS)
-            pass
-        else:  # Unchecked state
-            # Remove selected visual indicator (handled by CSS)
-            pass
-
-    def _create_custom_tooltip_checkbox(self, device_text, tooltip_text):
-        """Create a checkbox with custom tooltip positioning."""
-        checkbox = QCheckBox(device_text)
-
-        # Remove default tooltip and add custom event handling
-        checkbox.setToolTip("")  # Clear default tooltip
-        checkbox.enterEvent = lambda event: self._show_custom_tooltip(checkbox, tooltip_text, event)
-        checkbox.leaveEvent = lambda event: QToolTip.hideText()
-
-        return checkbox
-
-    def _show_custom_tooltip(self, widget, tooltip_text, event):
-        """Show custom positioned tooltip near cursor."""
-        # Get global cursor position
-        cursor_pos = QCursor.pos()
-
-        # Offset tooltip very close to cursor (5px right, 5px down)
-        tooltip_pos = QPoint(cursor_pos.x() + 5, cursor_pos.y() + 5)
-
-        # Show tooltip at custom position
-        QToolTip.showText(tooltip_pos, tooltip_text, widget)
-
     def _check_scrcpy_available(self):
         """Check if scrcpy is available (deprecated - use app_management_manager)."""
         return self.app_management_manager.check_scrcpy_available()
@@ -978,158 +796,28 @@ class WindowMain(QMainWindow):
             self.title_label.setText(f'Connected Devices ({device_count}) - Selected: {selected_count}')
 
     def show_device_context_menu(self, position, device_serial, checkbox_widget):
-        """Show context menu for individual device."""
-        if device_serial not in self.device_dict:
-            return
-
-        device = self.device_dict[device_serial]
-        context_menu = QMenu(self)
-        # Use system default styling for context menu
-        context_menu.setStyleSheet(StyleManager.get_menu_style())
-
-        # Device info header
-        device_name = f'📱 {device.device_model} ({device_serial[:8]}...)'
-        header_action = context_menu.addAction(device_name)
-        header_action.setEnabled(False)
-        # Note: QAction doesn't support setStyleSheet, styling is handled by QMenu
-        context_menu.addSeparator()
-
-        # Quick selection actions
-        select_only_action = context_menu.addAction('✅ Select Only This Device')
-        select_only_action.triggered.connect(lambda: self.select_only_device(device_serial))
-
-        deselect_action = context_menu.addAction('❌ Deselect This Device')
-        deselect_action.triggered.connect(lambda: self.deselect_device(device_serial))
-
-        view_logcat_action = context_menu.addAction('👁️ View Logcat')
-        view_logcat_action.triggered.connect(lambda: self.view_logcat_for_device(device_serial))
-
-        context_menu.addSeparator()
-
-        # UI Inspector action (always available for any device)
-        ui_inspector_action = context_menu.addAction('🔍 Launch UI Inspector')
-        ui_inspector_action.triggered.connect(lambda: self.launch_ui_inspector_for_device(device_serial))
-        context_menu.addSeparator()
-
-        # Device-specific actions
-        reboot_action = context_menu.addAction('🔄 Reboot Device')
-        reboot_action.triggered.connect(lambda: self.reboot_single_device(device_serial))
-
-        screenshot_action = context_menu.addAction('📷 Take Screenshot')
-        screenshot_action.triggered.connect(lambda: self.take_screenshot_single_device(device_serial))
-
-        scrcpy_action = context_menu.addAction('🖥️ Mirror Device (scrcpy)')
-        scrcpy_action.triggered.connect(lambda: self.launch_scrcpy_single_device(device_serial))
-
-        context_menu.addSeparator()
-
-        # Copy device info
-        copy_info_action = context_menu.addAction('📋 Copy Device Info')
-        copy_info_action.triggered.connect(lambda: self.copy_single_device_info(device_serial))
-
-        # Show context menu
-        global_pos = checkbox_widget.mapToGlobal(position)
-        context_menu.exec(global_pos)
+        """Delegate context menu handling to the device actions controller."""
+        self.device_actions_controller.show_context_menu(position, device_serial, checkbox_widget)
 
     def select_only_device(self, target_serial):
-        """Select only the specified device, deselect all others."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            if target_serial in self.device_dict:
-                self.virtualized_device_list.set_checked_serials({target_serial})
-            else:
-                self.virtualized_device_list.set_checked_serials(set())
-            return
-
-        for serial, checkbox in self.check_devices.items():
-            checkbox.setChecked(serial == target_serial)
+        """Expose device selection through the controller."""
+        self.device_actions_controller.select_only_device(target_serial)
 
     def deselect_device(self, target_serial):
-        """Deselect the specified device."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            current = set(self.virtualized_device_list.checked_devices)
-            if target_serial in current:
-                current.discard(target_serial)
-                self.virtualized_device_list.set_checked_serials(current)
-            return
-
-        if target_serial in self.check_devices:
-            self.check_devices[target_serial].setChecked(False)
+        """Expose deselection through the controller."""
+        self.device_actions_controller.deselect_device(target_serial)
 
     def launch_ui_inspector_for_device(self, device_serial):
-        """Launch UI Inspector for a specific device using the unified UI Inspector functionality."""
-        if device_serial in self.device_dict:
-            device = self.device_dict[device_serial]
-            # Temporarily select only this device for the UI Inspector operation
-            original_selections = self._backup_device_selections()
-            self.select_only_device(device_serial)
-
-            # Use the same UI Inspector function as tabs
-            self.launch_ui_inspector()
-
-            # Restore original selections
-            self._restore_device_selections(original_selections)
-        else:
-            self.show_error('Error', f'Device {device_serial} not found.')
+        self.device_actions_controller.launch_ui_inspector_for_device(device_serial)
 
     def reboot_single_device(self, device_serial):
-        """Reboot a single device using the unified reboot functionality."""
-        if device_serial in self.device_dict:
-            device = self.device_dict[device_serial]
-            # Temporarily select only this device for the reboot operation
-            original_selections = self._backup_device_selections()
-            self.select_only_device(device_serial)
-
-            # Use the same reboot function as tabs
-            self.reboot_device()
-
-            # Restore original selections
-            self._restore_device_selections(original_selections)
-        else:
-            self.show_error('Error', f'Device {device_serial} not found.')
+        self.device_actions_controller.reboot_single_device(device_serial)
 
     def take_screenshot_single_device(self, device_serial):
-        """Take screenshot for a single device using the unified screenshot functionality."""
-        if device_serial in self.device_dict:
-            device = self.device_dict[device_serial]
-            # Temporarily select only this device for the screenshot operation
-            original_selections = self._backup_device_selections()
-            self.select_only_device(device_serial)
-
-            # Use the same screenshot function as tabs
-            self.take_screenshot()
-
-            # Restore original selections
-            self._restore_device_selections(original_selections)
-        else:
-            self.show_error('Error', f'Device {device_serial} not found.')
+        self.device_actions_controller.take_screenshot_single_device(device_serial)
 
     def launch_scrcpy_single_device(self, device_serial):
-        """Launch scrcpy for a single device."""
-        self.app_management_manager.launch_scrcpy_for_device(device_serial)
-
-    def _backup_device_selections(self):
-        """Backup current device selections."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            return {serial: True for serial in self.virtualized_device_list.checked_devices}
-
-        selections = {}
-        for serial, checkbox in self.check_devices.items():
-            selections[serial] = checkbox.isChecked()
-        return selections
-
-    def _restore_device_selections(self, selections):
-        """Restore device selections from backup."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            selected_serials = {serial for serial, is_checked in selections.items() if is_checked}
-            self.virtualized_device_list.set_checked_serials(selected_serials)
-            return
-
-        for serial, checkbox in self.check_devices.items():
-            if serial in selections:
-                checkbox.setChecked(selections[serial])
-
-
-
+        self.device_actions_controller.launch_scrcpy_single_device(device_serial)
 
     def filter_and_sort_devices(self):
         """Filter and sort devices based on current search and sort settings."""
@@ -1195,28 +883,7 @@ class WindowMain(QMainWindow):
         self.filter_and_sort_devices()
 
     def copy_single_device_info(self, device_serial):
-        """Copy information for a single device."""
-        if device_serial in self.device_dict:
-            device = self.device_dict[device_serial]
-            device_info = f'''Device Information:
-Model: {device.device_model}
-Serial: {device.device_serial_num}
-Android Version: {device.android_ver if device.android_ver else 'Unknown'} (API Level {device.android_api_level if device.android_api_level else 'Unknown'})
-GMS Version: {device.gms_version if device.gms_version else 'Unknown'}
-Product: {device.device_prod}
-USB: {device.device_usb}
-WiFi Status: {self._get_on_off_status(device.wifi_is_on)}
-Bluetooth Status: {self._get_on_off_status(device.bt_is_on)}
-Build Fingerprint: {device.build_fingerprint}'''
-
-            try:
-                clipboard = QGuiApplication.clipboard()
-                clipboard.setText(device_info)
-                self.show_info('📋 Copied!', f'Device information copied to clipboard for:\n{device.device_model}')
-                logger.info(f'📋 Copied device info to clipboard: {device_serial}')
-            except Exception as e:
-                logger.error(f'❌ Failed to copy device info to clipboard: {e}')
-                self.show_error('Error', f'Could not copy to clipboard:\n{e}')
+        self.device_actions_controller.copy_single_device_info(device_serial)
 
     def browse_output_path(self):
         """Browse for output directory."""
