@@ -12,11 +12,11 @@ import webbrowser
 from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QSplitter, QTabWidget, QTextEdit,
+    QSplitter, QTextEdit,
     QCheckBox, QPushButton, QLabel,
-    QLineEdit, QGroupBox, QFileDialog, QComboBox,
+    QGroupBox, QFileDialog,
     QMessageBox, QMenu, QStatusBar, QProgressBar,
-    QInputDialog, QListWidget, QListWidgetItem, QDialog, QTreeWidget, QTreeWidgetItem
+    QInputDialog, QDialog, QTreeWidget, QTreeWidgetItem
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal, QPoint)
 from PyQt6.QtGui import (QFont, QTextCursor, QAction, QIcon, QGuiApplication, QCursor)
@@ -49,6 +49,7 @@ from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager, ConsoleHandler
 from ui.optimized_device_list import VirtualizedDeviceList
 from ui.device_list_controller import DeviceListController
+from ui.tools_panel_controller import ToolsPanelController
 from ui.screenshot_widget import ClickableScreenshotLabel
 from ui.ui_inspector_dialog import UIInspectorDialog
 
@@ -115,6 +116,7 @@ class WindowMain(QMainWindow):
 
         # Initialize controller handling device list rendering
         self.device_list_controller = DeviceListController(self)
+        self.tools_panel_controller = ToolsPanelController(self)
 
         # Initialize UI factory for creating UI components
         self.ui_factory = UIFactory(parent_window=self)
@@ -239,8 +241,8 @@ class WindowMain(QMainWindow):
         self.virtualized_device_list = VirtualizedDeviceList(self.device_widget, main_window=self)
         self.virtualized_widget = self.virtualized_device_list.get_widget()
 
-        # Create tools panel
-        self.create_tools_panel(main_splitter)
+        # Create tools panel via controller
+        self.tools_panel_controller.create_tools_panel(main_splitter)
 
         # Set splitter proportions
         main_splitter.setSizes([400, 800])
@@ -283,135 +285,6 @@ class WindowMain(QMainWindow):
         pass
 
 
-
-    def create_tools_panel(self, parent):
-        """Create the tools panel with tabs."""
-        tools_widget = QWidget()
-        tools_layout = QVBoxLayout(tools_widget)
-
-        # Create tab widget
-        tab_widget = QTabWidget()
-        tools_layout.addWidget(tab_widget)
-
-        # Initialize critical UI elements first to prevent attribute errors
-        self.output_path_edit = QLineEdit()
-        self.file_gen_output_path_edit = QLineEdit()  # Restore text field for File Generation
-        self.groups_listbox = QListWidget()
-        self.group_name_edit = QLineEdit()
-
-        # Create all tabs immediately to ensure proper initialization
-        # (Lazy loading caused attribute errors with configuration loading)
-        self.create_adb_tools_tab(tab_widget)
-        self.create_shell_commands_tab(tab_widget)
-        self.create_file_generation_tab(tab_widget)
-        self.create_device_groups_tab(tab_widget)
-
-        parent.addWidget(tools_widget)
-
-
-    def create_adb_tools_tab(self, tab_widget):
-        """Create the ADB tools tab with categorized functions."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        # Output path section
-        output_group = QGroupBox('Output Path')
-        output_layout = QHBoxLayout(output_group)
-
-        self.output_path_edit.setPlaceholderText('Select output directory...')
-        output_layout.addWidget(self.output_path_edit)
-
-        browse_btn = UIFactory.create_standard_button(
-            '📂 Browse',
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.browse_output_path(),
-            tooltip='Select output directory'
-        )
-        output_layout.addWidget(browse_btn)
-
-        layout.addWidget(output_group)
-
-        # Logcat section
-        logcat_group = QGroupBox('📄 Logcat')
-        logcat_layout = QGridLayout(logcat_group)
-
-        # Clear logcat button
-        clear_logcat_btn = UIFactory.create_standard_button(
-            '🗑️ Clear Logcat',
-            ButtonStyle.DANGER,
-            click_handler=lambda: self.clear_logcat(),
-            tooltip='Clear logcat on selected devices'
-        )
-        logcat_layout.addWidget(clear_logcat_btn, 0, 0)
-
-        # Android Bug Report button
-        bug_report_btn = UIFactory.create_standard_button(
-            '📊 Android Bug Report',
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.generate_android_bug_report(),
-            tooltip='Generate Android bug report'
-        )
-        logcat_layout.addWidget(bug_report_btn, 0, 1)
-
-        layout.addWidget(logcat_group)
-
-        # Device Control section
-        device_control_group = QGroupBox('📱 Device Control')
-        device_control_layout = QGridLayout(device_control_group)
-
-        device_actions = [
-            ('🔄 Reboot Device', self.reboot_device),
-            ('📦 Install APK', self.install_apk),
-            ('🔵 Enable Bluetooth', self.enable_bluetooth),
-            ('🔴 Disable Bluetooth', self.disable_bluetooth),
-        ]
-
-        # Add scrcpy action if available
-        if self.scrcpy_available:
-            device_actions.append(('🖥️ Mirror Device (scrcpy)', self.launch_scrcpy))
-
-        for i, (text, func) in enumerate(device_actions):
-            btn = QPushButton(text)
-            btn.clicked.connect(lambda checked, f=func: f())
-            row, col = divmod(i, 2)
-            device_control_layout.addWidget(btn, row, col)
-
-        layout.addWidget(device_control_group)
-
-        # Screen Capture & Recording section (combined)
-        capture_group = QGroupBox('📱 Screen Capture & Recording')
-        capture_layout = QGridLayout(capture_group)
-
-        # Screenshot button
-        self.screenshot_btn = QPushButton('📷 Take Screenshot')
-        self.screenshot_btn.clicked.connect(lambda: self.take_screenshot())
-        # Set initial default style
-        StyleManager.apply_button_style(self.screenshot_btn, ButtonStyle.PRIMARY)
-        capture_layout.addWidget(self.screenshot_btn, 0, 0)
-
-        # Recording buttons
-        self.start_record_btn = QPushButton('🎥 Start Screen Record')
-        self.start_record_btn.clicked.connect(lambda: self.start_screen_record())
-        capture_layout.addWidget(self.start_record_btn, 1, 0)
-
-        self.stop_record_btn = QPushButton('⏹️ Stop Screen Record')
-        self.stop_record_btn.clicked.connect(lambda: self.stop_screen_record())
-        capture_layout.addWidget(self.stop_record_btn, 1, 1)
-
-        # Recording status display
-        self.recording_status_label = QLabel('No active recordings')
-        StyleManager.apply_label_style(self.recording_status_label, LabelStyle.STATUS)
-        capture_layout.addWidget(self.recording_status_label, 2, 0, 1, 2)
-
-        # Recording timer display
-        self.recording_timer_label = QLabel('')
-        self.recording_timer_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
-        capture_layout.addWidget(self.recording_timer_label, 3, 0, 1, 2)
-
-        layout.addWidget(capture_group)
-
-        layout.addStretch()
-        tab_widget.addTab(tab, 'ADB Tools')
 
     def update_recording_status(self):
         """Update recording status display using new recording manager."""
@@ -463,192 +336,6 @@ class WindowMain(QMainWindow):
             f'Recording on {device_model} ({serial}) is approaching the 3-minute ADB limit.\n\n'
             'The recording will automatically stop soon. You can start a new recording afterwards.'
         )
-
-    def create_shell_commands_tab(self, tab_widget):
-        """Create the enhanced shell commands tab with batch execution and history."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        # Command Templates section
-        template_group = QGroupBox('📋 Command Templates')
-        template_layout = QGridLayout(template_group)
-
-        template_commands = [
-            ('📱 Device Info', 'getprop ro.build.version.release'),
-            ('🔋 Battery Info', 'dumpsys battery'),
-            ('📊 Memory Info', 'dumpsys meminfo'),
-            ('🌐 Network Info', 'dumpsys connectivity'),
-            ('📱 App List', 'pm list packages -3'),
-            ('🗑️ Clear Cache', 'pm trim-caches 1000000000'),
-        ]
-
-        for i, (name, command) in enumerate(template_commands):
-            btn = QPushButton(name)
-            btn.clicked.connect(lambda checked, cmd=command: self.add_template_command(cmd))
-            row, col = divmod(i, 3)
-            template_layout.addWidget(btn, row, col)
-
-        layout.addWidget(template_group)
-
-        # Batch Commands section
-        batch_group = QGroupBox('📝 Batch Commands')
-        batch_layout = QVBoxLayout(batch_group)
-
-        # Commands text area
-        self.batch_commands_edit = QTextEdit()
-        self.batch_commands_edit.setPlaceholderText(
-            'Enter multiple commands (one per line):\n'
-            'getprop ro.build.version.release\n'
-            'dumpsys battery\n'
-            'pm list packages -3\n\n'
-            'Use # for comments'
-        )
-        self.batch_commands_edit.setMaximumHeight(120)
-        batch_layout.addWidget(self.batch_commands_edit)
-
-        # Execution buttons
-        exec_buttons_layout = QHBoxLayout()
-
-        run_single_btn = QPushButton('▶️ Run Single Command')
-        run_single_btn.clicked.connect(lambda: self.run_single_command())
-        exec_buttons_layout.addWidget(run_single_btn)
-
-        run_batch_btn = QPushButton('🚀 Run All Commands')
-        run_batch_btn.clicked.connect(lambda: self.run_batch_commands())
-        exec_buttons_layout.addWidget(run_batch_btn)
-
-
-        batch_layout.addLayout(exec_buttons_layout)
-        layout.addWidget(batch_group)
-
-        # Command History section
-        history_group = QGroupBox('📜 Command History')
-        history_layout = QVBoxLayout(history_group)
-
-        self.command_history_list = QListWidget()
-        self.command_history_list.setMaximumHeight(100)
-        self.command_history_list.itemDoubleClicked.connect(self.load_from_history)
-        history_layout.addWidget(self.command_history_list)
-
-        history_buttons_layout = QHBoxLayout()
-
-        clear_history_btn = UIFactory.create_standard_button(
-            '🗑️ Clear',
-            ButtonStyle.DANGER,
-            click_handler=lambda: self.clear_command_history(),
-            tooltip='Clear command history'
-        )
-        history_buttons_layout.addWidget(clear_history_btn)
-
-        export_history_btn = QPushButton('📤 Export')
-        export_history_btn.clicked.connect(lambda: self.export_command_history())
-        history_buttons_layout.addWidget(export_history_btn)
-
-        import_history_btn = QPushButton('📥 Import')
-        import_history_btn.clicked.connect(lambda: self.import_command_history())
-        history_buttons_layout.addWidget(import_history_btn)
-
-        history_layout.addLayout(history_buttons_layout)
-        layout.addWidget(history_group)
-
-        layout.addStretch()
-
-        # Initialize command history display
-        self.update_history_display()
-
-        tab_widget.addTab(tab, 'Shell Commands')
-
-
-    def create_file_generation_tab(self, tab_widget):
-        """Create the file generation tab with independent output path."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        # Output path section (matching ADB Tools format)
-        output_group = QGroupBox('Output Path')
-        output_layout = QHBoxLayout(output_group)
-
-        self.file_gen_output_path_edit.setPlaceholderText('Select output directory...')
-        output_layout.addWidget(self.file_gen_output_path_edit)
-
-        browse_btn = UIFactory.create_standard_button(
-            '📂 Browse',
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.browse_file_generation_output_path(),
-            tooltip='Select output directory for file generation'
-        )
-        output_layout.addWidget(browse_btn)
-
-        layout.addWidget(output_group)
-
-        # File Generation Tools section
-        generation_group = QGroupBox('🛠️ File Generation Tools')
-        generation_layout = QGridLayout(generation_group)
-
-        generation_actions = [
-            ('🔍 Device Discovery', self.generate_device_discovery_file),
-            ('📷 Device DCIM Pull', self.pull_device_dcim_with_folder),
-            ('📁 Export UI Hierarchy', self.dump_device_hsv),
-        ]
-
-        for i, (text, func) in enumerate(generation_actions):
-            btn = QPushButton(text)
-            btn.clicked.connect(lambda checked, f=func: f())
-            row, col = divmod(i, 2)
-            generation_layout.addWidget(btn, row, col)
-
-        layout.addWidget(generation_group)
-        layout.addStretch()
-
-        tab_widget.addTab(tab, 'File Generation')
-
-    def create_device_groups_tab(self, tab_widget):
-        """Create the device groups management tab."""
-        tab = QWidget()
-        layout = QHBoxLayout(tab)
-
-        # Left side: Create/Edit Group
-        left_group = QGroupBox('Create/Update Group')
-        left_layout = QVBoxLayout(left_group)
-
-        # Group name input
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel('Group Name:'))
-        self.group_name_edit.setPlaceholderText('Enter group name...')
-        name_layout.addWidget(self.group_name_edit)
-        left_layout.addLayout(name_layout)
-
-        # Save group button
-        save_group_btn = QPushButton('Save Current Selection as Group')
-        save_group_btn.clicked.connect(lambda: self.save_group())
-        left_layout.addWidget(save_group_btn)
-
-        left_layout.addStretch()
-        layout.addWidget(left_group)
-
-        # Right side: Group List
-        right_group = QGroupBox('Existing Groups')
-        right_layout = QVBoxLayout(right_group)
-
-        # Groups list (using pre-initialized widget)
-        self.groups_listbox.itemSelectionChanged.connect(self.on_group_select)
-        right_layout.addWidget(self.groups_listbox)
-
-        # Group action buttons
-        group_buttons_layout = QHBoxLayout()
-
-        select_group_btn = QPushButton('Select Devices in Group')
-        select_group_btn.clicked.connect(lambda: self.select_devices_in_group())
-        group_buttons_layout.addWidget(select_group_btn)
-
-        delete_group_btn = QPushButton('Delete Selected Group')
-        delete_group_btn.clicked.connect(lambda: self.delete_group())
-        group_buttons_layout.addWidget(delete_group_btn)
-
-        right_layout.addLayout(group_buttons_layout)
-        layout.addWidget(right_group)
-
-        tab_widget.addTab(tab, 'Device Groups')
 
     def create_console_panel(self, parent_layout):
         """Create the console output panel."""

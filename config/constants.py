@@ -174,3 +174,29 @@ class ApplicationConstants:
     ENABLE_EXPERIMENTAL_FEATURES = False
     ENABLE_DEBUG_MODE = False
     ENABLE_PERFORMANCE_MONITORING = False
+
+
+class PanelText:
+    """Shared labels and titles for UI panels."""
+
+    TAB_ADB_TOOLS = 'ADB Tools'
+    TAB_SHELL_COMMANDS = 'Shell Commands'
+    TAB_FILE_GENERATION = 'File Generation'
+    TAB_DEVICE_GROUPS = 'Device Groups'
+
+    GROUP_OUTPUT_PATH = 'Output Path'
+    GROUP_FILE_GENERATION = '🛠️ File Generation Tools'
+    GROUP_COMMAND_HISTORY = '📜 Command History'
+    GROUP_CREATE_UPDATE = 'Create/Update Group'
+    GROUP_EXISTING = 'Existing Groups'
+
+    PLACEHOLDER_OUTPUT_DIR = 'Select output directory...'
+    PLACEHOLDER_GROUP_NAME = 'Enter group name...'
+
+    BUTTON_BROWSE = '📂 Browse'
+    BUTTON_CLEAR = '🗑️ Clear'
+    BUTTON_EXPORT = '📤 Export'
+    BUTTON_IMPORT = '📥 Import'
+    BUTTON_SAVE_GROUP = 'Save Current Selection as Group'
+    BUTTON_SELECT_GROUP = 'Select Devices in Group'
+    BUTTON_DELETE_GROUP = 'Delete Selected Group'

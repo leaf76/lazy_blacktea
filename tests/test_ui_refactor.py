@@ -63,6 +63,32 @@ class TestUIRefactor(unittest.TestCase):
                 else:
                     os.environ.pop('HOME', None)
 
+    def test_tools_panel_controller_module_exports_class(self):
+        with tempfile.TemporaryDirectory() as tmp_home:
+            original_home = os.environ.get('HOME')
+            try:
+                os.environ['HOME'] = tmp_home
+                for module_name in [
+                    'ui.tools_panel_controller',
+                    'lazy_blacktea_pyqt',
+                    'utils.common',
+                ]:
+                    sys.modules.pop(module_name, None)
+
+                module = importlib.import_module('ui.tools_panel_controller')
+                controller_cls = getattr(module, 'ToolsPanelController', None)
+                self.assertIsNotNone(controller_cls)
+                self.assertEqual(controller_cls.__module__, 'ui.tools_panel_controller')
+
+                main_module = importlib.import_module('lazy_blacktea_pyqt')
+                self.assertTrue(hasattr(main_module, 'ToolsPanelController'))
+                self.assertIs(main_module.ToolsPanelController, controller_cls)
+            finally:
+                if original_home is not None:
+                    os.environ['HOME'] = original_home
+                else:
+                    os.environ.pop('HOME', None)
+
 
 if __name__ == '__main__':
     unittest.main()
