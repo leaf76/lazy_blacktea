@@ -75,8 +75,7 @@ class ConsoleHandler(logging.Handler):
             levelname = record.levelname
 
             # 使用QTimer確保在主線程中執行UI更新
-            if hasattr(self.parent, 'isVisible') and self.parent.isVisible():
-                QTimer.singleShot(0, lambda: self._update_widget(msg, levelname))
+            QTimer.singleShot(0, lambda: self._update_widget(msg, levelname))
         except Exception as e:
             print(f'Error in ConsoleHandler.emit: {e}')
 

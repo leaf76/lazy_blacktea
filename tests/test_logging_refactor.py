@@ -203,6 +203,31 @@ class LoggingRefactorTest(unittest.TestCase):
             "Console text should end with a newline character",
         )
 
+    def test_console_handler_updates_when_parent_hidden(self):
+        """即使視窗隱藏也應更新控制台"""
+        print("\n💬 測試控制台在視窗隱藏時仍更新...")
+
+        text_widget = QTextEdit()
+        hidden_parent = Mock()
+        hidden_parent.isVisible.return_value = False
+
+        handler = ConsoleHandler(text_widget, hidden_parent)
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg="Hidden message",
+            args=(),
+            exc_info=None,
+        )
+
+        handler.emit(record)
+        self._qt_app.processEvents()
+
+        self.assertIn("Hidden message", text_widget.toPlainText())
+
     def test_console_displays_related_logger_errors(self):
         """測試相關模組的錯誤訊息會顯示在控制台"""
         print("\n💬 測試控制台顯示相關 logger 訊息...")
