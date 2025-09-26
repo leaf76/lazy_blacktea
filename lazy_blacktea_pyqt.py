@@ -374,8 +374,8 @@ class ClickableScreenshotLabel(QLabel):
         painter.drawText(self.width() - text_width - 5, 25, f"📱 {element_count} elements")
 
 
-# Logcat classes moved to logcat_viewer.py
-from logcat_viewer import LogcatWindow
+# Logcat classes moved to ui.logcat_viewer
+from ui.logcat_viewer import LogcatWindow
 
 
 class UIInspectorDialog(QDialog):

@@ -1,10 +1,16 @@
 import os
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication
 
-from logcat_viewer import LogcatWindow, PerformanceSettingsDialog, PERFORMANCE_PRESETS
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from ui.logcat_viewer import LogcatWindow, PerformanceSettingsDialog, PERFORMANCE_PRESETS
 
 
 class _DummyDevice:
@@ -124,7 +130,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         checked_levels = [level for level, checkbox in self.window.log_levels.items() if checkbox.isChecked()]
         self.assertEqual(checked_levels, ['V', 'D', 'I', 'W', 'E', 'F'])
 
-    @patch('logcat_viewer.QProcess', new=FakeProcess)
+    @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
     def test_start_logcat_uses_all_levels(self):
         """Starting logcat should include all level filters when none are deselected."""
         self.window.start_logcat()
@@ -138,7 +144,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
             ['-s', 'TESTSERIAL', 'logcat', '-v', 'threadtime', '*:V']
         )
 
-    @patch('logcat_viewer.QProcess', new=FakeProcess)
+    @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
     def test_start_logcat_applies_tag_filter(self):
         """Tag filters should translate into TAG:LEVEL specs with silence."""
         self.window.log_source_mode.setCurrentText('Tag')
@@ -152,8 +158,8 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.assertIn('MyTag:D', args)
         self.assertIn('*:S', args)
 
-    @patch('logcat_viewer.adb_tools.get_package_pids', return_value=['123', '456'])
-    @patch('logcat_viewer.QProcess', new=FakeProcess)
+    @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=['123', '456'])
+    @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
     def test_start_logcat_applies_package_filter(self, mock_get_pids):
         """Package filters should resolve to --pid arguments plus level filters."""
         self.window.log_source_mode.setCurrentText('Package')
@@ -169,8 +175,8 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         )
         self.assertEqual(args[-1], '*:V')
 
-    @patch('logcat_viewer.adb_tools.get_package_pids', return_value=[])
-    @patch('logcat_viewer.QProcess', new=FakeProcess)
+    @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=[])
+    @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
     def test_start_logcat_package_filter_requires_running_process(self, mock_get_pids):
         """Starting logcat with a package filter should validate pid resolution."""
         self.window.log_source_mode.setCurrentText('Package')
