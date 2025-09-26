@@ -15,6 +15,8 @@ import os
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 
+import logging
+
 from PyQt6.QtWidgets import QApplication, QTextEdit
 
 # Add project root to path
@@ -200,6 +202,27 @@ class LoggingRefactorTest(unittest.TestCase):
             text_widget.toPlainText().endswith("\n"),
             "Console text should end with a newline character",
         )
+
+    def test_console_displays_related_logger_errors(self):
+        """測試相關模組的錯誤訊息會顯示在控制台"""
+        print("\n💬 測試控制台顯示相關 logger 訊息...")
+
+        console_parent = Mock()
+        console_parent.isVisible.return_value = True
+
+        text_widget = QTextEdit()
+        logging_manager = LoggingManager(console_parent)
+        logging_manager.initialize_logging(text_widget)
+
+        common_logger = logging.getLogger('common')
+        test_message = "Simulated install failure: adb returned INSTALL_PARSE_FAILED_NO_CERTIFICATES"
+        common_logger.warning(test_message)
+
+        # 觸發 QTimer callbacks
+        self._qt_app.processEvents()
+
+        console_text = text_widget.toPlainText()
+        self.assertIn(test_message, console_text)
 
     def test_log_levels_functionality(self):
         """測試日誌級別功能"""

@@ -18,6 +18,7 @@ from PyQt6.QtGui import QTextCursor, QFont
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTextEdit
 
+from config.constants import LoggingConstants
 from utils import adb_tools, common
 
 
@@ -123,6 +124,7 @@ class LoggingManager(QObject):
         # 移除現有的StreamHandler
         for handler in self.logger.handlers[:]:
             if isinstance(handler, logging.StreamHandler) and not isinstance(handler, ConsoleHandler):
+                handler.close()
                 self.logger.removeHandler(handler)
 
         # 添加自定義控制台處理器
@@ -134,11 +136,12 @@ class LoggingManager(QObject):
 
     def _setup_related_loggers(self):
         """設置相關模組的日誌器"""
-        related_loggers = ['adb_tools', 'common', 'ui_inspector_utils', 'dump_device_ui']
-        for logger_name in related_loggers:
+        for logger_name in LoggingConstants.RELATED_LOGGERS:
             module_logger = logging.getLogger(logger_name)
             module_logger.setLevel(logging.INFO)
-            module_logger.propagate = True  # 傳播到主日誌器
+            if self.console_handler and not any(h is self.console_handler for h in module_logger.handlers):
+                module_logger.addHandler(self.console_handler)
+            module_logger.propagate = False
 
     def set_log_level(self, level: str):
         """設置日誌級別"""

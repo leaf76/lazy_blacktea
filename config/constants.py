@@ -129,6 +129,33 @@ class LoggingConstants:
     MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     LOG_BACKUP_COUNT = 5
 
+    # Project loggers that should mirror console output
+    RELATED_LOGGERS = [
+        'adb_tools',
+        'async_device_manager',
+        'batched_ui_updater',
+        'command_executor',
+        'command_history',
+        'common',
+        'config_manager',
+        'debounced_refresh',
+        'device_manager',
+        'device_operations_manager',
+        'device_refresh',
+        'dump_device_ui',
+        'error_handler',
+        'file_generation',
+        'json_utils',
+        'panels_manager',
+        'perf_refresh',
+        'recording',
+        'recording_status_refresh',
+        'screenshot',
+        'ui_factory',
+        'ui_inspector_factory',
+        'ui_inspector_utils',
+    ]
+
 
 class NetworkConstants:
     """Network-related constants."""
