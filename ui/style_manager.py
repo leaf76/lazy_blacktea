@@ -9,8 +9,44 @@
 4. 減少重複的CSS代碼
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Mapping, Sequence, Tuple
 from enum import Enum
+from textwrap import dedent
+
+
+CSSDeclaration = Tuple[str, str]
+CSSBlock = Tuple[str, Sequence[CSSDeclaration]]
+CSSBlocks = Sequence[CSSBlock]
+
+
+def _combine_css(*blocks: str) -> str:
+    """合併並格式化多個CSS區塊。"""
+
+    formatted_blocks = [dedent(block).strip() for block in blocks if block]
+    return "\n\n".join(formatted_blocks)
+
+
+def _render_css(blocks: CSSBlocks, tokens: Mapping[str, str], extra: Mapping[str, str] | None = None) -> str:
+    """以資料驅動方式渲染CSS區塊。"""
+
+    context: Dict[str, str] = {key: str(value) for key, value in tokens.items()}
+    if extra:
+        context.update({key: str(value) for key, value in extra.items()})
+
+    rendered: List[str] = []
+    for selector, declarations in blocks:
+        lines = [f"{selector} {{"]
+        for name, raw_value in declarations:
+            value_template = str(raw_value)
+            try:
+                resolved_value = value_template.format_map(context)
+            except KeyError:
+                resolved_value = value_template
+            lines.append(f"    {name}: {resolved_value};")
+        lines.append("}")
+        rendered.append("\n".join(lines))
+
+    return "\n\n".join(rendered)
 
 
 class ButtonStyle(Enum):
@@ -67,340 +103,410 @@ class StyleManager:
         'background_hover': 'rgba(200, 220, 255, 0.5)',
     }
 
+    _BUTTON_COLOR_MAP = {
+        ButtonStyle.PRIMARY: 'primary',
+        ButtonStyle.SECONDARY: 'secondary',
+        ButtonStyle.WARNING: 'warning',
+        ButtonStyle.DANGER: 'danger',
+        ButtonStyle.NEUTRAL: 'neutral',
+    }
+
+    _LABEL_STYLE_BLOCKS: Dict[LabelStyle, CSSBlocks] = {
+        LabelStyle.HEADER: (
+            (
+                "QLabel",
+                (
+                    ("font-size", "14px"),
+                    ("font-weight", "bold"),
+                    ("padding", "8px 0px"),
+                    ("border-bottom", "1px solid palette(mid)"),
+                    ("margin-bottom", "8px"),
+                    ("color", "{text_primary}"),
+                ),
+            ),
+        ),
+        LabelStyle.SUBHEADER: (
+            (
+                "QLabel",
+                (
+                    ("font-size", "12px"),
+                    ("font-weight", "bold"),
+                    ("padding", "4px 0px"),
+                    ("color", "{text_secondary}"),
+                ),
+            ),
+        ),
+        LabelStyle.SUCCESS: (
+            (
+                "QLabel",
+                (
+                    ("font-weight", "bold"),
+                    ("color", "{success}"),
+                    ("font-size", "14px"),
+                ),
+            ),
+        ),
+        LabelStyle.ERROR: (
+            (
+                "QLabel",
+                (
+                    ("font-weight", "bold"),
+                    ("color", "{error}"),
+                    ("font-size", "14px"),
+                ),
+            ),
+        ),
+        LabelStyle.WARNING: (
+            (
+                "QLabel",
+                (
+                    ("font-weight", "bold"),
+                    ("color", "{warning}"),
+                    ("font-size", "14px"),
+                ),
+            ),
+        ),
+        LabelStyle.INFO: (
+            (
+                "QLabel",
+                (
+                    ("color", "{text_secondary}"),
+                    ("margin", "10px 0px"),
+                ),
+            ),
+        ),
+        LabelStyle.STATUS: (
+            (
+                "QLabel",
+                (
+                    ("color", "gray"),
+                    ("font-style", "italic"),
+                ),
+            ),
+        ),
+    }
+
+    _STATIC_STYLE_BLOCKS: Dict[str, CSSBlocks] = {
+        "input": (
+            (
+                "QLineEdit",
+                (
+                    ("padding", "6px 8px"),
+                    ("font-size", "12px"),
+                    ("border", "1px solid #CCCCCC"),
+                    ("border-radius", "4px"),
+                ),
+            ),
+            (
+                "QLineEdit:focus",
+                (
+                    ("border-color", "{secondary}"),
+                ),
+            ),
+        ),
+        "search_input": (
+            (
+                "QLineEdit",
+                (
+                    ("padding", "6px 8px"),
+                    ("font-size", "12px"),
+                    ("border-radius", "4px"),
+                ),
+            ),
+        ),
+        "search_label": (
+            (
+                "QLabel",
+                (
+                    ("font-size", "14px"),
+                    ("color", "{text_hint}"),
+                    ("padding", "4px"),
+                ),
+            ),
+        ),
+        "tree": (
+            (
+                "QTreeWidget",
+                (
+                    ("font-size", "11px"),
+                ),
+            ),
+            (
+                "QTreeWidget::item",
+                (
+                    ("padding", "4px"),
+                ),
+            ),
+        ),
+        "console": (
+            (
+                "QTextEdit",
+                (
+                    ("background-color", "white"),
+                    ("color", "black"),
+                    ("border", "2px solid {border}"),
+                    ("padding", "5px"),
+                ),
+            ),
+        ),
+        "checkbox": (
+            (
+                "QCheckBox",
+                (
+                    ("padding", "8px"),
+                    ("border", "2px solid transparent"),
+                    ("border-radius", "6px"),
+                    ("background-color", "rgba(240, 240, 240, 0.3)"),
+                    ("margin", "2px"),
+                ),
+            ),
+            (
+                "QCheckBox:hover",
+                (
+                    ("background-color", "{background_hover}"),
+                    ("border", "2px solid rgba(100, 150, 255, 0.3)"),
+                ),
+            ),
+            (
+                "QCheckBox:checked",
+                (
+                    ("background-color", "rgba(100, 200, 100, 0.2)"),
+                    ("border", "2px solid rgba(50, 150, 50, 0.6)"),
+                    ("font-weight", "bold"),
+                ),
+            ),
+            (
+                "QCheckBox:checked:hover",
+                (
+                    ("background-color", "rgba(100, 200, 100, 0.3)"),
+                    ("border", "2px solid rgba(50, 150, 50, 0.8)"),
+                ),
+            ),
+            (
+                "QCheckBox::indicator",
+                (
+                    ("width", "16px"),
+                    ("height", "16px"),
+                    ("border-radius", "3px"),
+                    ("border", "2px solid #666"),
+                    ("background-color", "white"),
+                ),
+            ),
+            (
+                "QCheckBox::indicator:checked",
+                (
+                    ("background-color", "{primary}"),
+                    ("border", "2px solid {primary}"),
+                    (
+                        "image",
+                        "url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAiIGhlaWdodD0iNyIgdmlld0JveD0iMCAwIDEwIDciIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik04LjUgMUwzLjUgNkwxLjUgNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHN2Zz4K)",
+                    ),
+                ),
+            ),
+            (
+                "QCheckBox::indicator:hover",
+                (
+                    ("border", "2px solid {secondary}"),
+                ),
+            ),
+        ),
+        "menu": (
+            (
+                "QMenu::item:disabled",
+                (
+                    ("font-weight", "bold"),
+                ),
+            ),
+            (
+                "QMenu::separator",
+                (
+                    ("height", "1px"),
+                    ("background-color", "{border}"),
+                    ("margin", "4px 0px"),
+                ),
+            ),
+        ),
+        "device_info": (
+            (
+                "QLabel",
+                (
+                    ("font-size", "14px"),
+                    ("font-weight", "bold"),
+                    ("padding", "8px 12px"),
+                    ("border", "1px solid palette(mid)"),
+                    ("border-radius", "6px"),
+                ),
+            ),
+        ),
+        "tooltip": (
+            (
+                "QToolTip",
+                (
+                    ("background-color", "rgba(45, 45, 45, 0.95)"),
+                    ("color", "white"),
+                    ("border", "1px solid rgba(255, 255, 255, 0.2)"),
+                    ("border-radius", "6px"),
+                    ("padding", "6px"),
+                    ("font-size", "11px"),
+                    ("font-family", "'Segoe UI', Arial, sans-serif"),
+                    ("max-width", "350px"),
+                ),
+            ),
+        ),
+        "action_button": (
+            (
+                "QPushButton",
+                (
+                    ("background-color", "{background}"),
+                    ("border", "1px solid {border}"),
+                    ("padding", "10px"),
+                    ("border-radius", "5px"),
+                    ("text-align", "left"),
+                ),
+            ),
+            (
+                "QPushButton:hover",
+                (
+                    ("background-color", "{background_hover}"),
+                ),
+            ),
+        ),
+    }
+
+    _BUTTON_BASE_BLOCKS: CSSBlocks = (
+        (
+            "QPushButton",
+            (
+                ("padding", "8px 16px"),
+                ("border", "none"),
+                ("border-radius", "4px"),
+                ("font-weight", "bold"),
+                ("font-size", "12px"),
+                ("min-width", "80px"),
+                ("height", "{button_height}"),
+            ),
+        ),
+    )
+
+    _SYSTEM_BUTTON_BLOCKS: CSSBlocks = (
+        (
+            "QPushButton",
+            (
+                ("padding", "0px 16px"),
+                ("font-weight", "bold"),
+                ("font-size", "12px"),
+                ("min-width", "80px"),
+                ("height", "{button_height}"),
+                ("border-radius", "4px"),
+            ),
+        ),
+    )
+
+    @classmethod
+    def _colored_button_blocks(cls, color_key: str) -> CSSBlocks:
+        return (
+            (
+                "QPushButton",
+                (
+                    ("background-color", f"{{{color_key}}}"),
+                    ("color", "white"),
+                ),
+            ),
+            (
+                "QPushButton:hover",
+                (
+                    ("background-color", f"{{{color_key}_hover}}"),
+                ),
+            ),
+            (
+                "QPushButton:disabled",
+                (
+                    ("background-color", "#CCCCCC"),
+                    ("color", "#888888"),
+                ),
+            ),
+        )
+
     @classmethod
     def get_button_style(cls, style: ButtonStyle, fixed_height: int = 36) -> str:
         """獲取按鈕樣式"""
-        base_style = f"""
-            QPushButton {{
-                padding: 8px 16px;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 12px;
-                min-width: 80px;
-                height: {fixed_height}px;
-            }}
-        """
+        overrides = {"button_height": f"{fixed_height}px"}
+        if style == ButtonStyle.SYSTEM:
+            return _render_css(cls._SYSTEM_BUTTON_BLOCKS, cls.COLORS, overrides)
 
-        if style == ButtonStyle.PRIMARY:
-            return base_style + f"""
-            QPushButton {{
-                background-color: {cls.COLORS['primary']};
-                color: white;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.COLORS['primary_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CCCCCC;
-                color: #888888;
-            }}
-            """
-
-        elif style == ButtonStyle.SECONDARY:
-            return base_style + f"""
-            QPushButton {{
-                background-color: {cls.COLORS['secondary']};
-                color: white;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.COLORS['secondary_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CCCCCC;
-                color: #888888;
-            }}
-            """
-
-        elif style == ButtonStyle.WARNING:
-            return base_style + f"""
-            QPushButton {{
-                background-color: {cls.COLORS['warning']};
-                color: white;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.COLORS['warning_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CCCCCC;
-                color: #888888;
-            }}
-            """
-
-        elif style == ButtonStyle.DANGER:
-            return base_style + f"""
-            QPushButton {{
-                background-color: {cls.COLORS['danger']};
-                color: white;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.COLORS['danger_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CCCCCC;
-                color: #888888;
-            }}
-            """
-
-        elif style == ButtonStyle.NEUTRAL:
-            return base_style + f"""
-            QPushButton {{
-                background-color: {cls.COLORS['neutral']};
-                color: white;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.COLORS['neutral_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CCCCCC;
-                color: #888888;
-            }}
-            """
-
-        elif style == ButtonStyle.SYSTEM:
-            return f"""
-            QPushButton {{
-                padding: 0px 16px;
-                font-weight: bold;
-                font-size: 12px;
-                min-width: 80px;
-                height: {fixed_height}px;
-                border-radius: 4px;
-            }}
-            """
-
+        base_style = _render_css(cls._BUTTON_BASE_BLOCKS, cls.COLORS, overrides)
+        color_key = cls._BUTTON_COLOR_MAP.get(style)
+        if color_key:
+            color_css = _render_css(cls._colored_button_blocks(color_key), cls.COLORS)
+            return _combine_css(base_style, color_css)
         return base_style
 
     @classmethod
     def get_label_style(cls, style: LabelStyle) -> str:
         """獲取標籤樣式"""
-        if style == LabelStyle.HEADER:
-            return f"""
-            QLabel {{
-                font-size: 14px;
-                font-weight: bold;
-                padding: 8px 0px;
-                border-bottom: 1px solid palette(mid);
-                margin-bottom: 8px;
-                color: {cls.COLORS['text_primary']};
-            }}
-            """
+        blocks = cls._LABEL_STYLE_BLOCKS.get(style)
+        if not blocks:
+            return ""
+        return _render_css(blocks, cls.COLORS)
 
-        elif style == LabelStyle.SUBHEADER:
-            return f"""
-            QLabel {{
-                font-size: 12px;
-                font-weight: bold;
-                padding: 4px 0px;
-                color: {cls.COLORS['text_secondary']};
-            }}
-            """
+    @classmethod
+    def _get_static_style(cls, key: str) -> str:
+        """取得靜態樣式定義。"""
 
-        elif style == LabelStyle.SUCCESS:
-            return f"""
-            QLabel {{
-                font-weight: bold;
-                color: {cls.COLORS['success']};
-                font-size: 14px;
-            }}
-            """
-
-        elif style == LabelStyle.ERROR:
-            return f"""
-            QLabel {{
-                font-weight: bold;
-                color: {cls.COLORS['error']};
-                font-size: 14px;
-            }}
-            """
-
-        elif style == LabelStyle.WARNING:
-            return f"""
-            QLabel {{
-                font-weight: bold;
-                color: {cls.COLORS['warning']};
-                font-size: 14px;
-            }}
-            """
-
-        elif style == LabelStyle.INFO:
-            return f"""
-            QLabel {{
-                color: {cls.COLORS['text_secondary']};
-                margin: 10px 0px;
-            }}
-            """
-
-        elif style == LabelStyle.STATUS:
-            return f"""
-            QLabel {{
-                color: gray;
-                font-style: italic;
-            }}
-            """
-
-        return ""
+        blocks = cls._STATIC_STYLE_BLOCKS.get(key)
+        if not blocks:
+            return ""
+        return _render_css(blocks, cls.COLORS)
 
     @classmethod
     def get_input_style(cls) -> str:
         """獲取輸入框樣式"""
-        return """
-        QLineEdit {
-            padding: 6px 8px;
-            font-size: 12px;
-            border: 1px solid #CCCCCC;
-            border-radius: 4px;
-        }
-        QLineEdit:focus {
-            border-color: #1976D2;
-        }
-        """
+        return cls._get_static_style("input")
 
     @classmethod
     def get_search_input_style(cls) -> str:
         """獲取搜索輸入框樣式"""
-        return """
-        QLineEdit {
-            padding: 6px 8px;
-            font-size: 12px;
-            border-radius: 4px;
-        }
-        """
+        return cls._get_static_style("search_input")
 
     @classmethod
     def get_search_label_style(cls) -> str:
         """獲取搜索標籤樣式"""
-        return f"""
-        QLabel {{
-            font-size: 14px;
-            color: {cls.COLORS['text_hint']};
-            padding: 4px;
-        }}
-        """
+        return cls._get_static_style("search_label")
 
     @classmethod
     def get_tree_style(cls) -> str:
         """獲取樹狀控件樣式"""
-        return """
-        QTreeWidget {
-            font-size: 11px;
-        }
-        QTreeWidget::item {
-            padding: 4px;
-        }
-        """
+        return cls._get_static_style("tree")
 
     @classmethod
     def get_console_style(cls) -> str:
         """獲取控制台樣式"""
-        return f"""
-        QTextEdit {{
-            background-color: white;
-            color: black;
-            border: 2px solid {cls.COLORS['border']};
-            padding: 5px;
-        }}
-        """
+        return cls._get_static_style("console")
 
     @classmethod
     def get_checkbox_style(cls) -> str:
         """獲取複選框樣式"""
-        return f"""
-        QCheckBox {{
-            padding: 8px;
-            border: 2px solid transparent;
-            border-radius: 6px;
-            background-color: rgba(240, 240, 240, 0.3);
-            margin: 2px;
-        }}
-        QCheckBox:hover {{
-            background-color: {cls.COLORS['background_hover']};
-            border: 2px solid rgba(100, 150, 255, 0.3);
-        }}
-        QCheckBox:checked {{
-            background-color: rgba(100, 200, 100, 0.2);
-            border: 2px solid rgba(50, 150, 50, 0.6);
-            font-weight: bold;
-        }}
-        QCheckBox:checked:hover {{
-            background-color: rgba(100, 200, 100, 0.3);
-            border: 2px solid rgba(50, 150, 50, 0.8);
-        }}
-        QCheckBox::indicator {{
-            width: 16px;
-            height: 16px;
-            border-radius: 3px;
-            border: 2px solid #666;
-            background-color: white;
-        }}
-        QCheckBox::indicator:checked {{
-            background-color: {cls.COLORS['primary']};
-            border: 2px solid {cls.COLORS['primary']};
-            image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAiIGhlaWdodD0iNyIgdmlld0JveD0iMCAwIDEwIDciIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik04LjUgMUwzLjUgNkwxLjUgNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHN2Zz4K);
-        }}
-        QCheckBox::indicator:hover {{
-            border: 2px solid {cls.COLORS['secondary']};
-        }}
-        """
+        return cls._get_static_style("checkbox")
 
     @classmethod
     def get_menu_style(cls) -> str:
         """獲取菜單樣式"""
-        return f"""
-        QMenu::item:disabled {{
-            font-weight: bold;
-        }}
-        QMenu::separator {{
-            height: 1px;
-            background-color: {cls.COLORS['border']};
-            margin: 4px 0px;
-        }}
-        """
+        return cls._get_static_style("menu")
 
     @classmethod
     def get_device_info_style(cls) -> str:
         """獲取設備信息標籤樣式"""
-        return """
-        QLabel {
-            font-size: 14px;
-            font-weight: bold;
-            padding: 8px 12px;
-            border: 1px solid palette(mid);
-            border-radius: 6px;
-        }
-        """
+        return cls._get_static_style("device_info")
 
     @classmethod
     def get_tooltip_style(cls) -> str:
         """獲取工具提示樣式"""
-        return f"""
-        QToolTip {{
-            background-color: rgba(45, 45, 45, 0.95);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 6px;
-            padding: 6px;
-            font-size: 11px;
-            font-family: 'Segoe UI', Arial, sans-serif;
-            max-width: 350px;
-        }}
-        """
+        return cls._get_static_style("tooltip")
 
     @classmethod
     def get_action_button_style(cls) -> str:
         """獲取動作按鈕樣式（用於對話框中的按鈕）"""
-        return f"""
-        QPushButton {{
-            background-color: {cls.COLORS['background']};
-            border: 1px solid {cls.COLORS['border']};
-            padding: 10px;
-            border-radius: 5px;
-            text-align: left;
-        }}
-        QPushButton:hover {{
-            background-color: {cls.COLORS['background_hover']};
-        }}
-        """
+        return cls._get_static_style("action_button")
 
     @classmethod
     def apply_button_style(cls, button, style: ButtonStyle, fixed_height: int = 36):
