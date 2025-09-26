@@ -663,51 +663,63 @@ class AsyncDeviceManager(QObject):
         if not entries:
             return
 
-        latest_status: Dict[str, str] = {}
+        previous_serials = set(self.tracked_device_statuses.keys())
+        normalized_status: Dict[str, str] = {}
+
         for serial, status in entries:
             serial = (serial or '').strip()
             if not serial:
                 continue
-            latest_status[serial] = self._normalize_status(status)
+            status_normalized = self._normalize_status(status)
+            normalized_status[serial] = status_normalized
 
-        if not latest_status:
+        if not normalized_status:
             return
 
-        self.tracked_device_statuses.update(latest_status)
-
-        removed_serials = [
-            serial for serial, status in latest_status.items()
+        current_serials = set(normalized_status.keys())
+        removed_serials = {
+            serial for serial, status in normalized_status.items()
             if status in TRACKER_REMOVAL_STATUSES
-        ]
+        }
+        missing_serials = previous_serials - current_serials
+        removed_serials.update(missing_serials)
 
+        # Refresh tracked status cache excluding removed devices
+        self.tracked_device_statuses = {
+            serial: status
+            for serial, status in normalized_status.items()
+            if status not in TRACKER_REMOVAL_STATUSES
+        }
+
+        ready_serials = {
+            serial for serial, status in self.tracked_device_statuses.items()
+            if status in TRACKER_READY_STATUSES
+        }
+
+        removal_detected = bool(removed_serials)
         removed_any = False
         for serial in removed_serials:
-            self.tracked_device_statuses.pop(serial, None)
             if serial in self.device_cache:
                 removed_any = True
                 self.device_cache.pop(serial, None)
             if serial in self.device_progress:
                 self.device_progress.pop(serial, None)
-            if self.last_discovered_serials is not None and serial in self.last_discovered_serials:
+            if self.last_discovered_serials is not None:
                 self.last_discovered_serials.discard(serial)
 
         if removed_any:
-            logger.info('Device tracker removed offline devices: %s', sorted(removed_serials))
+            logger.info('Device tracker removed devices: %s', sorted(removed_serials))
             self.basic_devices_ready.emit(self.device_cache.copy())
 
-        ready_serials = {
-            serial for serial, status in latest_status.items()
-            if status in TRACKER_READY_STATUSES
-        }
-
-        need_refresh = False
-        if self.last_discovered_serials is None:
-            need_refresh = True
-        elif ready_serials != self.last_discovered_serials:
-            need_refresh = True
-        elif any(status not in TRACKER_READY_STATUSES for status in latest_status.values()):
-            logger.info('Device tracker reports status changes; triggering discovery')
-            need_refresh = True
+        need_refresh = removal_detected
+        if not need_refresh:
+            if self.last_discovered_serials is None:
+                need_refresh = True
+            elif ready_serials != self.last_discovered_serials:
+                need_refresh = True
+            elif any(status not in TRACKER_READY_STATUSES for status in self.tracked_device_statuses.values()):
+                logger.info('Device tracker reports status changes; triggering discovery')
+                need_refresh = True
 
         if not need_refresh:
             logger.debug('Tracked device list unchanged; ignoring update')

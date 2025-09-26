@@ -124,6 +124,30 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         all_spy.assert_not_called()
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
 
+    def test_tracked_missing_devices_are_pruned(self):
+        serial = "phantom"
+        self.manager.tracked_device_statuses = {serial: 'device'}
+        self.manager.device_cache[serial] = self._fake_device(serial)
+        self.manager.device_progress[serial] = DeviceLoadProgress(
+            serial=serial,
+            status=DeviceLoadStatus.BASIC_LOADED,
+        )
+        self.manager.last_discovered_serials = {serial}
+
+        basic_spy = MagicMock()
+        self.manager.basic_devices_ready.connect(basic_spy)
+
+        try:
+            with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+                self.manager._on_tracked_devices_changed([('other', 'device')])
+        finally:
+            self.manager.basic_devices_ready.disconnect(basic_spy)
+
+        self.assertNotIn(serial, self.manager.device_cache)
+        self.assertNotIn(serial, self.manager.device_progress)
+        basic_spy.assert_called_once()
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+
     def test_periodic_refresh_triggers_when_no_previous_cache(self):
         self.manager.last_discovered_serials = None
         with patch.object(self.manager, '_get_basic_device_serials', return_value=['deviceA']), \
