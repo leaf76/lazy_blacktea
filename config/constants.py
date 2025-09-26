@@ -222,8 +222,8 @@ class PanelText:
     GROUP_CREATE_UPDATE = 'Create/Update Group'
     GROUP_EXISTING = 'Existing Groups'
 
-    PLACEHOLDER_OUTPUT_DIR = 'Select output directory...'
-    PLACEHOLDER_OUTPUT_DIR_FILE = 'Select output directory for file generation'
+    PLACEHOLDER_OUTPUT_DIR = 'Select output path (screenshots, recordings, etc.)'
+    PLACEHOLDER_OUTPUT_DIR_FILE = 'Optionally override file-generation output'
     PLACEHOLDER_GROUP_NAME = 'Enter group name...'
     PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
 

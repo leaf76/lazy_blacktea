@@ -114,6 +114,7 @@ class WindowMain(QMainWindow):
         self.refresh_interval_actions: Dict[int, QAction] = {}
         self.auto_refresh_action: Optional[QAction] = None
         self.auto_refresh_enabled = True
+        self.previous_output_path_value: str = ''
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -972,12 +973,17 @@ class WindowMain(QMainWindow):
         self.device_actions_controller.copy_single_device_info(device_serial)
 
     def browse_output_path(self):
-        """Browse for output directory."""
+        """Browse for unified output directory used by screenshots/recordings."""
         directory = QFileDialog.getExistingDirectory(self, 'Select Output Directory')
         if directory:
             # Use common.py to ensure proper path handling
             normalized_path = common.make_gen_dir_path(directory)
             self.output_path_edit.setText(normalized_path)
+            # Keep file generation path in sync if it was empty or following main path
+            current_file_gen = self.file_gen_output_path_edit.text().strip()
+            if not current_file_gen or current_file_gen == self.previous_output_path_value:
+                self.file_gen_output_path_edit.setText(normalized_path)
+            self.previous_output_path_value = normalized_path
 
     def browse_file_generation_output_path(self):
         """Browse and select file generation output directory."""
@@ -987,6 +993,31 @@ class WindowMain(QMainWindow):
             normalized_path = common.make_gen_dir_path(directory)
             self.file_gen_output_path_edit.setText(normalized_path)
             logger.info(f'Selected file generation output directory: {normalized_path}')
+
+    def _ensure_output_path_initialized(self) -> str:
+        """Make sure we have a usable primary output path."""
+        path = self.output_path_edit.text().strip()
+        if path:
+            return path
+
+        fallback = self.file_gen_output_path_edit.text().strip()
+        if fallback:
+            self.output_path_edit.setText(fallback)
+            self.previous_output_path_value = fallback
+            if not self.file_gen_output_path_edit.text().strip():
+                self.file_gen_output_path_edit.setText(fallback)
+            return fallback
+
+        default_dir = common.make_gen_dir_path(PathConstants.DEFAULT_OUTPUT_DIR)
+        self.output_path_edit.setText(default_dir)
+        self.previous_output_path_value = default_dir
+        if not self.file_gen_output_path_edit.text().strip():
+            self.file_gen_output_path_edit.setText(default_dir)
+        return default_dir
+
+    def get_primary_output_path(self) -> str:
+        """Return the current effective output path used for screenshots/recordings."""
+        return self._ensure_output_path_initialized()
 
 
     def run_in_thread(self, func, *args):
@@ -2224,6 +2255,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             old_config = json_utils.read_config_json()
             if old_config.get('output_path'):
                 self.output_path_edit.setText(old_config['output_path'])
+                self.previous_output_path_value = old_config['output_path']
 
             # Load file generation output path
             file_gen_path = old_config.get('file_gen_output_path', '').strip()

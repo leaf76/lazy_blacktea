@@ -415,11 +415,18 @@ class AsyncDeviceManager(QObject):
             result = common.run_command('adb devices')
             device_serials = []
 
+            valid_statuses = {'device', 'offline', 'unauthorized', 'recovery', 'bootloader'}
+
             for line in result:
-                if line and '\tdevice' in line:
-                    serial = line.split('\t')[0].strip()
-                    if serial:
-                        device_serials.append(serial)
+                if not line or line.startswith('*'):
+                    continue
+                parts = line.split()
+                if not parts:
+                    continue
+                serial = parts[0].strip()
+                status = parts[1].strip() if len(parts) > 1 else ''
+                if serial and (status in valid_statuses or not status):
+                    device_serials.append(serial)
 
             return device_serials
         except Exception as e:

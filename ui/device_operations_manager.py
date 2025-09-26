@@ -599,16 +599,23 @@ class DeviceOperationsManager(QObject):
 
     def _get_output_path(self) -> str:
         """獲取輸出路徑"""
-        if self.parent_window and hasattr(self.parent_window, 'output_path_edit'):
-            path = self.parent_window.output_path_edit.text().strip()
+        if self.parent_window and hasattr(self.parent_window, 'get_primary_output_path'):
+            path = self.parent_window.get_primary_output_path()
             if path:
                 return path
 
-        # 如果沒有設置路徑，打開文件對話框
-        return QFileDialog.getExistingDirectory(
+        # 如果上述都未提供路徑，最後回退到檔案對話框
+        directory = QFileDialog.getExistingDirectory(
             self.parent_window,
             "Select Output Directory"
         )
+        if directory:
+            normalized = common.make_gen_dir_path(directory)
+            if self.parent_window and hasattr(self.parent_window, 'output_path_edit'):
+                self.parent_window.output_path_edit.setText(normalized)
+                self.parent_window.previous_output_path_value = normalized
+            return normalized
+        return ''
 
     def _check_scrcpy_available(self) -> bool:
         """檢查scrcpy是否可用"""
