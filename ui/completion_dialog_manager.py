@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import os
 from typing import Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -82,16 +81,19 @@ class CompletionDialogManager:
         return f'{head}, ...'
 
     def _build_screenshot_actions(self, output_path: str) -> Dict[str, List[str]]:
-        patterns = ['*.png', '*.jpg', '*.jpeg']
-        screenshot_files: List[str] = []
+        supported_suffixes = ('.png', '.jpg', '.jpeg')
+        file_count = 0
         try:
-            for pattern in patterns:
-                screenshot_files.extend(glob.glob(os.path.join(output_path, pattern)))
-            screenshot_files.sort(key=os.path.getmtime, reverse=True)
-        except Exception as error:
+            with os.scandir(output_path) as entries:
+                for entry in entries:
+                    if entry.is_file() and entry.name.lower().endswith(supported_suffixes):
+                        file_count += 1
+        except FileNotFoundError:
+            logger.debug('Screenshot directory does not exist: %s', output_path)
+        except Exception as error:  # pragma: no cover - defensive logging
             logger.error('Failed to enumerate screenshots: %s', error)
         return {
-            'file_count': len(screenshot_files),
+            'file_count': file_count,
         }
 
     # ------------------------------------------------------------------
