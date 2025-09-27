@@ -62,6 +62,7 @@ class DummyCheckbox:
     def __init__(self):
         self.checked = False
         self.visible = True
+        self.tooltip = ''
 
     def setChecked(self, value):
         self.checked = bool(value)
@@ -74,6 +75,9 @@ class DummyCheckbox:
 
     def isVisible(self):
         return self.visible
+
+    def setToolTip(self, value):
+        self.tooltip = value
 
 
 class DeviceSelectionControllerTest(unittest.TestCase):

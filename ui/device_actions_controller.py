@@ -69,6 +69,9 @@ class DeviceActionsController:
         copy_info_action = context_menu.addAction('📋 Copy Device Info')
         copy_info_action.triggered.connect(lambda: self.copy_single_device_info(device_serial))
 
+        details_action = context_menu.addAction('ℹ️ Device Details')
+        details_action.triggered.connect(lambda: self.window.show_device_details(device_serial))
+
         global_pos = checkbox_widget.mapToGlobal(position)
         context_menu.exec(global_pos)
 
@@ -121,6 +124,8 @@ Product: {device.device_prod}
 USB: {device.device_usb}
 WiFi Status: {status_helper(device.wifi_is_on)}
 Bluetooth Status: {status_helper(device.bt_is_on)}
+Audio State: {device.audio_state or 'Unknown'}
+Bluetooth Manager: {device.bluetooth_manager_state or 'Unknown'}
 Build Fingerprint: {device.build_fingerprint}'''
 
         try:
@@ -160,6 +165,8 @@ Build Fingerprint: {device.build_fingerprint}'''
                 'CONNECTIVITY:',
                 f'WiFi Status: {status_helper(device.wifi_is_on)}',
                 f'Bluetooth Status: {status_helper(device.bt_is_on)}',
+                f'Audio State: {device.audio_state or "Unknown"}',
+                f'Bluetooth Manager: {device.bluetooth_manager_state or "Unknown"}',
                 '',
             ]
 

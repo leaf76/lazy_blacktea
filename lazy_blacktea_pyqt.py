@@ -59,6 +59,7 @@ from ui.recording_status_view import update_recording_status_view
 from ui.system_actions_manager import SystemActionsManager
 from ui.file_dialog_manager import FileDialogManager
 from ui.battery_info_manager import BatteryInfoManager
+from ui.device_detail_dialog import DeviceDetailDialog
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -70,6 +71,8 @@ from utils.debounced_refresh import (
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 
 logger = common.get_logger('lazy_blacktea')
+
+os.environ.setdefault('QT_DELAY_BEFORE_TIP', '300')
 
 
 # Logcat classes moved to ui.logcat_viewer
@@ -689,8 +692,83 @@ class WindowMain(QMainWindow):
         self.device_search_manager.set_sort_mode(sort_mode)
         self.filter_and_sort_devices()
 
+    def show_device_details(self, device_serial: str) -> None:
+        device = self.device_dict.get(device_serial)
+        if device is None:
+            self.show_error('Device Not Available', f'Device {device_serial} is no longer connected.')
+            return
+
+        detail_text = self.device_list_controller.get_device_detail_text(device, device_serial)
+        dialog = DeviceDetailDialog(
+            self,
+            device,
+            detail_text,
+            lambda: self._refresh_device_detail_and_get_text(device_serial),
+        )
+        dialog.exec()
+
     def copy_single_device_info(self, device_serial):
         self.device_actions_controller.copy_single_device_info(device_serial)
+
+    def _refresh_device_detail_and_get_text(self, device_serial: str) -> str:
+        device = self.device_dict.get(device_serial)
+        if not device:
+            raise RuntimeError(f'Device {device_serial} is no longer connected')
+
+        detail_info = adb_tools.get_device_detailed_info(device_serial)
+
+        wifi_status = detail_info.get('wifi_status')
+        if wifi_status is not None:
+            try:
+                device.wifi_is_on = bool(int(wifi_status))
+            except (ValueError, TypeError):
+                device.wifi_is_on = bool(wifi_status)
+
+        bt_status = detail_info.get('bluetooth_status')
+        if bt_status is not None:
+            try:
+                device.bt_is_on = bool(int(bt_status))
+            except (ValueError, TypeError):
+                device.bt_is_on = bool(bt_status)
+
+        android_ver = detail_info.get('android_version')
+        if android_ver and android_ver != 'Unknown':
+            device.android_ver = android_ver
+
+        android_api = detail_info.get('android_api_level')
+        if android_api and android_api != 'Unknown':
+            device.android_api_level = android_api
+
+        gms_version = detail_info.get('gms_version')
+        if gms_version and gms_version != 'Unknown':
+            device.gms_version = gms_version
+
+        build_fp = detail_info.get('build_fingerprint')
+        if build_fp and build_fp != 'Unknown':
+            device.build_fingerprint = build_fp
+
+        audio_state = detail_info.get('audio_state')
+        if audio_state:
+            device.audio_state = audio_state
+
+        bt_manager_state = detail_info.get('bluetooth_manager_state')
+        if bt_manager_state:
+            device.bluetooth_manager_state = bt_manager_state
+
+        # Refresh battery/additional info cache so detail view stays fresh
+        additional_info = {}
+        try:
+            additional_info = adb_tools.get_additional_device_info(device_serial)
+        finally:
+            battery_cache = getattr(self, 'battery_info_manager', None)
+            if battery_cache is not None and additional_info:
+                battery_cache.update_cache(device_serial, additional_info)
+
+        self.device_dict[device_serial] = device
+        self.device_manager.device_dict[device_serial] = device
+        self.device_manager.update_device_list(self.device_dict)
+
+        return self.device_list_controller.get_device_detail_text(device, device_serial)
 
     def browse_output_path(self):
         """Browse for unified output directory used by screenshots/recordings."""

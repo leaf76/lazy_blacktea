@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer, QPoint
-from PyQt6.QtGui import QCursor, QFont
-from PyQt6.QtWidgets import QCheckBox, QToolTip
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QCheckBox
 
 from utils import adb_models, adb_tools, common
 from ui.style_manager import StyleManager
@@ -313,9 +313,7 @@ class DeviceListController:
 
     def _apply_checkbox_content(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo) -> None:
         checkbox.setText(self._build_device_display_text(device, serial))
-        tooltip_text = self._create_device_tooltip(device, serial)
-        checkbox.enterEvent = lambda event, txt=tooltip_text, cb=checkbox: self._show_custom_tooltip(cb, txt)
-        checkbox.leaveEvent = lambda event: QToolTip.hideText()
+        checkbox.setToolTip('Right-click to view detailed device information')
 
     def _configure_device_checkbox(
         self,
@@ -515,7 +513,7 @@ class DeviceListController:
             return '🔴 REC | '
         return ''
 
-    def _create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
+    def _build_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
         base_tooltip = (
             f'📱 Device Information\n'
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
@@ -530,6 +528,8 @@ class DeviceListController:
             f'📡 Connectivity\n'
             f'WiFi: {self.get_on_off_status(device.wifi_is_on)}\n'
             f'Bluetooth: {self.get_on_off_status(device.bt_is_on)}\n'
+            f'Audio: {device.audio_state or "Unknown"}\n'
+            f'BT Manager: {device.bluetooth_manager_state or "Unknown"}\n'
             f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
             f'🔧 Build Information\n'
             f'Build Fingerprint: {(device.build_fingerprint[:50] + "...") if device.build_fingerprint else "Unknown"}'
@@ -589,16 +589,15 @@ class DeviceListController:
         if state not in (0, 2):
             return
 
-    def _show_custom_tooltip(self, widget: QCheckBox, tooltip_text: str) -> None:
-        cursor_pos = QCursor.pos()
-        tooltip_pos = QPoint(cursor_pos.x() + 5, cursor_pos.y() + 5)
-        QToolTip.showText(tooltip_pos, tooltip_text, widget)
-
     def get_additional_device_info(self, serial: str) -> Dict[str, str]:
         return self._get_additional_device_info(serial)
 
+    def get_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        return self._build_device_detail_text(device, serial)
+
+    # Backward compatibility shim
     def create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        return self._create_device_tooltip(device, serial)
+        return self._build_device_detail_text(device, serial)
 
 
 __all__ = ["DeviceListController"]
