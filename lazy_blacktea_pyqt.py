@@ -12,19 +12,19 @@ import webbrowser
 from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTextEdit,
+    QSplitter,
     QCheckBox, QPushButton, QLabel,
-    QGroupBox, QFileDialog,
-    QMessageBox, QMenu, QStatusBar, QProgressBar,
+    QFileDialog,
     QDialog
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
-from PyQt6.QtGui import (QFont, QTextCursor, QAction, QIcon, QGuiApplication)
+from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
 
 from utils import adb_models
 from utils import adb_tools
 from utils import common
 from utils import json_utils
+from utils import time_formatting
 
 # Import configuration and constants
 from config.config_manager import ConfigManager
@@ -52,6 +52,12 @@ from ui.device_actions_controller import DeviceActionsController
 from ui.tools_panel_controller import ToolsPanelController
 from ui.screenshot_widget import ClickableScreenshotLabel
 from ui.ui_inspector_dialog import UIInspectorDialog
+from ui.device_group_manager import DeviceGroupManager
+from ui.console_manager import ConsoleManager
+from ui.device_list_context_menu import DeviceListContextMenuManager
+from ui.dialog_manager import DialogManager
+from ui.status_bar_manager import StatusBarManager
+from ui.recording_status_view import update_recording_status_view
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -139,6 +145,21 @@ class WindowMain(QMainWindow):
         # Initialize application management manager
         self.app_management_manager = AppManagementManager(self)
 
+        # Initialize device group manager
+        self.device_group_manager = DeviceGroupManager(self)
+
+        # Initialize console manager
+        self.console_manager = ConsoleManager(self)
+
+        # Initialize device list context menu manager
+        self.device_list_context_menu_manager = DeviceListContextMenuManager(self)
+
+        # Initialize dialog manager
+        self.dialog_manager = DialogManager(self)
+
+        # Initialize status bar manager
+        self.status_bar_manager = StatusBarManager(self)
+
         # Initialize logging and diagnostics manager
         self.logging_manager = LoggingManager(self)
         self.diagnostics_manager = DiagnosticsManager(self)
@@ -202,7 +223,7 @@ class WindowMain(QMainWindow):
         self.load_config()
 
         # Initialize groups list (now that UI is created)
-        self.update_groups_listbox()
+        self.device_group_manager.update_groups_listbox()
 
         # Start device refresh with delay to avoid GUI blocking (after config is loaded)
         QTimer.singleShot(500, self.device_manager.start_device_refresh)
@@ -299,91 +320,7 @@ class WindowMain(QMainWindow):
         if not hasattr(self, 'recording_status_label'):
             return
 
-        # Get all recording statuses from new manager
-        all_statuses = self.recording_manager.get_all_recording_statuses()
-        active_records_text = []
-        now = datetime.datetime.now()
-        handled_serials: Set[str] = set()
-
-        for serial, record in self.device_recordings.items():
-            if not record.get('active'):
-                continue
-
-            elapsed = record.get('elapsed_before_current', 0.0)
-            ongoing_start = record.get('ongoing_start')
-            if ongoing_start:
-                elapsed += (now - ongoing_start).total_seconds()
-            elif elapsed <= 0 and serial in all_statuses and 'Recording' in all_statuses[serial]:
-                duration_part = all_statuses[serial].split('(')[1].rstrip(')')
-                elapsed = self._parse_duration_to_seconds(duration_part)
-
-            seconds_int = max(int(elapsed), 0)
-            last_display = record.get('display_seconds', 0)
-            if seconds_int < last_display:
-                seconds_int = last_display
-            else:
-                record['display_seconds'] = seconds_int
-
-            device_model = record.get('device_name') or 'Unknown'
-            if serial in self.device_dict:
-                device_model = self.device_dict[serial].device_model
-
-            active_records_text.append(
-                f"{device_model} ({serial[:8]}...): {self._format_seconds_to_clock(seconds_int)}"
-            )
-            handled_serials.add(serial)
-
-        for serial, status in all_statuses.items():
-            if 'Recording' not in status or serial in handled_serials:
-                continue
-
-            device_model = 'Unknown'
-            if serial in self.device_dict:
-                device_model = self.device_dict[serial].device_model
-            duration_part = status.split('(')[1].rstrip(')')
-            elapsed = self._parse_duration_to_seconds(duration_part)
-            seconds_int = max(int(elapsed), 0)
-            active_records_text.append(
-                f"{device_model} ({serial[:8]}...): {self._format_seconds_to_clock(seconds_int)}"
-            )
-
-        active_count = self.recording_manager.get_active_recordings_count()
-
-        if active_count > 0:
-            status_text = PanelText.LABEL_RECORDING_PREFIX.format(count=active_count)
-            self.recording_status_label.setText(status_text)
-            self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_active'])
-
-            # Limit display to first 8 recordings to prevent UI overflow
-            if len(active_records_text) > 8:
-                display_recordings = active_records_text[:8] + [f"... and {len(active_records_text) - 8} more device(s)"]
-            else:
-                display_recordings = active_records_text
-
-            self.recording_timer_label.setText('\n'.join(display_recordings))
-        else:
-            self.recording_status_label.setText(PanelText.LABEL_NO_RECORDING)
-            self.recording_status_label.setStyleSheet(StyleManager.get_status_styles()['recording_inactive'])
-            self.recording_timer_label.setText('')
-
-    @staticmethod
-    def _format_seconds_to_clock(seconds: float) -> str:
-        total_seconds = max(int(seconds), 0)
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        secs = total_seconds % 60
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-    @staticmethod
-    def _parse_duration_to_seconds(duration_str: str) -> float:
-        try:
-            parts = duration_str.split(':')
-            if len(parts) == 3:
-                hours, minutes, seconds = [int(part) for part in parts]
-                return hours * 3600 + minutes * 60 + seconds
-        except (ValueError, TypeError):  # pragma: no cover - defensive parsing
-            logger.debug(f'Unable to parse duration string: {duration_str}')
-        return 0.0
+        update_recording_status_view(self)
 
     def show_recording_warning(self, serial):
         """Show warning when recording approaches 3-minute ADB limit."""
@@ -399,55 +336,12 @@ class WindowMain(QMainWindow):
 
     def create_console_panel(self, parent_layout):
         """Create the console output panel."""
-        console_group = QGroupBox('Console Output')
-        console_layout = QVBoxLayout(console_group)
-
-        self.console_text = QTextEdit()
-        self.console_text.setReadOnly(True)
-        # Use system monospace font instead of specific 'Courier' to avoid font lookup delays
-        console_font = QFont()
-        console_font.setFamily('Monaco' if platform.system() == 'Darwin' else 'Consolas' if platform.system() == 'Windows' else 'monospace')
-        console_font.setPointSize(9)
-        self.console_text.setFont(console_font)
-        # Allow console to expand - set minimum height but no maximum
-        self.console_text.setMinimumHeight(150)
-        # Set size policy to allow expansion
-        from PyQt6.QtWidgets import QSizePolicy
-        self.console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        # Ensure console is visible with clear styling
-        self.console_text.setStyleSheet(StyleManager.get_console_style())
-
-        # Add a welcome message to verify the console is working
-        welcome_msg = """🍵 Console Output Ready - Logging initialized
-
-"""
-        self.console_text.setPlainText(welcome_msg)
-        logger.info('Console widget initialized and ready')
-        self.write_to_console("✅ Console output system ready")
-
-        # Enable context menu for console
-        self.console_text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.console_text.customContextMenuRequested.connect(self.show_console_context_menu)
-
-        console_layout.addWidget(self.console_text)
-
-        # Delegate logging pipeline setup to LoggingManager to avoid duplicate handlers
-        self.logging_manager.initialize_logging(self.console_text)
-
-        parent_layout.addWidget(console_group)
+        self.console_manager.create_console_panel(parent_layout)
 
 
     def create_status_bar(self):
         """Create the status bar."""
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.status_bar.addPermanentWidget(self.progress_bar)
-
-        self.status_bar.showMessage('Ready')
+        self.status_bar_manager.create_status_bar()
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
@@ -462,15 +356,15 @@ class WindowMain(QMainWindow):
 
     def show_info(self, title: str, message: str):
         """Show info message box."""
-        QMessageBox.information(self, title, message)
+        self.dialog_manager.show_info(title, message)
 
     def show_warning(self, title: str, message: str):
         """Show warning message box."""
-        QMessageBox.warning(self, title, message)
+        self.dialog_manager.show_warning(title, message)
 
     def show_error(self, title: str, message: str):
         """Show error message box."""
-        QMessageBox.critical(self, title, message)
+        self.dialog_manager.show_error(title, message)
 
     def set_ui_scale(self, scale: float):
         """Set UI scale factor."""
@@ -497,9 +391,8 @@ class WindowMain(QMainWindow):
         if hasattr(self, 'device_manager'):
             self.device_manager.set_auto_refresh_enabled(enabled)
         self._update_auto_refresh_action(enabled)
-        if hasattr(self, 'status_bar'):
-            message = '🔁 Auto refresh enabled' if enabled else '⏸️ Auto refresh paused'
-            self.status_bar.showMessage(message, 4000)
+        message = '🔁 Auto refresh enabled' if enabled else '⏸️ Auto refresh paused'
+        self.status_bar_manager.show_message(message, 4000)
 
     def _update_refresh_interval_actions(self, interval: int):
         """Sync refresh interval menu state with the current value."""
@@ -618,8 +511,7 @@ class WindowMain(QMainWindow):
             self.device_manager.force_refresh()
 
             # Update status to show loading
-            if hasattr(self, 'status_bar'):
-                self.status_bar.showMessage('🔄 Discovering devices...', 5000)
+            self.status_bar_manager.show_message('🔄 Discovering devices...', 5000)
 
         except Exception as e:
             logger.error(f'Error starting device refresh: {e}')
@@ -638,230 +530,50 @@ class WindowMain(QMainWindow):
 
     def select_all_devices(self):
         """Select all connected devices."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            self.virtualized_device_list.select_all_devices()
-            logger.info(f'Selected all {len(self.virtualized_device_list.checked_devices)} devices (virtualized)')
-            return
-
-        for checkbox in self.check_devices.values():
-            checkbox.setChecked(True)
-        logger.info(f'Selected all {len(self.check_devices)} devices')
+        self.device_list_controller.select_all_devices()
 
     def select_no_devices(self):
         """Deselect all devices."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            self.virtualized_device_list.deselect_all_devices()
-            logger.info('Deselected all devices (virtualized)')
-            return
-
-        for checkbox in self.check_devices.values():
-            checkbox.setChecked(False)
-        logger.info('Deselected all devices')
+        self.device_list_controller.select_no_devices()
 
     # Device Groups functionality
     def save_group(self):
-        """Save the currently selected devices as a group."""
-        group_name = self.group_name_edit.text().strip()
-        if not group_name:
-            self.error_handler.show_error('Error', 'Group name cannot be empty.')
-            return
-
-        checked_devices = self.get_checked_devices()
-        if not checked_devices:
-            self.error_handler.show_warning('Warning', 'No devices selected to save in the group.')
-            return
-
-        # Check if group already exists
-        if group_name in self.device_groups:
-            reply = QMessageBox.question(
-                self,
-                'Confirm',
-                f"Group '{group_name}' already exists. Do you want to overwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-
-        serial_numbers = [device.device_serial_num for device in checked_devices]
-        self.device_groups[group_name] = serial_numbers
-
-        self.show_info(
-            'Success',
-            f"Group '{group_name}' saved with {len(serial_numbers)} devices."
-        )
-        self.update_groups_listbox()
-        logger.info(f"Saved group '{group_name}' with devices: {serial_numbers}")
+        self.device_group_manager.save_group()
 
     def delete_group(self):
-        """Delete the selected group."""
-        current_item = self.groups_listbox.currentItem()
-        if not current_item:
-            self.show_error('Error', 'No group selected to delete.')
-            return
-
-        group_name = current_item.text()
-        reply = QMessageBox.question(
-            self,
-            'Confirm',
-            f"Are you sure you want to delete group '{group_name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            if group_name in self.device_groups:
-                del self.device_groups[group_name]
-                logger.info(f"Group '{group_name}' deleted.")
-                self.update_groups_listbox()
-                self.group_name_edit.clear()
+        self.device_group_manager.delete_group()
 
     def select_devices_in_group(self):
-        """Select devices in the phone list that belong to the selected group."""
-        current_item = self.groups_listbox.currentItem()
-        if not current_item:
-            self.show_error('Error', 'No group selected.')
-            return
-
-        group_name = current_item.text()
-        self.select_devices_in_group_by_name(group_name)
+        self.device_group_manager.select_devices_in_group()
 
     def select_devices_in_group_by_name(self, group_name: str):
-        """Select devices in the phone list that belong to the given group name."""
-        serials_in_group = self.device_groups.get(group_name, [])
-        if not serials_in_group:
-            logger.info(f"Group '{group_name}' is empty.")
-            return
-
-        # First, clear all selections
-        self.select_no_devices()
-
-        # Select devices that are in the group and currently connected
-        connected_devices = 0
-        missing_devices = []
-
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            connected_serials = [serial for serial in serials_in_group if serial in self.device_dict]
-            missing_devices = [serial for serial in serials_in_group if serial not in self.device_dict]
-            self.virtualized_device_list.set_checked_serials(set(connected_serials))
-            connected_devices = len(connected_serials)
-        else:
-            for serial in serials_in_group:
-                if serial in self.check_devices:
-                    self.check_devices[serial].setChecked(True)
-                    connected_devices += 1
-                else:
-                    missing_devices.append(serial)
-
-        if missing_devices:
-            self.show_info(
-                'Info',
-                f"The following devices from group '{group_name}' are not currently connected:\n" +
-                '\n'.join(missing_devices)
-            )
-
-        logger.info(f"Selected {connected_devices} devices in group '{group_name}'.")
+        self.device_group_manager.select_devices_in_group_by_name(group_name)
 
     def update_groups_listbox(self):
-        """Update the listbox with current group names."""
-        self.groups_listbox.clear()
-        for group_name in sorted(self.device_groups.keys()):
-            self.groups_listbox.addItem(group_name)
+        self.device_group_manager.update_groups_listbox()
 
     def on_group_select(self):
-        """Handle selection of a group in the listbox."""
-        current_item = self.groups_listbox.currentItem()
-        if current_item:
-            group_name = current_item.text()
-            self.group_name_edit.setText(group_name)
+        self.device_group_manager.on_group_select()
 
     # Context Menu functionality
     def show_device_list_context_menu(self, position):
         """Show context menu for device list."""
-        context_menu = QMenu(self)
-
-        # Basic actions
-        refresh_action = context_menu.addAction('Refresh')
-        refresh_action.triggered.connect(lambda: self.device_manager.force_refresh())
-
-        select_all_action = context_menu.addAction('Select All')
-        select_all_action.triggered.connect(lambda: self.select_all_devices())
-
-        clear_all_action = context_menu.addAction('Clear All')
-        clear_all_action.triggered.connect(lambda: self.select_no_devices())
-
-        copy_info_action = context_menu.addAction('Copy Selected Device Info')
-        copy_info_action.triggered.connect(lambda: self.copy_selected_device_info())
-
-        context_menu.addSeparator()
-
-        # Group selection submenu
-        if self.device_groups:
-            group_menu = context_menu.addMenu('Select Group')
-            for group_name in sorted(self.device_groups.keys()):
-                group_action = group_menu.addAction(group_name)
-                group_action.triggered.connect(
-                    lambda checked, g=group_name: self.select_devices_in_group_by_name(g)
-                )
-        else:
-            group_action = context_menu.addAction('Select Group')
-            group_action.setEnabled(False)
-            group_action.setText('No groups available')
-
-        context_menu.addSeparator()
-
-        # Device-specific actions (if devices are selected)
-        checked_devices = self.get_checked_devices()
-        if checked_devices:
-            reboot_action = context_menu.addAction('Reboot Selected')
-            reboot_action.triggered.connect(lambda: self.reboot_device())
-
-            enable_bt_action = context_menu.addAction('Enable Bluetooth')
-            enable_bt_action.triggered.connect(lambda: self.enable_bluetooth())
-
-            disable_bt_action = context_menu.addAction('Disable Bluetooth')
-            disable_bt_action.triggered.connect(lambda: self.disable_bluetooth())
-
-        # Show menu at the cursor position
-        global_pos = self.device_scroll.mapToGlobal(position)
-        context_menu.exec(global_pos)
+        self.device_list_context_menu_manager.show_context_menu(position)
 
     def copy_selected_device_info(self):
         self.device_actions_controller.copy_selected_device_info()
 
     def show_console_context_menu(self, position):
         """Show context menu for console."""
-        context_menu = QMenu(self)
-
-        # Copy action
-        copy_action = context_menu.addAction('Copy')
-        copy_action.triggered.connect(lambda: self.copy_console_text())
-
-        # Clear action
-        clear_action = context_menu.addAction('Clear Console')
-        clear_action.triggered.connect(lambda: self.clear_console())
-
-        # Show menu at the cursor position
-        global_pos = self.console_text.mapToGlobal(position)
-        context_menu.exec(global_pos)
+        self.console_manager.show_console_context_menu(position)
 
     def copy_console_text(self):
         """Copy selected console text to clipboard."""
-        cursor = self.console_text.textCursor()
-        if cursor.hasSelection():
-            selected_text = cursor.selectedText()
-            clipboard = QApplication.clipboard()
-            clipboard.setText(selected_text)
-            logger.info('Copied selected console text to clipboard')
-        else:
-            # If no selection, copy all console text
-            all_text = self.console_text.toPlainText()
-            clipboard = QApplication.clipboard()
-            clipboard.setText(all_text)
-            logger.info('Copied all console text to clipboard')
+        self.console_manager.copy_console_text()
 
     def clear_console(self):
         """Clear the console output."""
-        self.console_text.clear()
-        logger.info('Console cleared')
+        self.console_manager.clear_console()
 
     def _check_scrcpy_available(self):
         """Check if scrcpy is available (deprecated - use app_management_manager)."""
@@ -869,18 +581,7 @@ class WindowMain(QMainWindow):
 
     def update_selection_count(self):
         """Update the title to show current selection count."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            self._update_virtualized_title()
-            return
-
-        device_count = len(self.device_dict)
-        selected_count = len(self.get_checked_devices())
-        search_text = self.device_search_manager.get_search_text()
-        if search_text:
-            visible_count = sum(1 for checkbox in self.check_devices.values() if checkbox.isVisible())
-            self.title_label.setText(f'Connected Devices ({visible_count}/{device_count}) - Selected: {selected_count}')
-        else:
-            self.title_label.setText(f'Connected Devices ({device_count}) - Selected: {selected_count}')
+        self.device_list_controller.update_selection_count()
 
     def show_device_context_menu(self, position, device_serial, checkbox_widget):
         """Delegate context menu handling to the device actions controller."""
@@ -1323,7 +1024,7 @@ class WindowMain(QMainWindow):
         record['last_filename'] = f'{filename}.mp4'
         record['output_path'] = output_path
         record['device_name'] = device_name
-        record['elapsed_before_current'] = self._parse_duration_to_seconds(duration)
+        record['elapsed_before_current'] = time_formatting.parse_duration_to_seconds(duration)
         record['ongoing_start'] = None
         record['display_seconds'] = int(record['elapsed_before_current'])
 
@@ -1671,26 +1372,14 @@ class WindowMain(QMainWindow):
         """Update status bar progress for bug report generation."""
         logger.info(f'🐛 [PROGRESS] Bug report {current}/{total}: {message}')
 
-        if hasattr(self, 'progress_bar') and self.progress_bar:
-            maximum = total if total else 1
-            self.progress_bar.setMaximum(maximum)
-            self.progress_bar.setValue(max(0, min(current, maximum)))
-            self.progress_bar.setVisible(True)
-
-        if hasattr(self, 'status_bar') and self.status_bar:
-            self.status_bar.showMessage(message)
+        self.status_bar_manager.update_progress(current=current, total=total, message=message)
 
         if total and current >= total:
             QTimer.singleShot(1500, self._reset_file_generation_progress)
 
     def _reset_file_generation_progress(self):
         """Hide progress indicators once generation completes."""
-        if hasattr(self, 'progress_bar') and self.progress_bar:
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(False)
-
-        if hasattr(self, 'status_bar') and self.status_bar:
-            self.status_bar.showMessage('Ready')
+        self.status_bar_manager.reset_progress()
 
     def _on_console_output(self, message):
         """Handle console output signal in main thread."""
@@ -2361,8 +2050,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
     def _on_device_status_updated(self, status: str):
         """處理從DeviceManager發來的狀態更新事件"""
-        if hasattr(self, 'status_bar'):
-            self.status_bar.showMessage(status, 2000)
+        self.status_bar_manager.show_message(status, 2000)
 
 
 def main():

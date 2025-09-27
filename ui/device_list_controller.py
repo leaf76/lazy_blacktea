@@ -55,6 +55,49 @@ class DeviceListController:
         logger.debug('Updating %s devices using standard mode', device_count)
         self._perform_standard_device_update(device_dict)
 
+    def select_all_devices(self) -> None:
+        """Select every device, respecting virtualized list state."""
+        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
+            self.window.virtualized_device_list.select_all_devices()
+            logger.info('Selected all devices (virtualized)')
+            return
+
+        for checkbox in self.window.check_devices.values():
+            checkbox.setChecked(True)
+        logger.info('Selected all %s devices', len(self.window.check_devices))
+
+    def select_no_devices(self) -> None:
+        """Deselect all devices, handling virtualized lists."""
+        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
+            self.window.virtualized_device_list.deselect_all_devices()
+            logger.info('Deselected all devices (virtualized)')
+            return
+
+        for checkbox in self.window.check_devices.values():
+            checkbox.setChecked(False)
+        logger.info('Deselected all devices')
+
+    def update_selection_count(self) -> None:
+        """Refresh device count title according to current selection/search."""
+        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
+            self._update_virtualized_title()
+            return
+
+        device_count = len(self.window.device_dict)
+        selected_count = len(self.window.get_checked_devices())
+        search_text = self.window.device_search_manager.get_search_text()
+        if search_text:
+            visible_count = sum(
+                1 for checkbox in self.window.check_devices.values() if checkbox.isVisible()
+            )
+            self.window.title_label.setText(
+                f'Connected Devices ({visible_count}/{device_count}) - Selected: {selected_count}'
+            )
+        else:
+            self.window.title_label.setText(
+                f'Connected Devices ({device_count}) - Selected: {selected_count}'
+            )
+
     def filter_and_sort_devices(self) -> None:
         """Filter and sort devices based on current search and sort settings."""
         if self.window.virtualized_active and self.window.virtualized_device_list is not None:
