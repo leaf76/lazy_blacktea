@@ -1,113 +1,84 @@
 # Contributing to Lazy Blacktea
 
-Thank you for your interest in contributing to Lazy Blacktea! This document provides guidelines for contributors.
+Thank you for taking the time to improve Lazy Blacktea. This guide outlines how to propose changes, report issues, and collaborate effectively with the maintainers.
 
-> **Current Project Version:** v0.0.11
+> Current release: v0.0.11
 
-## 🐛 Reporting Bugs
+## Before You Start
+- Review open issues and discussions to avoid duplicate work
+- Ensure you can reproduce the behaviour you plan to report or change
+- Read the repository guidelines in the project documentation and follow the coding conventions described there
 
-1. **Check existing issues** to avoid duplicates
-2. **Use the bug report template** when creating new issues
-3. **Include system information**:
-   - OS version
+## Reporting Bugs
+1. Search existing issues to confirm the bug has not been reported
+2. Use the bug-report template and include:
+   - Operating system version
    - Python version
-   - ADB version
-   - Application version
-4. **Provide steps to reproduce** the issue
-5. **Include screenshots** if applicable
+   - ADB version and how it was installed
+   - Lazy Blacktea version and distribution (source, App bundle, AppImage)
+3. Provide clear reproduction steps and expected vs. actual results
+4. Attach logs (`tests/logs/`), screenshots, or screen recordings when possible
 
-## 🚀 Feature Requests
+## Requesting Features
+1. Describe the use case and why it helps device automation workflows
+2. Explain how the feature should behave in the UI
+3. Share any constraints or dependencies (permissions, device requirements)
+4. Reference related discussions or issues when applicable
 
-1. **Check existing feature requests** to avoid duplicates
-2. **Describe the feature** and its use case
-3. **Explain why it would be valuable** to other users
-4. **Consider implementation complexity**
-
-## 💻 Code Contributions
-
-### Setting up Development Environment
-
-1. **Fork the repository**
-2. **Clone your fork**:
-   ```bash
-   git clone https://github.com/yourusername/lazy_blacktea.git
-   cd lazy_blacktea
-   ```
-3. **Create virtual environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-4. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Development Guidelines
-
-- **Code Style**: Follow PEP 8 and use type hints
-- **Testing**: Add tests for new features and bug fixes
-- **Documentation**: Update README and docstrings as needed
-- **Commit Messages**: Use clear, descriptive commit messages
-- **Branch Naming**: Use descriptive branch names (feature/, bugfix/, hotfix/)
-
-### Making Changes
-
-1. **Create a feature branch**:
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-2. **Follow coding standards**:
-   - Use type hints
-   - Follow PEP 8 style guide
-   - Add docstrings to functions
-   - Include unit tests for new features
-3. **Test your changes**:
-   ```bash
-   python -m unittest tests.test_refactored_features tests.test_performance tests.test_edge_cases
-   ```
-4. **Commit your changes**:
-   ```bash
-   git commit -m "Add amazing feature"
-   ```
-5. **Push to your fork**:
-   ```bash
-   git push origin feature/amazing-feature
-   ```
-6. **Open a Pull Request**
-
-## 🔍 Code Review Process
-
-1. All PRs require review before merging
-2. Ensure CI tests pass
-3. Address reviewer feedback
-4. Maintain backwards compatibility when possible
-
-## 📋 Testing
-
-Run the comprehensive test suite:
-
+## Setting Up Your Environment
 ```bash
-# Run all tests
-python -m unittest tests.test_refactored_features tests.test_performance tests.test_edge_cases -v
-
-# Run specific test categories
-python -m unittest tests.test_refactored_features -v  # Core functionality
-python -m unittest tests.test_performance -v         # Performance tests
-python -m unittest tests.test_edge_cases -v          # Edge cases
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+adb devices                      # verify connectivity
+python3 lazy_blacktea_pyqt.py    # smoke test the UI
 ```
+- Keep ADB available on your PATH; the tooling assumes `adb devices` succeeds
+- Prefer `utils.common.get_logger` for logs instead of `print`
+- Respect the existing module layout (`ui/`, `utils/`, `config/`, `tests/`)
 
-## 🤝 Community Guidelines
+## Development Workflow
+1. Create a topic branch from the latest main branch (`git checkout -b feat/device-inspector`)
+2. Follow a Test-Driven Development loop: start with tests under `tests/` or `tests/run_tests.py`, make them fail, add the implementation, then refactor
+3. Update or add documentation (README, inline docstrings) when behaviour changes
+4. Keep commits focused and use Conventional Commit messages (for example, `feat: add device sorting by API level`)
+5. Where helpful, create short helper scripts for complex refactors but delete them before submitting
 
-- **Be respectful** and inclusive
-- **Help others** when you can
-- **Share your experience** and improvements
-- **Follow the Code of Conduct**
+## Testing Expectations
+- Run the full suite before submitting a pull request:
+  ```bash
+  python3 tests/run_tests.py
+  ```
+- Execute targeted smoke tests when relevant:
+  ```bash
+  python3 test_device_list_performance.py
+  ```
+- Clean any `/tmp/lazy_blacktea_*` artifacts your changes generate
+- Document remaining risks or manual verification steps in the pull request description
 
-## 📞 Getting Help
+## Code Quality Guidelines
+- Adhere to PEP 8 and use type hints for new public functions or classes
+- Keep modules cohesive; shared utilities belong in `utils/`
+- Use descriptive variable and function names, avoiding redundant comments
+- Remove dead code and outdated configuration values instead of leaving them disabled
+- Keep UI strings and logs in English to stay consistent with the project convention
 
-- 📖 **Documentation**: Check README and inline code documentation
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/lazy_blacktea/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/lazy_blacktea/discussions)
+## Submitting a Pull Request
+1. Push your branch and open a pull request targeting `main`
+2. Fill out the pull-request template, including the commands you ran locally
+3. Attach screenshots or console excerpts for user-visible changes
+4. Ensure CI checks pass; address feedback promptly and keep discussions professional
+5. Squash or rebase only when requested by a maintainer to preserve review history
 
-Thank you for contributing! 🍵✨
+## Release Checklist for Maintainers
+- Confirm `python3 tests/run_tests.py` has passed on the release candidate
+- Verify macOS and Linux bundles built by `python3 build-scripts/build.py`
+- Update `~/.lazy_blacktea_config.json` schema version carefully; document migrations if touched
+- Publish release notes summarising new features, bug fixes, and breaking changes
+
+## Getting Help
+- Issues: https://github.com/cy76/lazy_blacktea/issues
+- Discussions: https://github.com/cy76/lazy_blacktea/discussions
+- Security concerns: open a private advisory instead of a public issue
+
+We appreciate every contribution. Thank you for helping the community build a better Android automation toolkit.
