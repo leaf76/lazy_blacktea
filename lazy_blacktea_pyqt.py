@@ -11,11 +11,10 @@ import threading
 import webbrowser
 from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
-    QCheckBox, QPushButton, QLabel,
-    QFileDialog,
-    QDialog
+    QCheckBox,
+    QFileDialog
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
@@ -55,6 +54,7 @@ from ui.ui_inspector_dialog import UIInspectorDialog
 from ui.device_group_manager import DeviceGroupManager
 from ui.console_manager import ConsoleManager
 from ui.device_list_context_menu import DeviceListContextMenuManager
+from ui.completion_dialog_manager import CompletionDialogManager
 from ui.dialog_manager import DialogManager
 from ui.status_bar_manager import StatusBarManager
 from ui.recording_status_view import update_recording_status_view
@@ -159,6 +159,9 @@ class WindowMain(QMainWindow):
 
         # Initialize status bar manager
         self.status_bar_manager = StatusBarManager(self)
+
+        # Initialize completion dialog manager
+        self.completion_dialog_manager = CompletionDialogManager(self)
 
         # Initialize logging and diagnostics manager
         self.logging_manager = LoggingManager(self)
@@ -1151,22 +1154,12 @@ class WindowMain(QMainWindow):
         """Handle screenshot completed signal in main thread."""
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed executing in main thread')
 
-        # Create enhanced success message
-        device_list = ', '.join(device_models[:3])
-        if len(device_models) > 3:
-            device_list += f' and {len(device_models) - 3} more'
+        self.completion_dialog_manager.show_screenshot_summary(output_path, device_models)
 
-        # Show a simple success notification instead of modal dialog
-        self.show_info('📷 Screenshots Completed',
-                      f'✅ Successfully captured {device_count} screenshot(s)\n'
-                      f'📱 Devices: {device_list}\n'
-                      f'📁 Location: {output_path}')
-
-        # Restore screenshot button state
         self._update_screenshot_button_state(False)
 
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed notification shown')
-        return  # Skip the dialog creation
+        return
 
 
     def _open_folder(self, path):
@@ -1183,72 +1176,6 @@ class WindowMain(QMainWindow):
         except Exception as e:
             logger.error(f'❌ Failed to open folder: {e}')
             self.show_error('Error', f'Could not open folder:\n{path}\n\nError: {e}')
-
-    def _show_screenshot_quick_actions(self, output_path, device_models):
-        """Show quick actions menu for screenshots."""
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle('⚡ Screenshot Quick Actions')
-        dialog.setModal(True)
-        dialog.resize(350, 250)
-
-        layout = QVBoxLayout(dialog)
-
-        # Title
-        title_label = QLabel('⚡ Quick Actions for Screenshots')
-        StyleManager.apply_label_style(title_label, LabelStyle.HEADER)
-        layout.addWidget(title_label)
-
-        # Find screenshot files
-        screenshot_files = []
-        try:
-            # Look for common screenshot file patterns
-            patterns = ['*.png', '*.jpg', '*.jpeg']
-            for pattern in patterns:
-                screenshot_files.extend(glob.glob(os.path.join(output_path, pattern)))
-            screenshot_files = sorted(screenshot_files, key=os.path.getmtime, reverse=True)
-        except Exception as e:
-            logger.error(f'Error finding screenshots: {e}')
-
-        # Info label
-        info_label = QLabel(f'📱 Screenshots from: {", ".join(device_models[:2])}{"..." if len(device_models) > 2 else ""}')
-        StyleManager.apply_label_style(info_label, LabelStyle.INFO)
-        layout.addWidget(info_label)
-
-        # Action buttons use centralized style
-        button_style = StyleManager.get_action_button_style()
-
-        # Take another screenshot
-        another_screenshot_btn = QPushButton('📷 Take Another Screenshot')
-        another_screenshot_btn.setStyleSheet(button_style)
-        another_screenshot_btn.clicked.connect(lambda: (dialog.accept(), self.take_screenshot()))
-        layout.addWidget(another_screenshot_btn)
-
-        # Start recording
-        start_recording_btn = QPushButton('🎥 Start Recording Same Devices')
-        start_recording_btn.setStyleSheet(button_style)
-        start_recording_btn.clicked.connect(lambda: (dialog.accept(), self.start_screen_record()))
-        layout.addWidget(start_recording_btn)
-
-        # Copy path to clipboard
-        copy_path_btn = QPushButton('📋 Copy Folder Path')
-        copy_path_btn.setStyleSheet(button_style)
-        copy_path_btn.clicked.connect(lambda: self._copy_to_clipboard(output_path))
-        layout.addWidget(copy_path_btn)
-
-        # Show file count if available
-        if screenshot_files:
-            file_count_label = QLabel(f'📁 Found {len(screenshot_files)} screenshot file(s)')
-            StyleManager.apply_label_style(file_count_label, LabelStyle.INFO)
-            layout.addWidget(file_count_label)
-
-        # Close button
-        close_btn = QPushButton('Close')
-        StyleManager.apply_button_style(close_btn, ButtonStyle.NEUTRAL)
-        close_btn.clicked.connect(dialog.accept)
-        layout.addWidget(close_btn)
-
-        dialog.exec()
 
     def _copy_to_clipboard(self, text):
         """Copy text to system clipboard."""
@@ -1312,59 +1239,15 @@ class WindowMain(QMainWindow):
         output_path = getattr(self.file_operations_manager, 'last_generation_output_path', '')
         summary_content = summary_text or getattr(self.file_operations_manager, 'last_generation_summary', '')
 
-        # Create enhanced success dialog similar to screenshot completion
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f'{icon} {operation_name} Completed')
-        dialog.setModal(True)
-        dialog.resize(450, 200)
+        self.completion_dialog_manager.show_file_generation_summary(
+            operation_name=operation_name,
+            summary_text=summary_content,
+            output_path=output_path,
+            success_metric=success_metric,
+            icon=icon,
+        )
 
-        layout = QVBoxLayout(dialog)
-
-        # Success message
-        if summary_content:
-            success_message = summary_content
-        else:
-            success_message = f'✅ Successfully completed {operation_name.lower()}'
-
-        success_label = QLabel(success_message)
-        StyleManager.apply_label_style(success_label, LabelStyle.SUCCESS)
-        layout.addWidget(success_label)
-
-        # Device info
-        device_label = QLabel(f'📱 Processed: {success_metric} item(s)')
-        StyleManager.apply_label_style(device_label, LabelStyle.INFO)
-        layout.addWidget(device_label)
-
-        # Path info
-        if output_path:
-            path_label = QLabel(f'📁 Location: {output_path}')
-        else:
-            path_label = QLabel('📁 Location: (not available)')
-        StyleManager.apply_label_style(path_label, LabelStyle.INFO)
-        path_label.setWordWrap(True)
-        layout.addWidget(path_label)
-
-        # Button layout
-        button_layout = QHBoxLayout()
-
-        # Open folder button
-        open_folder_btn = QPushButton('🗂️ Open Folder')
-        StyleManager.apply_button_style(open_folder_btn, ButtonStyle.SECONDARY)
-        if output_path:
-            open_folder_btn.clicked.connect(lambda: self._open_folder(output_path))
-            button_layout.addWidget(open_folder_btn)
-
-        # Close button
-        close_btn = QPushButton('Close')
-        StyleManager.apply_button_style(close_btn, ButtonStyle.NEUTRAL)
-        close_btn.clicked.connect(dialog.accept)
-        button_layout.addWidget(close_btn)
-
-        layout.addWidget(QLabel())  # Spacer
-        layout.addLayout(button_layout)
-
-        dialog.exec()
-        logger.info(f'{icon} [SIGNAL] _on_file_generation_completed dialog closed')
+        logger.info(f'{icon} [SIGNAL] _on_file_generation_completed dialog displayed')
 
         self._reset_file_generation_progress()
 
