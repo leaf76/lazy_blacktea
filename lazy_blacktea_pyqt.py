@@ -838,13 +838,22 @@ class WindowMain(QMainWindow):
             return
 
         if refresh_mode == 'connectivity':
-            self._refresh_connectivity_info(serials)
+            updated = self._refresh_connectivity_info(serials)
             self.battery_info_manager.refresh_serials(serials)
-            return
+            if updated:
+                self._refresh_device_list_snapshot()
+                return
 
-        self.device_list_controller.update_device_list(self.device_dict)
+        self._refresh_device_list_snapshot()
 
-    def _refresh_connectivity_info(self, serials: Iterable[str]) -> None:
+    def _refresh_device_list_snapshot(self) -> None:
+        """Force a fresh device list update to clear stale operation messages."""
+        snapshot = {serial: device for serial, device in self.device_dict.items()}
+        self.device_list_controller.update_device_list(snapshot)
+        self.device_dict = snapshot
+        self.device_list_controller.filter_and_sort_devices()
+
+    def _refresh_connectivity_info(self, serials: Iterable[str]) -> bool:
         """Refresh Bluetooth/WiFi status for a subset of devices without full scan."""
         updated = False
         for serial in serials:
@@ -856,9 +865,9 @@ class WindowMain(QMainWindow):
                 updated = True
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.debug('Failed to refresh connectivity for %s: %s', serial, exc)
-
         if updated:
             self.device_list_controller.update_device_list(self.device_dict)
+        return updated
 
     # ADB Server methods
     def adb_start_server(self):
