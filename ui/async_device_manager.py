@@ -84,14 +84,16 @@ class AsyncDeviceWorker(QObject):
         self.is_running: bool = False
         self.mutex = QMutex()
         self.status_checker: Optional[Callable[[str], bool]] = status_checker
+        self.refresh_only: bool = False
 
-    def set_devices(self, device_serials: List[str], load_detailed: bool = True):
+    def set_devices(self, device_serials: List[str], load_detailed: bool = True, refresh_only: bool = False):
         """設置要加載的設備列表"""
         with QMutexLocker(self.mutex):
             self.device_serials = device_serials.copy()
             self.load_detailed = load_detailed
             self.stop_requested = False
             self.is_running = False
+            self.refresh_only = refresh_only
 
     def set_status_checker(self, checker: Optional[Callable[[str], bool]]):
         """設定設備狀態檢查器，便於在詳細加載前確認設備仍可用"""
@@ -121,21 +123,27 @@ class AsyncDeviceWorker(QObject):
         if not self.device_serials:
             return
 
-        logger.info(f'Starting progressive async load for {len(self.device_serials)} device(s)')
+        if self.refresh_only:
+            logger.info('Starting detail refresh for %s cached device(s)', len(self.device_serials))
+        else:
+            logger.info(f'Starting progressive async load for {len(self.device_serials)} device(s)')
 
-        # Phase 1: 快速加載並顯示基本信息
-        self._load_basic_info_immediately()
+            # Phase 1: 快速加載並顯示基本信息
+            self._load_basic_info_immediately()
 
-        if not self.stop_requested:
-            self.all_basic_loaded.emit()
+            if not self.stop_requested:
+                self.all_basic_loaded.emit()
 
-        # Phase 2: 異步加載詳細信息
+        # 異步加載詳細信息
         if self.load_detailed and not self.stop_requested:
             self._load_detailed_info_progressively()
 
         if not self.stop_requested:
             self.all_detailed_loaded.emit()
-            logger.info('Progressive async load completed for %s device(s)', len(self.device_serials))
+            if self.refresh_only:
+                logger.info('Detail refresh completed for %s device(s)', len(self.device_serials))
+            else:
+                logger.info('Progressive async load completed for %s device(s)', len(self.device_serials))
 
         # 設置運行狀態為完成
         with QMutexLocker(self.mutex):
@@ -496,7 +504,7 @@ class AsyncDeviceManager(QObject):
 
             # 創建工作線程並設定狀態檢查器，避免對離線設備發送命令
             self.worker = AsyncDeviceWorker(status_checker=self._is_device_tracked)
-            self.worker.set_devices(basic_device_serials, load_detailed)
+            self.worker.set_devices(basic_device_serials, load_detailed, refresh_only=False)
 
             # 連接信號（漸進式版）
             self.worker.device_basic_loaded.connect(self._on_device_basic_loaded)
@@ -606,7 +614,7 @@ class AsyncDeviceManager(QObject):
             for real in real_serials:
                 if alias.endswith(real) or real.endswith(alias) or real in alias or alias in real:
                     self._serial_aliases[alias] = real
-                    logger.info('Mapped alias %s -> %s via adb devices -l', alias, real)
+                    logger.debug('Mapped alias %s -> %s via adb devices -l', alias, real)
                     break
 
     def _handle_device_enumeration_failure(self, error: Exception):
@@ -825,6 +833,26 @@ class AsyncDeviceManager(QObject):
             self.stop_periodic_refresh()
         logger.info('Automatic refresh %s', 'enabled' if enabled else 'disabled')
 
+    def _refresh_device_details_for_known_devices(self, serials: List[str]):
+        """使用 refresh worker 更新已知設備的詳細資訊"""
+        unique_serials = [serial for serial in serials if serial]
+        if not unique_serials:
+            logger.debug('Skipping detail refresh with empty serial list')
+            return
+        if self.worker and self.worker.isRunning():
+            logger.debug('Skipping detail refresh while another worker is running')
+            return
+
+        logger.debug('Refreshing detailed information for %s cached device(s)', len(unique_serials))
+        self.worker = AsyncDeviceWorker(status_checker=self._is_device_tracked)
+        self.worker.set_devices(unique_serials, load_detailed=True, refresh_only=True)
+        self.worker.device_detailed_loaded.connect(self._on_device_detailed_loaded)
+        self.worker.device_load_failed.connect(self._on_device_load_failed)
+        self.worker.progress_updated.connect(self._on_progress_updated)
+        self.worker.all_detailed_loaded.connect(self._on_all_detailed_loaded)
+        self.worker.all_detailed_loaded.connect(self._on_worker_completed)
+        self.worker.start_loading()
+
     def _periodic_refresh(self):
         """定時刷新回調"""
         # 如果有工作線程正在運行，跳過這次刷新避免衝突
@@ -832,25 +860,19 @@ class AsyncDeviceManager(QObject):
             logger.info('Skipping periodic refresh while devices are loading to avoid interruption')
             return
 
-        try:
-            current_serials = self._get_basic_device_serials()
-        except ADBCommandError as exc:
-            logger.warning('Periodic refresh skipped due to adb failure: %s', exc)
-            return
-
-        current_set = set(current_serials)
-
-        if self.last_discovered_serials is not None and current_set == self.last_discovered_serials:
-            self.refresh_cycle_count += 1
-            logger.info('No device changes detected; skipping refresh cycle %s', self.refresh_cycle_count)
-            return
-
+        known_serials = sorted(self.device_cache.keys())
         self.refresh_cycle_count += 1
-        logger.info('Running periodic device refresh cycle %s (full detail)', self.refresh_cycle_count)
-        try:
-            self.start_device_discovery(force_reload=True, load_detailed=True)
-        except Exception as e:
-            logger.error(f'Periodic refresh failed: {e}')
+
+        if not known_serials:
+            logger.info('Periodic refresh cycle %s found no cached devices; running discovery', self.refresh_cycle_count)
+            try:
+                self.start_device_discovery(force_reload=True, load_detailed=True)
+            except Exception as e:
+                logger.error(f'Periodic refresh failed: {e}')
+            return
+
+        logger.debug('Periodic refresh cycle %s updating %s cached device(s)', self.refresh_cycle_count, len(known_serials))
+        self._refresh_device_details_for_known_devices(known_serials)
 
     def cleanup(self):
         """清理資源"""
@@ -966,7 +988,7 @@ class AsyncDeviceManager(QObject):
             )
         }
         if new_candidates:
-            logger.info('Device tracker reports potential new devices: %s', sorted(new_candidates))
+            logger.debug('Device tracker reports potential new devices: %s', sorted(new_candidates))
             need_refresh = True
         if not need_refresh:
             if self.last_discovered_serials is None:

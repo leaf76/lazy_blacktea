@@ -56,19 +56,26 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
     def tearDown(self):
         self.manager.cleanup()
 
-    def test_periodic_refresh_skips_when_devices_unchanged(self):
-        with patch.object(self.manager, '_get_basic_device_serials', return_value=['device1', 'device2']), \
+    def test_periodic_refresh_updates_known_devices(self):
+        serial = 'device1'
+        self.manager.device_cache[serial] = self._fake_device(serial)
+
+        with patch.object(self.manager, '_refresh_device_details_for_known_devices') as mock_refresh, \
              patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._periodic_refresh()
 
-        self.assertEqual(mock_discovery.call_count, 0)
+        mock_refresh.assert_called_once_with([serial])
+        mock_discovery.assert_not_called()
         self.assertEqual(self.manager.refresh_cycle_count, 1)
 
-    def test_periodic_refresh_triggers_on_device_change(self):
-        with patch.object(self.manager, '_get_basic_device_serials', return_value=['device1', 'device3']), \
+    def test_periodic_refresh_runs_discovery_when_no_cached_devices(self):
+        self.manager.device_cache.clear()
+
+        with patch.object(self.manager, '_refresh_device_details_for_known_devices') as mock_refresh, \
              patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._periodic_refresh()
 
+        mock_refresh.assert_not_called()
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
         self.assertEqual(self.manager.refresh_cycle_count, 1)
 
@@ -271,13 +278,15 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.assertIn(serial, emitted_payload)
         self.assertIn(serial, self.manager.device_cache)
 
-    def test_periodic_refresh_triggers_when_no_previous_cache(self):
+    def test_periodic_refresh_with_no_last_discovery_still_updates_details(self):
         self.manager.last_discovered_serials = None
-        with patch.object(self.manager, '_get_basic_device_serials', return_value=['deviceA']), \
-             patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+        serial = 'device1'
+        self.manager.device_cache[serial] = self._fake_device(serial)
+
+        with patch.object(self.manager, '_refresh_device_details_for_known_devices') as mock_refresh:
             self.manager._periodic_refresh()
 
-        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+        mock_refresh.assert_called_once_with([serial])
 
     def test_disabling_auto_refresh_stops_timer(self):
         self.manager.set_refresh_interval(10)
