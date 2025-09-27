@@ -75,11 +75,11 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='LazyBlacktea',
-    debug=True,  # Enable debug mode
+    debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,  # Disable UPX compression to avoid issues on macOS
-    console=True,  # Enable console to see error messages during debugging
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -117,5 +117,7 @@ app = BUNDLE(
         'LSBackgroundOnly': False,  # Ensure app shows in Dock and can display windows
         'NSAppleEventsUsageDescription': 'This app needs to communicate with Android devices via ADB.',
         'NSSystemAdministrationUsageDescription': 'This app needs system access to run ADB commands.',
+        'NSLocationWhenInUseUsageDescription': 'Lazy Blacktea uses local network discovery for debugging workflows.',
+        'NSLocationUsageDescription': 'Lazy Blacktea uses local network discovery for debugging workflows.',
     },
 )
