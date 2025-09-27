@@ -20,6 +20,7 @@ from ui.async_device_manager import (
     AsyncDeviceWorker,
     DeviceLoadProgress,
     DeviceLoadStatus,
+    ADBCommandError,
 )
 from utils import adb_models
 
@@ -35,6 +36,7 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.manager = AsyncDeviceManager(tracker_factory=lambda: None)
         self.manager.last_discovered_serials = {"device1", "device2"}
         self.manager.refresh_cycle_count = 0
+        self.manager._enumerate_adb_devices = MagicMock(return_value=[])
 
     def _fake_device(self, serial: str = "ghost") -> adb_models.DeviceInfo:
         """Create a minimal device info stub for tests."""
@@ -98,6 +100,80 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
             ])
 
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+
+    def test_tracker_aliases_normalize_to_known_serial(self):
+        real_serial = "35151FDJH000GQ"
+        alias_serial = f"002a{real_serial}"
+        self.manager.device_cache[real_serial] = self._fake_device(real_serial)
+        self.manager.tracked_device_statuses = {real_serial: 'device'}
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+            self.manager._on_tracked_devices_changed([(alias_serial, 'device')])
+
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+        self.assertIn(real_serial, self.manager.tracked_device_statuses)
+        self.assertNotIn(alias_serial, self.manager.tracked_device_statuses)
+
+    def test_tracker_aliases_cleared_when_device_removed(self):
+        real_serial = "35151FDJH000GQ"
+        alias_serial = f"002e{real_serial}"
+        self.manager.device_cache[real_serial] = self._fake_device(real_serial)
+        self.manager.tracked_device_statuses = {real_serial: 'device'}
+        self.manager._serial_aliases[alias_serial] = real_serial
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+            self.manager._on_tracked_devices_changed([(alias_serial, 'offline')])
+
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+        self.assertNotIn(real_serial, self.manager.device_cache)
+        self.assertNotIn(alias_serial, self.manager._serial_aliases)
+
+    def test_tracker_alias_with_unseen_prefix_matches_by_suffix(self):
+        real_serial = "35151FDJH000GQ"
+        alias_serial = f"abcd{real_serial}"
+        self.manager.device_cache[real_serial] = self._fake_device(real_serial)
+        self.manager.last_discovered_serials = {real_serial}
+
+        with patch.object(self.manager, '_enumerate_adb_devices', return_value=[(real_serial, 'device')]):
+            self.manager._on_tracked_devices_changed([(alias_serial, 'device')])
+
+        self.assertEqual(self.manager.tracked_device_statuses.get(real_serial), 'device')
+        self.assertEqual(self.manager._serial_aliases.get(alias_serial), real_serial)
+
+    def test_tracker_status_history_with_offline_marks_device_removed(self):
+        real_serial = "35151FDJH000GQ"
+        alias_serial = f"002f{real_serial}"
+        self.manager.device_cache[real_serial] = self._fake_device(real_serial)
+        self.manager.tracked_device_statuses = {real_serial: 'device'}
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
+            self.manager._on_tracked_devices_changed([
+                (alias_serial, 'offline'),
+                (alias_serial, 'device'),
+            ])
+
+        mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
+        self.assertNotIn(real_serial, self.manager.tracked_device_statuses)
+        self.assertNotIn(real_serial, self.manager.device_cache)
+
+    def test_tracker_alias_re_add_after_removal(self):
+        real_serial = "35151FDJH000GQ"
+        alias_off = f"002a{real_serial}"
+        alias_on = f"002b{real_serial}"
+        self.manager.device_cache[real_serial] = self._fake_device(real_serial)
+        self.manager.tracked_device_statuses = {real_serial: 'device'}
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery_remove:
+            self.manager._on_tracked_devices_changed([(alias_off, 'offline')])
+
+        mock_discovery_remove.assert_called_once_with(force_reload=True, load_detailed=True)
+        self.assertNotIn(real_serial, self.manager.device_cache)
+
+        with patch.object(self.manager, 'start_device_discovery') as mock_discovery_add:
+            self.manager._on_tracked_devices_changed([(alias_on, 'device')])
+
+        mock_discovery_add.assert_called_once_with(force_reload=True, load_detailed=True)
+        self.assertTrue(self.manager.tracked_device_statuses)
 
     def test_tracked_offline_devices_are_removed_from_cache(self):
         serial = "ghost"
@@ -174,6 +250,26 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
 
         basic_spy.assert_called_once()
         mock_discovery.assert_called_once()
+
+    def test_discovery_failure_preserves_cached_devices(self):
+        serial = "persist"
+        cached_device = self._fake_device(serial)
+        self.manager.device_cache[serial] = cached_device
+        self.manager.last_discovered_serials = {serial}
+
+        basic_spy = MagicMock()
+        self.manager.basic_devices_ready.connect(basic_spy)
+
+        try:
+            with patch.object(self.manager, '_get_basic_device_serials', side_effect=ADBCommandError('adb failure')):
+                self.manager.start_device_discovery(force_reload=True, load_detailed=True)
+        finally:
+            self.manager.basic_devices_ready.disconnect(basic_spy)
+
+        basic_spy.assert_called_once()
+        emitted_payload = basic_spy.call_args[0][0]
+        self.assertIn(serial, emitted_payload)
+        self.assertIn(serial, self.manager.device_cache)
 
     def test_periodic_refresh_triggers_when_no_previous_cache(self):
         self.manager.last_discovered_serials = None

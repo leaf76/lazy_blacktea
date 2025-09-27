@@ -9,7 +9,7 @@
 4. 優先加載基本信息，詳細信息按需加載
 5. 內存使用優化和設備信息緩存
 """
-
+import shlex
 import subprocess
 import threading
 import time
@@ -20,9 +20,13 @@ from enum import Enum
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
 
 from config.constants import ADBConstants
-from utils import adb_tools, common, adb_models
+from utils import adb_tools, common, adb_models, adb_commands
 
 logger = common.get_logger('async_device_manager')
+
+
+class ADBCommandError(RuntimeError):
+    """Raised when executing an adb command fails."""
 
 
 TRACKER_READY_STATUSES = frozenset({
@@ -403,6 +407,7 @@ class AsyncDeviceManager(QObject):
         self.device_tracker_worker: Optional[TrackDevicesWorker] = None
         self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker())
         self.tracked_device_statuses: Dict[str, str] = {}
+        self._serial_aliases: Dict[str, str] = {}
         self._shutting_down = False
         self._pending_discovery: Optional[tuple[bool, bool, Optional[List[str]]]] = None
         self._pending_discovery_timer = QTimer(self)
@@ -505,6 +510,8 @@ class AsyncDeviceManager(QObject):
             # 啟動工作線程池任務
             self.worker.start_loading()
 
+        except ADBCommandError as exc:
+            self._handle_device_enumeration_failure(exc)
         except Exception as e:
             logger.error(f'Failed to start device discovery: {e}')
 
@@ -515,30 +522,143 @@ class AsyncDeviceManager(QObject):
             self.worker.request_stop()
             # 對於QRunnable，我們只能請求停止，無法強制終止
 
+    def _run_adb_devices_command(self) -> subprocess.CompletedProcess[str]:
+        """Execute `adb devices -l` and bubble up detailed failures."""
+        command_str = adb_commands.cmd_get_adb_devices()
+        command_parts = shlex.split(command_str)
+        logger.debug('Executing adb devices command: %s', command_parts)
+
+        try:
+            completed = subprocess.run(
+                command_parts,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:
+            logger.error('Failed to execute adb devices: %s', exc)
+            raise ADBCommandError(str(exc)) from exc
+
+        stderr_output = (completed.stderr or '').strip()
+        if completed.returncode != 0:
+            message = stderr_output or f'adb devices exited with code {completed.returncode}'
+            logger.error('adb devices command failed: %s', message)
+            raise ADBCommandError(message)
+
+        if stderr_output:
+            logger.debug('adb devices stderr: %s', stderr_output)
+
+        return completed
+
+    def _enumerate_adb_devices(self) -> List[tuple[str, str]]:
+        """Run adb devices -l and return (serial, status) tuples."""
+        completed = self._run_adb_devices_command()
+        entries: List[tuple[str, str]] = []
+
+        for raw_line in completed.stdout.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('*') or line.startswith('List of devices attached'):
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            serial = parts[0].strip()
+            status = self._normalize_status(parts[1] if len(parts) > 1 else '')
+            if serial:
+                entries.append((serial, status))
+
+        return entries
+
     def _get_basic_device_serials(self) -> List[str]:
         """快速獲取設備序號列表"""
+        entries = self._enumerate_adb_devices()
+        valid_statuses = BASIC_ACCEPTED_STATUSES
+
+        device_serials = [serial for serial, status in entries if not status or status in valid_statuses]
+        logger.debug('Enumerated %d device serial(s)', len(device_serials))
+        return device_serials
+
+    def _ensure_aliases_via_devices(self, candidate_serials: Set[str]):
+        """Ensure aliases from track-devices map to real serials using adb devices -l output."""
+        unresolved = {
+            serial for serial in candidate_serials
+            if serial and serial not in self._serial_aliases
+            and serial not in self.device_cache
+            and serial not in self.tracked_device_statuses
+            and (self.last_discovered_serials is None or serial not in self.last_discovered_serials)
+        }
+
+        if not unresolved:
+            return
+
         try:
-            # 只執行基本的設備列舉，不獲取詳細信息
-            result = common.run_command('adb devices')
-            device_serials = []
+            entries = self._enumerate_adb_devices()
+        except ADBCommandError as exc:
+            logger.warning('Failed to refresh aliases via adb devices: %s', exc)
+            return
 
-            valid_statuses = BASIC_ACCEPTED_STATUSES
+        real_serials = [serial for serial, status in entries]
+        if not real_serials:
+            return
 
-            for line in result:
-                if not line or line.startswith('*'):
-                    continue
-                parts = line.split()
-                if not parts:
-                    continue
-                serial = parts[0].strip()
-                status = self._normalize_status(parts[1] if len(parts) > 1 else '')
-                if serial and (not status or status in valid_statuses):
-                    device_serials.append(serial)
+        logger.debug('Attempting alias resolution for: %s', sorted(unresolved))
+        for alias in unresolved:
+            for real in real_serials:
+                if alias.endswith(real) or real.endswith(alias) or real in alias or alias in real:
+                    self._serial_aliases[alias] = real
+                    logger.info('Mapped alias %s -> %s via adb devices -l', alias, real)
+                    break
 
-            return device_serials
-        except Exception as e:
-            logger.error(f'Failed to retrieve basic device list: {e}')
-            return []
+    def _handle_device_enumeration_failure(self, error: Exception):
+        """Handle adb enumeration failures without clearing cached devices."""
+        logger.warning(
+            'Device enumeration failed (%s); preserving %d cached device(s)',
+            error,
+            len(self.device_cache),
+        )
+
+        if self.device_cache:
+            self.basic_devices_ready.emit(self.device_cache.copy())
+
+        if self._pending_discovery is None:
+            self._pending_discovery = (True, True, None)
+        if not self._pending_discovery_timer.isActive():
+            # Retry enumeration shortly to recover once adb becomes available again
+            self._pending_discovery_timer.start(1000)
+
+    def _normalize_tracker_serial(self, serial: str) -> str:
+        sanitized = (serial or '').strip()
+        if not sanitized:
+            return ''
+
+        if sanitized in self._serial_aliases:
+            return self._serial_aliases[sanitized]
+
+        known_serials = set(self.device_cache.keys())
+        known_serials.update(self.tracked_device_statuses.keys())
+        if self.last_discovered_serials:
+            known_serials.update(self.last_discovered_serials)
+
+        if sanitized in known_serials:
+            return sanitized
+
+        if len(sanitized) > 4:
+            prefix = sanitized[:4]
+            if all(char in '0123456789abcdefABCDEF' for char in prefix):
+                candidate = sanitized[4:]
+                if candidate in known_serials:
+                    self._serial_aliases[sanitized] = candidate
+                    logger.debug('Normalized tracker alias %s -> %s', sanitized, candidate)
+                    return candidate
+
+        return sanitized
+
+    def _purge_aliases_for_serial(self, serial: str):
+        if not serial:
+            return
+        to_remove = [alias for alias, target in self._serial_aliases.items() if target == serial or alias == serial]
+        for alias in to_remove:
+            self._serial_aliases.pop(alias, None)
 
     def _on_device_basic_loaded(self, serial: str, device_info: adb_models.DeviceInfo):
         """設備基本信息加載完成時的處理"""
@@ -664,6 +784,7 @@ class AsyncDeviceManager(QObject):
         """清空設備緩存"""
         self.device_cache.clear()
         self.device_progress.clear()
+        self._serial_aliases.clear()
         logger.info('Device cache cleared')
 
     def start_periodic_refresh(self):
@@ -713,9 +834,9 @@ class AsyncDeviceManager(QObject):
 
         try:
             current_serials = self._get_basic_device_serials()
-        except Exception as exc:
-            logger.error(f'Periodic refresh failed to enumerate devices: {exc}')
-            current_serials = []
+        except ADBCommandError as exc:
+            logger.warning('Periodic refresh skipped due to adb failure: %s', exc)
+            return
 
         current_set = set(current_serials)
 
@@ -776,20 +897,36 @@ class AsyncDeviceManager(QObject):
         if self._shutting_down:
             logger.debug('Ignoring tracker update during shutdown')
             return
+        raw_serials: Set[str] = set()
+        for serial, _status in entries:
+            raw_serial = (serial or '').strip()
+            if raw_serial:
+                raw_serials.add(raw_serial)
+
+        if raw_serials:
+            self._ensure_aliases_via_devices(raw_serials)
+
         previous_serials = set(self.tracked_device_statuses.keys())
-        normalized_status: Dict[str, str] = {}
+        last_status_map: Dict[str, str] = {}
+        status_history: Dict[str, Set[str]] = {}
 
         for serial, status in entries:
-            serial = (serial or '').strip()
-            if not serial:
+            raw_serial = (serial or '').strip()
+            if not raw_serial:
                 continue
-            normalized_status[serial] = self._normalize_status(status)
+            normalized_serial = self._normalize_tracker_serial(raw_serial)
+            status_normalized = self._normalize_status(status)
+            last_status_map[normalized_serial] = status_normalized
+            status_history.setdefault(normalized_serial, set()).add(status_normalized)
 
-        current_serials = set(normalized_status.keys())
+            if normalized_serial != raw_serial and raw_serial not in self._serial_aliases:
+                self._serial_aliases[raw_serial] = normalized_serial
+
+        current_serials = set(last_status_map.keys())
 
         removal_candidates = {
-            serial for serial, status in normalized_status.items()
-            if status in TRACKER_REMOVAL_STATUSES
+            serial for serial, statuses in status_history.items()
+            if statuses & TRACKER_REMOVAL_STATUSES
         }
         missing_serials = previous_serials - current_serials
         removed_serials = removal_candidates | missing_serials
@@ -797,8 +934,8 @@ class AsyncDeviceManager(QObject):
         # Refresh tracked status cache excluding removed devices and non-ready states
         self.tracked_device_statuses = {
             serial: status
-            for serial, status in normalized_status.items()
-            if status in TRACKER_READY_STATUSES
+            for serial, status in last_status_map.items()
+            if status in TRACKER_READY_STATUSES and serial not in removed_serials
         }
 
         ready_serials = set(self.tracked_device_statuses.keys())
@@ -813,12 +950,24 @@ class AsyncDeviceManager(QObject):
                 self.device_progress.pop(serial, None)
             if self.last_discovered_serials is not None:
                 self.last_discovered_serials.discard(serial)
+            self._purge_aliases_for_serial(serial)
 
         if removal_detected:
             logger.info('Device tracker removed devices: %s', sorted(removed_serials))
             self.basic_devices_ready.emit(self.device_cache.copy())
 
         need_refresh = removal_detected
+        new_candidates = {
+            serial for serial, statuses in status_history.items()
+            if (
+                statuses & TRACKER_READY_STATUSES
+                and serial not in previous_serials
+                and (self.last_discovered_serials is None or serial not in self.last_discovered_serials)
+            )
+        }
+        if new_candidates:
+            logger.info('Device tracker reports potential new devices: %s', sorted(new_candidates))
+            need_refresh = True
         if not need_refresh:
             if self.last_discovered_serials is None:
                 need_refresh = True
