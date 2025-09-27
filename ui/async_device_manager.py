@@ -13,7 +13,7 @@ import shlex
 import subprocess
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, IO, List, Optional, Set
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
@@ -274,48 +274,18 @@ class TrackDevicesWorker(QObject):
                     command,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True,
+                    bufsize=0,
                 )
 
-                buffer_snapshot = OrderedDict[str, str]()
+                stdout_pipe = self._process.stdout
+                if stdout_pipe is None:
+                    logger.warning('track-devices stdout unavailable; restarting listener')
+                    continue
 
-                while not self._stop_event.is_set():
-                    if self._process.stdout is None:
+                for snapshot in self._consume_track_stream(stdout_pipe, self._stop_event):
+                    if self._stop_event.is_set():
                         break
-                    line = self._process.stdout.readline()
-
-                    if line == '' and self._process.poll() is not None:
-                        break
-
-                    line = line.strip()
-                    if not line:
-                        logger.debug('track-devices blank line encountered; flushing snapshot: %s', buffer_snapshot)
-                        self._emit_snapshot(buffer_snapshot)
-                        buffer_snapshot = OrderedDict()
-                        continue
-
-                    if line.startswith('List of devices attached'):
-                        logger.debug('track-devices header encountered; flushing current snapshot: %s', buffer_snapshot)
-                        self._emit_snapshot(buffer_snapshot)
-                        buffer_snapshot = OrderedDict()
-                        continue
-
-                    logger.debug('track-devices raw line: %s', line)
-                    parts = line.split()
-                    if not parts:
-                        continue
-                    serial = parts[0]
-                    status = parts[1] if len(parts) > 1 else ''
-                    if serial in buffer_snapshot:
-                        buffer_snapshot.pop(serial)
-                    buffer_snapshot[serial] = status
-                    # Emit incremental snapshot so subscribers always see the latest state
-                    self._emit_snapshot(buffer_snapshot.copy())
-
-                # flush any trailing snapshot when process iteration ends
-                self._emit_snapshot(buffer_snapshot)
+                    self._emit_snapshot(snapshot)
 
                 if self._process:
                     self._process.wait(timeout=1)
@@ -331,7 +301,12 @@ class TrackDevicesWorker(QObject):
                     try:
                         stderr_output = self._process.stderr.read()
                         if stderr_output:
-                            logger.warning('track-devices stderr: %s', stderr_output.strip())
+                            if isinstance(stderr_output, bytes):
+                                stderr_text = stderr_output.decode('utf-8', errors='replace').strip()
+                            else:
+                                stderr_text = stderr_output.strip()
+                            if stderr_text:
+                                logger.warning('track-devices stderr: %s', stderr_text)
                     except Exception:
                         pass
                 if self._process:
@@ -355,6 +330,69 @@ class TrackDevicesWorker(QObject):
                 except Exception:
                     pass
         self._process = None
+
+    @staticmethod
+    def _consume_track_stream(stream: IO[bytes], stop_event: Optional[threading.Event] = None):
+        """Yield device status snapshots from an adb track-devices byte stream."""
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                break
+
+            header = stream.read(4)
+            if not header or len(header) < 4:
+                break
+
+            try:
+                chunk_len = int(header.decode('ascii'), 16)
+            except ValueError:
+                logger.debug('Unexpected track-devices chunk header: %r', header)
+                continue
+
+            if chunk_len == 0:
+                yield OrderedDict()
+                continue
+
+            payload = TrackDevicesWorker._read_exact(stream, chunk_len, stop_event)
+            if not payload or len(payload) < chunk_len:
+                break
+
+            snapshot = TrackDevicesWorker._parse_track_payload(payload.decode('utf-8', errors='replace'))
+            yield snapshot
+
+    @staticmethod
+    def _read_exact(stream: IO[bytes], size: int, stop_event: Optional[threading.Event] = None) -> Optional[bytes]:
+        """Read exactly *size* bytes unless the stream ends or stop is requested."""
+        data = bytearray()
+        while len(data) < size:
+            if stop_event is not None and stop_event.is_set():
+                break
+            chunk = stream.read(size - len(data))
+            if not chunk:
+                break
+            data.extend(chunk)
+        return bytes(data)
+
+    @staticmethod
+    def _parse_track_payload(payload_text: str) -> OrderedDict[str, str]:
+        """Convert a payload block into an ordered serial->status mapping."""
+        snapshot: OrderedDict[str, str] = OrderedDict()
+        for raw_line in payload_text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('List of devices attached'):
+                continue
+
+            parts = line.split()
+            if not parts:
+                continue
+
+            serial = parts[0].strip()
+            status = parts[1].strip() if len(parts) > 1 else ''
+
+            if serial in snapshot:
+                snapshot.pop(serial)
+            snapshot[serial] = status
+
+        return snapshot
 
     def _emit_from_buffer(self, buffer: List[str]):
         snapshot = OrderedDict[str, str]()
