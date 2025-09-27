@@ -33,6 +33,9 @@ class LogcatWindowLimitLinesTest(unittest.TestCase):
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
         self.window.max_lines = 5
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
@@ -134,6 +137,9 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
 
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
@@ -260,6 +266,9 @@ class LogcatWindowStreamingTest(unittest.TestCase):
         timer.start = Mock()
         timer.stop = Mock()
         self.window.update_timer = timer
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
@@ -301,6 +310,9 @@ class LogcatWindowLifecycleTest(unittest.TestCase):
 
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
@@ -314,6 +326,42 @@ class LogcatWindowLifecycleTest(unittest.TestCase):
             event = QCloseEvent()
             self.window.closeEvent(event)
             mock_stop.assert_called_once_with()
+
+
+class LogcatWindowRenderingStabilityTest(unittest.TestCase):
+    """Ensure UI avoids redundant redraws that could cause flicker."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = LogcatWindow(_DummyDevice())
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
+
+    def tearDown(self):
+        self.window.close()
+
+    def test_filtered_refilter_display_skips_duplicate_plaintext(self):
+        """Repeated filtered refresh should not rewrite identical content."""
+        self.window.live_filter_pattern = 'alpha'
+        self.window.filtered_logs = ['alpha first']
+        self.window.raw_logs = ['alpha first']
+
+        with patch.object(self.window.log_display, 'setPlainText', wraps=self.window.log_display.setPlainText) as mock_set_text:
+            self.window.refilter_display()
+            self.assertEqual(mock_set_text.call_count, 1)
+
+            self.window.refilter_display()
+            self.assertEqual(mock_set_text.call_count, 1)
+
+            self.window.filtered_logs.append('alpha second')
+            self.window.raw_logs.append('alpha second')
+            self.window.refilter_display()
+            self.assertEqual(mock_set_text.call_count, 2)
 
 
 class PerformanceSettingsDialogTest(unittest.TestCase):

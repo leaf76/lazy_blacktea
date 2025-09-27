@@ -326,6 +326,8 @@ class LogcatWindow(QDialog):
         self.update_interval_ms = 200  # Update UI every 200ms max
         self._partial_line = ''  # Buffer for incomplete log lines
         self._suppress_logcat_errors = False
+        self._last_rendered_mode: Optional[str] = None
+        self._last_rendered_text = ''
 
         # Additional performance settings
         self.max_lines_per_update = 50  # Maximum lines to add to UI per update
@@ -1014,6 +1016,8 @@ class LogcatWindow(QDialog):
         self.log_buffer.clear()
         self._partial_line = ''
         self._suppress_logcat_errors = False
+        self._last_rendered_mode = None
+        self._last_rendered_text = ''
 
         self.is_running = False
         self.start_btn.setEnabled(True)
@@ -1031,6 +1035,8 @@ class LogcatWindow(QDialog):
         self.filtered_logs.clear()
         self.log_buffer.clear()
         self._partial_line = ''
+        self._last_rendered_mode = None
+        self._last_rendered_text = ''
         self._update_status_label('Logs cleared')
 
     def apply_live_filter(self, pattern):
@@ -1040,8 +1046,6 @@ class LogcatWindow(QDialog):
 
     def refilter_display(self):
         """Re-filter all logs and update display."""
-        self.log_display.clear()
-
         if self._has_active_filters():
             self._render_filtered_logs()
         else:
@@ -1049,29 +1053,42 @@ class LogcatWindow(QDialog):
 
     def _render_filtered_logs(self):
         """Display filtered logs without truncating pre-filtered history."""
-        stats = self._get_buffer_stats()
         logs_to_display = self.filtered_logs[-self.max_lines:]
+        new_text = '\n'.join(logs_to_display) if logs_to_display else 'No logs match the current filter.'
+        mode_changed = self._last_rendered_mode != 'filtered'
 
+        if not mode_changed and new_text == self._last_rendered_text:
+            self._update_filtered_status()
+            return
+
+        self.log_display.setPlainText(new_text)
         if logs_to_display:
-            all_filtered_text = '\n'.join(logs_to_display)
-            self.log_display.setPlainText(all_filtered_text)
             self._scroll_to_bottom()
-        else:
-            self.log_display.setPlainText('No logs match the current filter.')
 
+        self._last_rendered_mode = 'filtered'
+        self._last_rendered_text = new_text
         self._update_filtered_status()
 
     def _render_unfiltered_logs(self):
         """Display unfiltered logs from the raw buffer."""
         logs_to_display = self.raw_logs[-self.max_lines:]
+        new_text = '\n'.join(logs_to_display) if logs_to_display else ''
+        mode_changed = self._last_rendered_mode != 'raw'
 
-        if logs_to_display:
-            all_text = '\n'.join(logs_to_display)
-            self.log_display.setPlainText(all_text)
+        if not mode_changed and new_text == self._last_rendered_text:
+            raw_count = len(self.raw_logs)
+            capacity = self.max_lines * self.history_multiplier
+            self._update_status_label(f'Total: {raw_count}/{capacity} lines')
+            return
+
+        if new_text:
+            self.log_display.setPlainText(new_text)
             self._scroll_to_bottom()
         else:
             self.log_display.clear()
 
+        self._last_rendered_mode = 'raw'
+        self._last_rendered_text = new_text
         raw_count = len(self.raw_logs)
         capacity = self.max_lines * self.history_multiplier
         self._update_status_label(f'Total: {raw_count}/{capacity} lines')
