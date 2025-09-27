@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QCloseEvent
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -81,24 +82,33 @@ class FakeSignal:
     def connect(self, callback):
         self.callback = callback
 
+    def emit(self, *args, **kwargs):
+        if self.callback:
+            self.callback(*args, **kwargs)
+
 
 class FakeProcess:
     """Stand-in for QProcess capturing start parameters."""
 
-    def __init__(self):
+    def __init__(self, parent=None):
         self.readyReadStandardOutput = FakeSignal()
         self.finished = FakeSignal()
+        self.started = FakeSignal()
+        self.errorOccurred = FakeSignal()
         self.program = None
         self.arguments = None
         self.killed = False
         self.wait_finished_called = False
         self.deleted = False
+        self.waitForStarted_called = False
+        self.parent = parent
 
     def start(self, program, arguments):
         self.program = program
         self.arguments = arguments
 
     def waitForStarted(self):
+        self.waitForStarted_called = True
         return True
 
     def kill(self):
@@ -109,6 +119,9 @@ class FakeProcess:
 
     def deleteLater(self):
         self.deleted = True
+
+    def setParent(self, parent):
+        self.parent = parent
 
 
 class LogcatWindowStartCommandTest(unittest.TestCase):
@@ -143,6 +156,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
             fake_process.arguments,
             ['-s', 'TESTSERIAL', 'logcat', '-v', 'threadtime', '*:V']
         )
+        self.assertFalse(fake_process.waitForStarted_called)
 
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
     def test_start_logcat_applies_tag_filter(self):
@@ -157,6 +171,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         args = self.window.logcat_process.arguments
         self.assertIn('MyTag:D', args)
         self.assertIn('*:S', args)
+        self.assertFalse(self.window.logcat_process.waitForStarted_called)
 
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=['123', '456'])
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
@@ -174,6 +189,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
             ['123', '456']
         )
         self.assertEqual(args[-1], '*:V')
+        self.assertFalse(self.window.logcat_process.waitForStarted_called)
 
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=[])
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
@@ -189,6 +205,15 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.assertFalse(self.window.is_running)
         self.assertIsNone(self.window.logcat_process)
 
+    @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
+    def test_start_logcat_does_not_block_wait(self):
+        """Logcat start should rely on signals instead of blocking wait."""
+        self.window.start_logcat()
+
+        process = self.window.logcat_process
+        self.assertIsNotNone(process)
+        self.assertFalse(process.waitForStarted_called)
+
     def test_live_and_saved_filters_combine(self):
         """Live filter input should combine with active saved filters."""
         self.window.raw_logs = [
@@ -200,7 +225,14 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.window.add_active_filter('AlphaFilter', 'alpha')
         self.window.apply_live_filter('beta')
 
-        self.assertEqual(self.window.filtered_logs, ['alpha beta combined'])
+        self.assertEqual(
+            self.window.filtered_logs,
+            [
+                'alpha event ready',
+                'beta event ready',
+                'alpha beta combined'
+            ]
+        )
 
         # Removing the active filter should update list and results
         self.window.active_filters_list.setCurrentRow(0)
@@ -211,6 +243,77 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
             self.window.filtered_logs,
             ['beta event ready', 'alpha beta combined']
         )
+
+
+class LogcatWindowStreamingTest(unittest.TestCase):
+    """Streaming behaviour validation for logcat output handling."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = LogcatWindow(_DummyDevice())
+        timer = Mock()
+        timer.isActive.return_value = False
+        timer.start = Mock()
+        timer.stop = Mock()
+        self.window.update_timer = timer
+
+    def tearDown(self):
+        self.window.close()
+
+    def test_partial_line_buffering_merges_chunks(self):
+        """Incoming partial lines should buffer until a newline arrives."""
+
+        class StubProcess:
+            def __init__(self):
+                self.chunks = [
+                    b'First line part',
+                    b' two\nSecond line\n'
+                ]
+
+            def readAllStandardOutput(self):
+                return self.chunks.pop(0)
+
+        stub = StubProcess()
+        self.window.logcat_process = stub
+
+        self.window.read_logcat_output()
+        self.assertEqual(self.window.raw_logs, [])
+
+        self.window.read_logcat_output()
+
+        self.assertEqual(
+            self.window.raw_logs,
+            ['First line part two', 'Second line']
+        )
+
+
+class LogcatWindowLifecycleTest(unittest.TestCase):
+    """Lifecycle handling tests for logcat window."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.window = LogcatWindow(_DummyDevice())
+
+    def tearDown(self):
+        self.window.close()
+
+    def test_close_event_triggers_stop(self):
+        """Closing the window should stop logcat streaming and clean up."""
+        self.window.is_running = True
+        self.window.logcat_process = FakeProcess()
+
+        with patch.object(self.window, 'stop_logcat') as mock_stop:
+            event = QCloseEvent()
+            self.window.closeEvent(event)
+            mock_stop.assert_called_once_with()
 
 
 class PerformanceSettingsDialogTest(unittest.TestCase):

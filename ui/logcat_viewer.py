@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     QProcess, QTimer, QIODevice, Qt, pyqtSignal
 )
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtGui import QFont, QTextCursor, QCloseEvent
 
 try:
     from utils import adb_tools
@@ -33,6 +33,8 @@ except Exception:  # pragma: no cover - fallback when utils are unavailable
     adb_tools = _AdbToolsFallback()
 
 logger = logging.getLogger(__name__)
+
+QT_QPROCESS = QProcess
 
 
 PERFORMANCE_PRESETS = {
@@ -322,6 +324,8 @@ class LogcatWindow(QDialog):
         self.update_timer.timeout.connect(self.process_buffered_logs)
         self.update_timer.setSingleShot(True)
         self.update_interval_ms = 200  # Update UI every 200ms max
+        self._partial_line = ''  # Buffer for incomplete log lines
+        self._suppress_logcat_errors = False
 
         # Additional performance settings
         self.max_lines_per_update = 50  # Maximum lines to add to UI per update
@@ -713,7 +717,7 @@ class LogcatWindow(QDialog):
 
     def start_logcat(self):
         """Start the logcat streaming process."""
-        if self.is_running:
+        if self.is_running or self.logcat_process:
             return
 
         selected_levels = self._get_selected_levels()
@@ -725,32 +729,56 @@ class LogcatWindow(QDialog):
             return
 
         try:
+            self._partial_line = ''
+            self._suppress_logcat_errors = False
+
             # Create QProcess for logcat
-            self.logcat_process = QProcess()
-            self.logcat_process.readyReadStandardOutput.connect(self.read_logcat_output)
-            self.logcat_process.finished.connect(self.on_logcat_finished)
+            process = QProcess(self)
+            process.readyReadStandardOutput.connect(self.read_logcat_output)
+            process.finished.connect(self.on_logcat_finished)
+            process.started.connect(self._handle_logcat_started)
+            process.errorOccurred.connect(self._handle_logcat_error)
+
+            self.logcat_process = process
+
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self._update_status_label(f'Starting logcat for {self.device.device_model}...')
 
             # Use adb logcat with device serial
             cmd = 'adb'
-            self.logcat_process.start(cmd, args)
-
-            if self.logcat_process.waitForStarted():
-                self.is_running = True
-                self.start_btn.setEnabled(False)
-                self.stop_btn.setEnabled(True)
-                self._update_status_label(f'Logcat running for {self.device.device_model}...')
-            else:
-                self.show_error('Failed to start logcat process')
-                self._cleanup_logcat_process()
+            process.start(cmd, args)
 
         except Exception as exc:
             self.show_error(f'Error starting logcat: {exc}')
             self._cleanup_logcat_process()
+            self._handle_logcat_stopped()
 
     def _get_selected_levels(self) -> List[str]:
         """Return selected log severity levels in configured order."""
         selected = [level for level in self.log_levels_order if self.log_levels[level].isChecked()]
         return selected or ['E']
+
+    def _handle_logcat_started(self):
+        """Update state when the logcat process reports it has started."""
+        self.is_running = True
+        self.stop_btn.setEnabled(True)
+        self._update_status_label(f'Logcat running for {self.device.device_model}...')
+
+    def _handle_logcat_error(self, error):
+        """Handle asynchronous logcat process errors."""
+        if self._suppress_logcat_errors:
+            return
+
+        error_map = {
+            QT_QPROCESS.ProcessError.FailedToStart: 'Failed to start logcat process. Ensure ADB is available on PATH.',
+            QT_QPROCESS.ProcessError.Crashed: 'Logcat process crashed unexpectedly.',
+            QT_QPROCESS.ProcessError.Timedout: 'Timed out while starting logcat process.',
+        }
+        message = error_map.get(error, f'Logcat process error: {error}')
+        self.show_error(message)
+        self._cleanup_logcat_process()
+        self._handle_logcat_stopped()
 
     def _build_logcat_arguments(self, selected_levels: List[str]) -> List[str]:
         """Build the adb logcat command arguments based on selected filters."""
@@ -816,12 +844,22 @@ class LogcatWindow(QDialog):
         data = self.logcat_process.readAllStandardOutput()
         text = bytes(data).decode('utf-8', errors='replace')
 
-        if not text.strip():
+        if not text:
             return
 
-        # Split into individual lines and process
-        lines = text.strip().split('\n')
+        normalized = text.replace('\r\n', '\n').replace('\r', '\n')
+        combined = f'{self._partial_line}{normalized}' if self._partial_line else normalized
+
+        lines = combined.split('\n')
+        if combined.endswith('\n'):
+            self._partial_line = ''
+        else:
+            self._partial_line = lines.pop() if lines else combined
+
         new_lines = [line for line in lines if line.strip()]
+
+        if not new_lines:
+            return
 
         has_filters = self._has_active_filters()
 
@@ -927,6 +965,8 @@ class LogcatWindow(QDialog):
 
     def stop_logcat(self):
         """Stop the logcat streaming process."""
+        if self.logcat_process:
+            self._suppress_logcat_errors = True
         self._cleanup_logcat_process(terminate=True)
         self._handle_logcat_stopped()
 
@@ -945,15 +985,19 @@ class LogcatWindow(QDialog):
         self.logcat_process = None
 
         try:
-            if terminate and self.is_running:
+            if terminate:
                 try:
                     process.kill()
                 except RuntimeError as exc:
                     logger.debug('Kill skipped (process already gone): %s', exc)
+                except AttributeError:
+                    pass
                 try:
                     process.waitForFinished(3000)
                 except RuntimeError as exc:
                     logger.debug('waitForFinished skipped (process already gone): %s', exc)
+                except AttributeError:
+                    pass
         except Exception as exc:
             logger.warning('Failed to terminate logcat process: %s', exc)
         finally:
@@ -968,6 +1012,8 @@ class LogcatWindow(QDialog):
         """Reset state and UI once logcat streaming halts."""
         self.update_timer.stop()
         self.log_buffer.clear()
+        self._partial_line = ''
+        self._suppress_logcat_errors = False
 
         self.is_running = False
         self.start_btn.setEnabled(True)
@@ -984,6 +1030,7 @@ class LogcatWindow(QDialog):
         self.raw_logs.clear()
         self.filtered_logs.clear()
         self.log_buffer.clear()
+        self._partial_line = ''
         self._update_status_label('Logs cleared')
 
     def apply_live_filter(self, pattern):
@@ -1034,6 +1081,12 @@ class LogcatWindow(QDialog):
         scrollbar = self.log_display.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
+    def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
+        """Ensure the logcat process stops when the window closes."""
+        if self.logcat_process:
+            self.stop_logcat()
+        super().closeEvent(event)
+
     def filter_lines(self, lines):
         """Filter lines based on current live filter."""
         patterns = []
@@ -1050,16 +1103,21 @@ class LogcatWindow(QDialog):
         if not patterns:
             return lines
 
-        filtered = lines
+        compiled_patterns = []
         for raw_pattern in patterns:
             try:
-                compiled = re.compile(raw_pattern, re.IGNORECASE)
+                compiled_patterns.append(re.compile(raw_pattern, re.IGNORECASE))
             except re.error:
                 # Skip invalid regex patterns to keep UI responsive
                 continue
-            filtered = [line for line in filtered if compiled.search(line)]
-            if not filtered:
-                break
+
+        if not compiled_patterns:
+            return lines
+
+        filtered = []
+        for line in lines:
+            if any(pattern.search(line) for pattern in compiled_patterns):
+                filtered.append(line)
         return filtered
 
     def load_saved_filter(self, filter_name):
