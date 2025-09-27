@@ -540,7 +540,7 @@ class LogcatWindow(QDialog):
         saved_label = QLabel('Saved:')
         self.saved_filters_combo = QComboBox()
         self.saved_filters_combo.setEditable(False)
-        self.saved_filters_combo.currentTextChanged.connect(self.load_saved_filter)
+        self.saved_filters_combo.currentIndexChanged.connect(self.load_saved_filter)
 
         apply_filter_btn = QPushButton('Apply')
         apply_filter_btn.setFixedWidth(64)
@@ -600,42 +600,82 @@ class LogcatWindow(QDialog):
 
         filter_name, ok = QInputDialog.getText(self, 'Save Filter', 'Enter filter name:')
         if ok and filter_name.strip():
-            self.filters[filter_name.strip()] = self.filter_input.text().strip()
+            normalized_name = filter_name.strip()
+            self.filters[normalized_name] = self.filter_input.text().strip()
             self.save_filters()
             self.update_saved_filters_combo()
+            new_index = self.saved_filters_combo.findData(normalized_name, role=Qt.ItemDataRole.UserRole)
+            if new_index != -1:
+                self.saved_filters_combo.setCurrentIndex(new_index)
             QMessageBox.information(self, 'Filter Saved', f'Filter "{filter_name}" saved successfully!')
 
     def delete_saved_filter(self):
         """Delete selected saved filter."""
-        current_filter = self.saved_filters_combo.currentText()
-        if not current_filter:
+        index = self.saved_filters_combo.currentIndex()
+        if index < 0:
             QMessageBox.information(self, 'No Selection', 'Please select a filter to delete.')
             return
 
-        reply = QMessageBox.question(self, 'Delete Filter',
-                                   f'Are you sure you want to delete filter "{current_filter}"?',
-                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        filter_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
+        if not filter_name:
+            QMessageBox.information(self, 'No Selection', 'Please select a filter to delete.')
+            return
+
+        display_name = self.saved_filters_combo.itemText(index)
+
+        reply = QMessageBox.question(
+            self,
+            'Delete Filter',
+            f'Are you sure you want to delete filter "{display_name}"?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
 
         if reply == QMessageBox.StandardButton.Yes:
-            if current_filter in self.filters:
-                del self.filters[current_filter]
+            if filter_name in self.filters:
+                del self.filters[filter_name]
                 self.save_filters()
                 self.update_saved_filters_combo()
                 self.active_filters = [
-                    f for f in self.active_filters if f.get('name') != current_filter
+                    f for f in self.active_filters if f.get('name') != filter_name
                 ]
                 self.update_active_filters_list()
                 self._handle_filters_changed()
-                QMessageBox.information(self, 'Filter Deleted', f'Filter "{current_filter}" deleted successfully!')
+                QMessageBox.information(
+                    self,
+                    'Filter Deleted',
+                    f'Filter "{display_name}" deleted successfully!'
+                )
 
     def update_saved_filters_combo(self):
         """Update the saved filters combo box."""
-        current_text = self.saved_filters_combo.currentText()
+        if not hasattr(self, 'saved_filters_combo'):
+            return
+
+        current_name = self.saved_filters_combo.currentData(Qt.ItemDataRole.UserRole)
+
+        self.saved_filters_combo.blockSignals(True)
         self.saved_filters_combo.clear()
-        self.saved_filters_combo.addItems(list(self.filters.keys()))
-        # Try to restore selection
-        if current_text in self.filters:
-            self.saved_filters_combo.setCurrentText(current_text)
+
+        for name, pattern in self.filters.items():
+            display = f'{name}: {pattern}'
+            self.saved_filters_combo.addItem(display, name)
+            index = self.saved_filters_combo.count() - 1
+            self.saved_filters_combo.setItemData(index, pattern, Qt.ItemDataRole.ToolTipRole)
+
+        target_index = -1
+        if current_name:
+            target_index = self.saved_filters_combo.findData(current_name, role=Qt.ItemDataRole.UserRole)
+
+        if target_index == -1 and self.saved_filters_combo.count() > 0:
+            target_index = 0
+
+        if target_index != -1:
+            self.saved_filters_combo.setCurrentIndex(target_index)
+
+        self.saved_filters_combo.blockSignals(False)
+
+        if self.saved_filters_combo.count() > 0:
+            self.load_saved_filter(self.saved_filters_combo.currentIndex())
 
     def add_active_filter(self, name: str, pattern: str):
         """Add a saved filter to the active filters list."""
@@ -1139,20 +1179,32 @@ class LogcatWindow(QDialog):
 
     def load_saved_filter(self, filter_name):
         """Update preview when saved filter is selected."""
-        if not filter_name or filter_name not in self.filters:
+        if not hasattr(self, 'saved_filters_combo'):
             return
 
-        pattern = self.filters[filter_name]
-        self.filter_input.blockSignals(True)
-        self.filter_input.setText(pattern)
-        self.filter_input.blockSignals(False)
-        self.apply_live_filter(pattern)
+        index = filter_name if isinstance(filter_name, int) else self.saved_filters_combo.currentIndex()
+        if index < 0:
+            return
+
+        actual_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
+        if not actual_name:
+            return
+
+        pattern = self.filters.get(actual_name)
+        if pattern is None:
+            return
+
+        self.saved_filters_combo.setToolTip(f'{actual_name}: {pattern}')
 
     def apply_selected_filter(self):
         """Apply the selected saved filter."""
-        current_filter = self.saved_filters_combo.currentText()
-        if current_filter and current_filter in self.filters:
-            self.add_active_filter(current_filter, self.filters[current_filter])
+        index = self.saved_filters_combo.currentIndex()
+        if index < 0:
+            return
+
+        filter_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
+        if filter_name and filter_name in self.filters:
+            self.add_active_filter(filter_name, self.filters[filter_name])
 
     def open_performance_settings(self):
         """Open performance settings dialog."""

@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtCore import Qt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -32,6 +33,9 @@ class LogcatWindowLimitLinesTest(unittest.TestCase):
 
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
+        self.window.apply_live_filter('')
+        self.window.active_filters.clear()
+        self.window.update_active_filters_list()
         self.window.max_lines = 5
         self.window.apply_live_filter('')
         self.window.active_filters.clear()
@@ -219,6 +223,33 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         process = self.window.logcat_process
         self.assertIsNotNone(process)
         self.assertFalse(process.waitForStarted_called)
+
+    def test_saved_filters_combo_displays_name_and_pattern(self):
+        """Saved filters combo should show filter name with its pattern."""
+        self.window.filters = {'ErrorsOnly': 'E'}
+        self.window.update_saved_filters_combo()
+
+        combo = self.window.saved_filters_combo
+        self.assertEqual(combo.count(), 1)
+        self.assertEqual(combo.itemText(0), 'ErrorsOnly: E')
+        self.assertEqual(
+            combo.itemData(0, Qt.ItemDataRole.UserRole),
+            'ErrorsOnly'
+        )
+
+    def test_selecting_saved_filter_does_not_touch_input(self):
+        """Selecting a saved filter should not override manual input."""
+        initial_pattern = 'custom manual'
+        self.window.filter_input.setText(initial_pattern)
+        self.assertEqual(self.window.live_filter_pattern, initial_pattern)
+
+        self.window.filters = {'TagAlpha': 'alpha'}
+        self.window.update_saved_filters_combo()
+
+        self.window.saved_filters_combo.setCurrentIndex(0)
+
+        self.assertEqual(self.window.filter_input.text(), initial_pattern)
+        self.assertEqual(self.window.live_filter_pattern, initial_pattern)
 
     def test_live_and_saved_filters_combine(self):
         """Live filter input should combine with active saved filters."""
