@@ -77,6 +77,7 @@ from ui.logcat_viewer import LogcatWindow
 
 
 class WindowMain(QMainWindow):
+    finalize_operation_requested = pyqtSignal(list, str)
     """Main PyQt6 application window."""
 
     # Define custom signals for thread-safe UI updates
@@ -194,6 +195,7 @@ class WindowMain(QMainWindow):
         self.screenshot_completed_signal.connect(self._on_screenshot_completed)
         self.file_generation_completed_signal.connect(self._on_file_generation_completed)
         self.console_output_signal.connect(self._on_console_output)
+        self.finalize_operation_requested.connect(self._finalize_operation)
 
         # Connect device operations manager signals
         self.device_operations_manager.recording_stopped_signal.connect(self._on_recording_stopped)
@@ -820,7 +822,7 @@ class WindowMain(QMainWindow):
                     ))
                 raise e  # Re-raise to be handled by run_in_thread
             finally:
-                QTimer.singleShot(0, lambda: self._finalize_operation(serials, refresh_mode))
+                self.finalize_operation_requested.emit(list(serials), refresh_mode)
 
         self.run_in_thread(wrapper)
 
