@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QFileDialog
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
-from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
+from PyQt6.QtGui import (QTextCursor, QAction, QIcon)
 
 from utils import adb_models
 from utils import adb_tools
@@ -58,6 +58,8 @@ from ui.completion_dialog_manager import CompletionDialogManager
 from ui.dialog_manager import DialogManager
 from ui.status_bar_manager import StatusBarManager
 from ui.recording_status_view import update_recording_status_view
+from ui.system_actions_manager import SystemActionsManager
+from ui.file_dialog_manager import FileDialogManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -162,6 +164,12 @@ class WindowMain(QMainWindow):
 
         # Initialize completion dialog manager
         self.completion_dialog_manager = CompletionDialogManager(self)
+
+        # Initialize system actions manager
+        self.system_actions_manager = SystemActionsManager(self)
+
+        # Initialize file dialog manager
+        self.file_dialog_manager = FileDialogManager()
 
         # Initialize logging and diagnostics manager
         self.logging_manager = LoggingManager(self)
@@ -678,7 +686,7 @@ class WindowMain(QMainWindow):
 
     def browse_output_path(self):
         """Browse for unified output directory used by screenshots/recordings."""
-        directory = QFileDialog.getExistingDirectory(self, 'Select Output Directory')
+        directory = self.file_dialog_manager.select_directory(self, 'Select Output Directory')
         if directory:
             # Use common.py to ensure proper path handling
             normalized_path = common.make_gen_dir_path(directory)
@@ -691,7 +699,7 @@ class WindowMain(QMainWindow):
 
     def browse_file_generation_output_path(self):
         """Browse and select file generation output directory."""
-        directory = QFileDialog.getExistingDirectory(self, 'Select File Generation Output Directory')
+        directory = self.file_dialog_manager.select_directory(self, 'Select File Generation Output Directory')
         if directory:
             # Use common.py to ensure proper path handling
             normalized_path = common.make_gen_dir_path(directory)
@@ -1161,32 +1169,6 @@ class WindowMain(QMainWindow):
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed notification shown')
         return
 
-
-    def _open_folder(self, path):
-        """Open the specified folder in system file manager."""
-
-        try:
-            if platform.system() == 'Darwin':  # macOS
-                subprocess.run(['open', path])
-            elif platform.system() == 'Windows':  # Windows
-                subprocess.run(['explorer', path])
-            else:  # Linux
-                subprocess.run(['xdg-open', path])
-            logger.info(f'📁 Opened folder: {path}')
-        except Exception as e:
-            logger.error(f'❌ Failed to open folder: {e}')
-            self.show_error('Error', f'Could not open folder:\n{path}\n\nError: {e}')
-
-    def _copy_to_clipboard(self, text):
-        """Copy text to system clipboard."""
-        try:
-            clipboard = QGuiApplication.clipboard()
-            clipboard.setText(text)
-            self.show_info('📋 Copied!', f'Path copied to clipboard:\n{text}')
-            logger.info(f'📋 Copied to clipboard: {text}')
-        except Exception as e:
-            logger.error(f'❌ Failed to copy to clipboard: {e}')
-            self.show_error('Error', f'Could not copy to clipboard:\n{e}')
 
     def _handle_screenshot_completion(self, output_path, device_count, device_models, devices):
         """Handle screenshot completion in main thread."""

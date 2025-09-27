@@ -129,7 +129,7 @@ class CompletionDialogManager:
 
         copy_path_btn = QPushButton('📋 Copy Folder Path')
         copy_path_btn.setStyleSheet(button_style)
-        copy_path_btn.clicked.connect(lambda: window._copy_to_clipboard(payload['output_path']))
+        copy_path_btn.clicked.connect(lambda: window.system_actions_manager.copy_to_clipboard(payload['output_path']))
         layout.addWidget(copy_path_btn)
 
         if payload['suggested_actions']['file_count']:
@@ -173,7 +173,7 @@ class CompletionDialogManager:
         if payload['output_path']:
             open_folder_btn = QPushButton('🗂️ Open Folder')
             StyleManager.apply_button_style(open_folder_btn, ButtonStyle.SECONDARY)
-            open_folder_btn.clicked.connect(lambda: window._open_folder(payload['output_path']))
+            open_folder_btn.clicked.connect(lambda: window.system_actions_manager.open_folder(payload['output_path']))
             button_layout.addWidget(open_folder_btn)
 
         close_btn = QPushButton('Close')
