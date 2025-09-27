@@ -1,5 +1,8 @@
 """Adb objects models."""
 
+from typing import Optional
+
+
 class DeviceInfo:
   """Adb device info models."""
 
@@ -15,6 +18,8 @@ class DeviceInfo:
       android_api_level: str,
       gms_version: str,
       build_fingerprint: str,
+      audio_state: Optional[str] = None,
+      bluetooth_manager_state: Optional[str] = None,
   ):
     self.device_serial_num = device_serial_num
     self.device_usb = device_usb
@@ -26,6 +31,8 @@ class DeviceInfo:
     self.android_api_level = android_api_level
     self.gms_version = gms_version
     self.build_fingerprint = build_fingerprint
+    self.audio_state = audio_state
+    self.bluetooth_manager_state = bluetooth_manager_state
 
   def on_or_off_with_bool(self, state: bool) -> str:
     if state:

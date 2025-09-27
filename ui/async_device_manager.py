@@ -738,6 +738,14 @@ class AsyncDeviceManager(QObject):
             elif device_info.build_fingerprint is None:  # 初次加載且沒有值
                 device_info.build_fingerprint = 'Unknown'
 
+            audio_state = detailed_info.get('audio_state')
+            if audio_state:
+                device_info.audio_state = audio_state
+
+            bt_manager_state = detailed_info.get('bluetooth_manager_state')
+            if bt_manager_state:
+                device_info.bluetooth_manager_state = bt_manager_state
+
             # 發送更新信號
             self.device_detailed_loaded.emit(serial, device_info)
 

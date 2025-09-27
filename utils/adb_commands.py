@@ -177,6 +177,15 @@ def cmd_get_device_wifi(serial_num):
   # check the wifi is on/off
   return _build_setting_getter_command(serial_num, 'wifi_on')
 
+
+def cmd_get_audio_dump(serial_num: str) -> str:
+  return _build_adb_command(serial_num, 'shell', 'dumpsys', 'audio')
+
+
+def cmd_get_bluetooth_manager_state(serial_num: str) -> str:
+  return _build_adb_command(serial_num, 'shell', 'cmd', 'bluetooth_manager', 'get-state')
+
+
 def cmd_clear_device_logcat(serial_num) -> str:
   """Clears device logcat."""
   # adb -s $serial logcat -c

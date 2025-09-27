@@ -106,8 +106,16 @@ class ProgressiveUILoadingTest(unittest.TestCase):
                 # 驗證返回的詳細信息結構
                 self.assertIsInstance(detailed_info, dict)
 
-                expected_keys = ['wifi_status', 'bluetooth_status', 'android_version',
-                               'android_api_level', 'gms_version', 'build_fingerprint']
+                expected_keys = [
+                    'wifi_status',
+                    'bluetooth_status',
+                    'android_version',
+                    'android_api_level',
+                    'gms_version',
+                    'build_fingerprint',
+                    'audio_state',
+                    'bluetooth_manager_state',
+                ]
                 for key in expected_keys:
                     self.assertIn(key, detailed_info)
                     print(f"    ✅ {key}: {detailed_info[key]}")

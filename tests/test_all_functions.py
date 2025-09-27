@@ -141,6 +141,37 @@ class TestDeviceDetection(unittest.TestCase):
             print(f"   🔍 Traceback: {traceback.format_exc()}")
             return False
 
+    def test_audio_state_summary_parsing(self):
+        """Test parsing of dumpsys audio output for summary."""
+        sample_output = [
+            'Audio Routes (status):',
+            '  mode: NORMAL',
+            '  ringer mode: NORMAL',
+            '  music active: false',
+            'Device current state: speakerphone: ON',
+        ]
+        with patch.object(common, 'run_command', return_value=sample_output):
+            summary = adb_tools.get_audio_state_summary('test-serial')
+
+        self.assertIsInstance(summary, str)
+        self.assertIn('mode=NORMAL', summary)
+        self.assertIn('music_active=false', summary)
+
+    def test_bluetooth_manager_state_parsing(self):
+        """Test parsing of cmd bluetooth_manager get-state output."""
+        sample_output = ['Bluetooth Manager state: ON', 'Enabled: true']
+        with patch.object(common, 'run_command', return_value=sample_output):
+            state = adb_tools.get_bluetooth_manager_state_summary('test-serial')
+
+        self.assertEqual(state, 'ON')
+
+    def test_bluetooth_manager_state_fallback(self):
+        """Ensure bluetooth manager summary handles missing output."""
+        with patch.object(common, 'run_command', return_value=[]):
+            state = adb_tools.get_bluetooth_manager_state_summary('test-serial')
+
+        self.assertEqual(state, 'Unknown')
+
 
 class TestRecordingFunctionality(unittest.TestCase):
     """Test screen recording functionality."""

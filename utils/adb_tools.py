@@ -5,6 +5,7 @@ import glob
 import os
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -403,6 +404,8 @@ def get_device_detailed_info(serial_num: str) -> dict:
       'android_api_level': get_android_api_level(serial_num),
       'gms_version': get_gms_version(serial_num),
       'build_fingerprint': get_build_fingerprint(serial_num),
+      'audio_state': get_audio_state_summary(serial_num),
+      'bluetooth_manager_state': get_bluetooth_manager_state_summary(serial_num),
     }
     logger.info('Detailed information retrieved for device %s', serial_num)
     return detailed_info
@@ -415,6 +418,8 @@ def get_device_detailed_info(serial_num: str) -> dict:
       'android_api_level': 'Unknown',
       'gms_version': 'Unknown',
       'build_fingerprint': 'Unknown',
+      'audio_state': 'Unknown',
+      'bluetooth_manager_state': 'Unknown',
     }
 
 
@@ -832,6 +837,94 @@ def check_bluetooth_is_on(serial_num):
     if data.isnumeric():
       return int(data)
   return 0
+
+
+def get_audio_state_summary(serial_num: str) -> str:
+  """Return a concise summary for dumpsys audio."""
+  lines = common.run_command(adb_commands.cmd_get_audio_dump(serial_num))
+  if not lines:
+    return 'Unknown'
+
+  mode_pattern = re.compile(r'\bmode\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
+  ringer_pattern = re.compile(r'\bringer\s+mode\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
+  music_pattern = re.compile(r'music\s+active\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
+  device_pattern = re.compile(r'device\s+(?:current\s+)?state\s*[:=]\s*(.+)', re.IGNORECASE)
+  sco_pattern = re.compile(r'sco\s+state\s*[:=]\s*(.+)', re.IGNORECASE)
+
+  summary: dict[str, str] = {}
+  for raw_line in lines:
+    stripped = raw_line.strip()
+    if not stripped:
+      continue
+
+    if 'mode' not in summary:
+      match = mode_pattern.search(stripped)
+      if match:
+        summary['mode'] = match.group(1).upper()
+        continue
+
+    if 'ringer' not in summary:
+      match = ringer_pattern.search(stripped)
+      if match:
+        summary['ringer'] = match.group(1).upper()
+        continue
+
+    if 'music_active' not in summary:
+      match = music_pattern.search(stripped)
+      if match:
+        summary['music_active'] = match.group(1).lower()
+        continue
+
+    if 'device_state' not in summary:
+      match = device_pattern.search(stripped)
+      if match:
+        summary['device_state'] = match.group(1).strip()
+        continue
+
+    if 'sco_state' not in summary:
+      match = sco_pattern.search(stripped)
+      if match:
+        summary['sco_state'] = match.group(1).strip()
+
+    if len(summary) >= 5:
+      break
+
+  parts = []
+  if 'mode' in summary:
+    parts.append(f"mode={summary['mode']}")
+  if 'ringer' in summary:
+    parts.append(f"ringer={summary['ringer']}")
+  if 'music_active' in summary:
+    parts.append(f"music_active={summary['music_active']}")
+  if 'device_state' in summary:
+    parts.append(f"device_state={summary['device_state']}")
+  if 'sco_state' in summary:
+    parts.append(f"sco_state={summary['sco_state']}")
+
+  if parts:
+    return ' | '.join(parts)
+
+  snippet = ' '.join(line.strip() for line in lines[:5] if line.strip())
+  return snippet[:200] if snippet else 'Unknown'
+
+
+def get_bluetooth_manager_state_summary(serial_num: str) -> str:
+  """Return bluetooth manager high-level state."""
+  lines = common.run_command(adb_commands.cmd_get_bluetooth_manager_state(serial_num))
+  if not lines:
+    return 'Unknown'
+
+  state_pattern = re.compile(r'state\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
+  for raw_line in lines:
+    stripped = raw_line.strip()
+    if not stripped:
+      continue
+    match = state_pattern.search(stripped)
+    if match:
+      return match.group(1).upper()
+
+  first_line = lines[0].strip()
+  return first_line if first_line else 'Unknown'
 
 
 def get_android_version(serial_num):
