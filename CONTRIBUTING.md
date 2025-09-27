@@ -2,7 +2,7 @@
 
 Thank you for taking the time to improve Lazy Blacktea. This guide outlines how to propose changes, report issues, and collaborate effectively with the maintainers.
 
-> Current release: v0.0.21
+> Current release: v0.0.23
 
 ## Before You Start
 - Review open issues and discussions to avoid duplicate work

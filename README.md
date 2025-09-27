@@ -1,13 +1,15 @@
 # Lazy Blacktea
 
+![Lazy Blacktea logo](assets/icons/icon_128x128.png)
+
 [![Build Status](https://github.com/cy76/lazy_blacktea/workflows/build/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
 [![Test Status](https://github.com/cy76/lazy_blacktea/workflows/test/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Lazy Blacktea is a PyQt-based desktop client that streamlines Android debugging and automation workflows by wrapping ADB (Android Debug Bridge) capabilities in a productive GUI.
+Lazy Blacktea is a PyQt-based Android ADB GUI for power-users. It streamlines multi-device workflows such as batch APK installs, bugreports, screen capture, and scripted automation, with cross-platform builds for macOS and Linux.
 
-> Current release: v0.0.21
+> Current release: v0.0.23
 
 ## Table of Contents
 - [Highlights](#highlights)
