@@ -1,7 +1,6 @@
 """A PyQt6 GUI application for simplifying Android ADB and automation tasks."""
 
 import datetime
-import glob
 import logging
 import os
 import platform
@@ -13,8 +12,7 @@ from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
-    QCheckBox,
-    QFileDialog
+    QCheckBox
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import (QTextCursor, QAction, QIcon)
@@ -60,6 +58,7 @@ from ui.status_bar_manager import StatusBarManager
 from ui.recording_status_view import update_recording_status_view
 from ui.system_actions_manager import SystemActionsManager
 from ui.file_dialog_manager import FileDialogManager
+from ui.battery_info_manager import BatteryInfoManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -171,6 +170,9 @@ class WindowMain(QMainWindow):
         # Initialize file dialog manager
         self.file_dialog_manager = FileDialogManager()
 
+        # Initialize battery info manager
+        self.battery_info_manager = BatteryInfoManager(self)
+
         # Initialize logging and diagnostics manager
         self.logging_manager = LoggingManager(self)
         self.diagnostics_manager = DiagnosticsManager(self)
@@ -238,6 +240,10 @@ class WindowMain(QMainWindow):
 
         # Start device refresh with delay to avoid GUI blocking (after config is loaded)
         QTimer.singleShot(500, self.device_manager.start_device_refresh)
+
+        # Start periodic battery info refresh
+        self.battery_info_manager.start()
+        QTimer.singleShot(2000, self.battery_info_manager.refresh_all)
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -760,7 +766,15 @@ class WindowMain(QMainWindow):
         thread = threading.Thread(target=wrapper, daemon=True, name=f'BG-{func.__name__}')
         thread.start()
 
-    def _run_adb_tool_on_selected_devices(self, tool_func, description: str, *args, show_progress=True, **kwargs):
+    def _run_adb_tool_on_selected_devices(
+        self,
+        tool_func,
+        description: str,
+        *args,
+        show_progress: bool = True,
+        refresh_mode: str = 'full',
+        **kwargs,
+    ):
         """Run ADB tool on selected devices with enhanced progress feedback and operation tracking."""
         devices = self.get_checked_devices()
         if not devices:
@@ -776,9 +790,7 @@ class WindowMain(QMainWindow):
         # Set operation status for all devices
         for serial in serials:
             self.device_operations[serial] = description
-
-        # Trigger device list refresh to show operation status
-        QTimer.singleShot(100, self.device_manager.force_refresh)
+        self.device_list_controller.update_device_list(self.device_dict)
 
         if show_progress:
             device_list = ', '.join(device_models[:3])
@@ -808,18 +820,45 @@ class WindowMain(QMainWindow):
                     ))
                 raise e  # Re-raise to be handled by run_in_thread
             finally:
-                # Clear operation status for all devices
-                QTimer.singleShot(0, lambda: self._clear_device_operations(serials))
+                QTimer.singleShot(0, lambda: self._finalize_operation(serials, refresh_mode))
 
         self.run_in_thread(wrapper)
 
-    def _clear_device_operations(self, serials):
+    def _clear_device_operations(self, serials: Iterable[str]) -> None:
         """Clear operation status for specified devices."""
         for serial in serials:
-            if serial in self.device_operations:
-                del self.device_operations[serial]
-        # Refresh device list to update display
-        self.device_manager.force_refresh()
+            self.device_operations.pop(serial, None)
+
+    def _finalize_operation(self, serials: List[str], refresh_mode: str) -> None:
+        """Finalize long-running ADB operations with appropriate UI updates."""
+        self._clear_device_operations(serials)
+
+        if refresh_mode == 'full':
+            self.device_manager.force_refresh()
+            return
+
+        if refresh_mode == 'connectivity':
+            self._refresh_connectivity_info(serials)
+            self.battery_info_manager.refresh_serials(serials)
+            return
+
+        self.device_list_controller.update_device_list(self.device_dict)
+
+    def _refresh_connectivity_info(self, serials: Iterable[str]) -> None:
+        """Refresh Bluetooth/WiFi status for a subset of devices without full scan."""
+        updated = False
+        for serial in serials:
+            if serial not in self.device_dict:
+                continue
+            try:
+                bt_on = adb_tools.check_bluetooth_is_on(serial)
+                self.device_dict[serial].bt_is_on = bt_on
+                updated = True
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.debug('Failed to refresh connectivity for %s: %s', serial, exc)
+
+        if updated:
+            self.device_list_controller.update_device_list(self.device_dict)
 
     # ADB Server methods
     def adb_start_server(self):
@@ -1372,7 +1411,12 @@ class WindowMain(QMainWindow):
             QTimer.singleShot(1000, self.device_manager.force_refresh)
 
         # Disable progress dialog, only show completion notification
-        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'enable Bluetooth', show_progress=False)
+        self._run_adb_tool_on_selected_devices(
+            bluetooth_wrapper,
+            'enable Bluetooth',
+            show_progress=False,
+            refresh_mode='connectivity',
+        )
 
         # Show completion notification immediately
         devices = self.get_checked_devices()
@@ -1389,7 +1433,12 @@ class WindowMain(QMainWindow):
             QTimer.singleShot(1000, self.device_manager.force_refresh)
 
         # Disable progress dialog, only show completion notification
-        self._run_adb_tool_on_selected_devices(bluetooth_wrapper, 'disable Bluetooth', show_progress=False)
+        self._run_adb_tool_on_selected_devices(
+            bluetooth_wrapper,
+            'disable Bluetooth',
+            show_progress=False,
+            refresh_mode='connectivity',
+        )
 
         # Show completion notification immediately
         devices = self.get_checked_devices()
@@ -1880,6 +1929,8 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         # Clean up timers to prevent memory leaks
         if hasattr(self, 'recording_timer'):
             self.recording_timer.stop()
+        if hasattr(self, 'battery_info_manager'):
+            self.battery_info_manager.stop()
 
         # Clean up new modular components
         if hasattr(self, 'device_manager'):
@@ -1903,6 +1954,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         self.device_dict[serial] = device_info
         # 觸發完整的UI更新（包括複選框）
         self.update_device_list(self.device_dict)
+        self.battery_info_manager.refresh_serials([serial])
 
     def _on_device_lost_from_manager(self, serial: str):
         """處理從DeviceManager發來的設備丟失事件"""
@@ -1912,6 +1964,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             del self.device_dict[serial]
         # 觸發完整的UI更新
         self.update_device_list(self.device_dict)
+        self.battery_info_manager.remove(serial)
 
     def _on_device_status_updated(self, status: str):
         """處理從DeviceManager發來的狀態更新事件"""

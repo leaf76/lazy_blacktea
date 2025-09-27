@@ -555,11 +555,20 @@ class DeviceListController:
             return base_tooltip
 
     def _get_additional_device_info(self, serial: str) -> Dict[str, str]:
+        cache_source = getattr(self.window, 'battery_info_manager', None)
+        if cache_source is not None:
+            cached = cache_source.get_cached_info(serial)
+            if cached:
+                return cached
+
         try:
-            return adb_tools.get_additional_device_info(serial)
+            info = adb_tools.get_additional_device_info(serial)
+            if cache_source is not None:
+                cache_source.update_cache(serial, info)
+            return info
         except Exception as exc:
             logger.error('Error getting additional device info for %s: %s', serial, exc)
-            return {
+            info = {
                 'screen_density': 'Unknown',
                 'screen_size': 'Unknown',
                 'battery_level': 'Unknown',
@@ -568,6 +577,9 @@ class DeviceListController:
                 'battery_dou_hours': 'Unknown',
                 'cpu_arch': 'Unknown',
             }
+            if cache_source is not None:
+                cache_source.update_cache(serial, info)
+            return info
 
     def _apply_device_checkbox_style(self, checkbox: QCheckBox) -> None:
         checkbox.setStyleSheet(StyleManager.get_checkbox_style())
