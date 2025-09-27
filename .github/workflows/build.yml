@@ -123,12 +123,23 @@ jobs:
         echo "DISPLAY=:99" >> $GITHUB_ENV
 
     - name: Test application startup (quick smoke test)
-      run: |
-        # Test with offscreen mode to avoid GUI dependencies
-        timeout 30s python lazy_blacktea_pyqt.py --version || true
       env:
         QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
         DISPLAY: ${{ matrix.platform == 'linux' && ':99' || '' }}
+      run: |
+        python - <<'PY'
+        import os
+        import subprocess
+        import sys
+
+        cmd = [sys.executable, "lazy_blacktea_pyqt.py", "--version"]
+        env = os.environ.copy()
+        try:
+            result = subprocess.run(cmd, check=False, timeout=30, env=env)
+            print(f"Command exited with return code {result.returncode}")
+        except subprocess.TimeoutExpired:
+            print("Command timed out after 30 seconds")
+        PY
 
     - name: Clean previous builds
       run: |
@@ -165,17 +176,26 @@ jobs:
         fi
 
     - name: Test built application (quick smoke test)
-      run: |
-        if [ "${{ matrix.platform }}" = "linux" ]; then
-          # Test Linux executable with offscreen mode
-          timeout 30s ./dist/lazyblacktea/lazyblacktea --version || true
-        else
-          # Test macOS app bundle
-          timeout 30s ./dist/LazyBlacktea.app/Contents/MacOS/LazyBlacktea --version || true
-        fi
       env:
         QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
         DISPLAY: ${{ matrix.platform == 'linux' && ':99' || '' }}
+        MATRIX_PLATFORM: ${{ matrix.platform }}
+      run: |
+        python - <<'PY'
+        import os
+        import subprocess
+
+        platform = os.environ["MATRIX_PLATFORM"]
+        target = "./dist/lazyblacktea/lazyblacktea" if platform == "linux" else "./dist/LazyBlacktea.app/Contents/MacOS/LazyBlacktea"
+        env = os.environ.copy()
+        try:
+            result = subprocess.run([target, "--version"], check=False, timeout=30, env=env)
+            print(f"{target} exited with return code {result.returncode}")
+        except FileNotFoundError as err:
+            print(f"Executable not found: {err}")
+        except subprocess.TimeoutExpired:
+            print("Command timed out after 30 seconds")
+        PY
 
     - name: Prepare artifacts
       run: |

@@ -7,7 +7,7 @@
 
 Lazy Blacktea is a PyQt-based desktop client that streamlines Android debugging and automation workflows by wrapping ADB (Android Debug Bridge) capabilities in a productive GUI.
 
-> Current release: v0.0.11
+> Current release: v0.0.21
 
 ## Table of Contents
 - [Highlights](#highlights)
