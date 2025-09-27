@@ -105,6 +105,7 @@ The script auto-detects macOS or Linux, resolves build dependencies, and writes 
 - **Device discovery lag**: rerun `adb kill-server && adb start-server` and confirm USB debugging authorization prompts are accepted
 
 ## Documentation and Support
+- GitHub Actions workflows: [.github/workflows.md](.github/workflows.md)
 - Issues: https://github.com/cy76/lazy_blacktea/issues
 - Discussions: https://github.com/cy76/lazy_blacktea/discussions
 - Security disclosures: use GitHub Security Advisories for private reports
