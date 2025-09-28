@@ -24,6 +24,7 @@ class DeviceListController:
 
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
+        self._syncing_selection = False
 
     # ------------------------------------------------------------------
     # Public API used by WindowMain
@@ -31,18 +32,19 @@ class DeviceListController:
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
         """Update the device list display with performance optimisations."""
         self.window.device_dict = device_dict
+        selected_serials = self.window.device_selection_manager.prune_selection(device_dict.keys())
+        selected_set = set(selected_serials)
 
         device_count = len(device_dict)
         if DeviceListPerformanceOptimizer.should_use_virtualization(device_count):
-            preserved_serials = set(self._get_current_checked_serials())
-            self._activate_virtualized_view(preserved_serials)
+            self._activate_virtualized_view(selected_set)
             if self.window.virtualized_device_list is not None:
                 vlist = self.window.virtualized_device_list
                 vlist.update_device_list(device_dict)
-                vlist.set_checked_serials(preserved_serials)
+                vlist.set_checked_serials(selected_set, emit_signal=False)
                 vlist.apply_search_and_sort()
             self._update_virtualized_title()
-            self.window.update_selection_count()
+            self.update_selection_count()
             return
 
         self._deactivate_virtualized_view()
@@ -57,45 +59,47 @@ class DeviceListController:
 
     def select_all_devices(self) -> None:
         """Select every device, respecting virtualized list state."""
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            self.window.virtualized_device_list.select_all_devices()
-            logger.info('Selected all devices (virtualized)')
-            return
-
-        for checkbox in self.window.check_devices.values():
-            checkbox.setChecked(True)
-        logger.info('Selected all %s devices', len(self.window.check_devices))
+        all_serials = list(self.window.device_dict.keys())
+        selected = self._set_selection(all_serials)
+        logger.info('Selected all %s devices (active=%s)', len(all_serials), self.window.device_selection_manager.get_active_serial())
 
     def select_no_devices(self) -> None:
         """Deselect all devices, handling virtualized lists."""
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            self.window.virtualized_device_list.deselect_all_devices()
-            logger.info('Deselected all devices (virtualized)')
-            return
-
-        for checkbox in self.window.check_devices.values():
-            checkbox.setChecked(False)
+        self._set_selection([])
         logger.info('Deselected all devices')
 
     def update_selection_count(self) -> None:
         """Refresh device count title according to current selection/search."""
+        device_count = len(self.window.device_dict)
+        selected_serials = self.window.device_selection_manager.get_selected_serials()
+        selected_count = len(selected_serials)
+        active_serial = self.window.device_selection_manager.get_active_serial()
+        search_text = self.window.device_search_manager.get_search_text()
         if self.window.virtualized_active and self.window.virtualized_device_list is not None:
             self._update_virtualized_title()
-            return
-
-        device_count = len(self.window.device_dict)
-        selected_count = len(self.window.get_checked_devices())
-        search_text = self.window.device_search_manager.get_search_text()
-        if search_text:
-            visible_count = sum(
-                1 for checkbox in self.window.check_devices.values() if checkbox.isVisible()
-            )
-            self.window.title_label.setText(
-                f'Connected Devices ({visible_count}/{device_count}) - Selected: {selected_count}'
-            )
         else:
-            self.window.title_label.setText(
-                f'Connected Devices ({device_count}) - Selected: {selected_count}'
+            if search_text:
+                visible_count = sum(
+                    1 for checkbox in self.window.check_devices.values() if checkbox.isVisible()
+                )
+                self.window.title_label.setText(
+                    f'Connected Devices ({visible_count}/{device_count}) - Selected: {selected_count}'
+                )
+            else:
+                self.window.title_label.setText(
+                    f'Connected Devices ({device_count}) - Selected: {selected_count}'
+                )
+
+        if hasattr(self.window, 'selection_summary_label') and self.window.selection_summary_label is not None:
+            if active_serial and active_serial in self.window.device_dict:
+                device = self.window.device_dict[active_serial]
+                active_label = f'{device.device_model} ({active_serial[:8]}...)'
+            elif active_serial:
+                active_label = active_serial
+            else:
+                active_label = 'None'
+            self.window.selection_summary_label.setText(
+                f'Selected {selected_count} of {device_count} · Active: {active_label}'
             )
 
     def filter_and_sort_devices(self) -> None:
@@ -154,18 +158,11 @@ class DeviceListController:
         self.window.device_search_manager.set_sort_mode(sort_mode)
         self.filter_and_sort_devices()
 
-    def handle_virtualized_selection_change(self, serial: str, is_checked: bool) -> None:
-        """Synchronize UI state after a virtualized checkbox toggle."""
-        if not self.window.virtualized_active:
-            return
-
-        checkbox = self.window.check_devices.get(serial)
-        if checkbox is not None and checkbox.isChecked() != is_checked:
-            checkbox.blockSignals(True)
-            checkbox.setChecked(is_checked)
-            checkbox.blockSignals(False)
-
+    def handle_virtualized_selection_change(self, serial: str, is_checked: bool) -> List[str]:
+        """Synchronize selection after a virtualized checkbox toggle."""
+        selected = self._apply_selection_change(serial, is_checked)
         self._update_virtualized_title()
+        return selected
 
     def acquire_device_checkbox(self) -> QCheckBox:
         """Fetch a checkbox from the shared pool or create a new one."""
@@ -330,15 +327,15 @@ class DeviceListController:
         checkbox.setFont(QFont('Segoe UI', 10))
         self._apply_device_checkbox_style(checkbox)
         self._apply_checkbox_content(checkbox, serial, device)
+        self._apply_active_flag(checkbox, serial == self.window.device_selection_manager.get_active_serial())
 
         is_checked = serial in checked_set
         checkbox.blockSignals(True)
         checkbox.setChecked(is_checked)
         checkbox.blockSignals(False)
 
-        checkbox.stateChanged.connect(self.window.update_selection_count)
         checkbox.stateChanged.connect(
-            lambda state, cb=checkbox: self._update_checkbox_visual_state(cb, state)
+            lambda state, s=serial, cb=checkbox: self._on_standard_checkbox_state_changed(s, state, cb)
         )
 
     def _initialize_virtualized_checkbox(
@@ -351,14 +348,7 @@ class DeviceListController:
         self._configure_device_checkbox(checkbox, serial, device, checked_serials)
 
     def _get_current_checked_serials(self) -> set:
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            return set(self.window.virtualized_device_list.checked_devices)
-
-        selected = {serial for serial, cb in self.window.check_devices.items() if cb.isChecked()}
-        if selected:
-            self.window.pending_checked_serials = set(selected)
-            return selected
-        return set(self.window.pending_checked_serials)
+        return set(self.window.device_selection_manager.get_selected_serials())
 
     def _release_all_standard_checkboxes(self) -> None:
         for serial, checkbox in list(self.window.check_devices.items()):
@@ -494,6 +484,71 @@ class DeviceListController:
         self._apply_checkbox_content(checkbox, serial, device)
 
     # ------------------------------------------------------------------
+    # Selection synchronisation helpers
+    # ------------------------------------------------------------------
+    def _synchronize_ui_selection(self, selected_serials: Iterable[str]) -> None:
+        selected_set = set(selected_serials)
+        active_serial = self.window.device_selection_manager.get_active_serial()
+
+        for serial, checkbox in self.window.check_devices.items():
+            desired = serial in selected_set
+            if checkbox.isChecked() != desired:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(desired)
+                checkbox.blockSignals(False)
+            self._apply_active_flag(checkbox, serial == active_serial)
+
+        if self.window.virtualized_device_list is not None:
+            if self.window.virtualized_active:
+                self.window.virtualized_device_list.checked_devices = selected_set
+                self.window.virtualized_device_list.set_checked_serials(selected_set, emit_signal=False)
+            else:
+                self.window.virtualized_device_list.checked_devices = selected_set
+            for serial, checkbox in self.window.virtualized_device_list.device_widgets.items():
+                self._apply_active_flag(checkbox, serial == active_serial)
+
+        self.window.pending_checked_serials = set(selected_set)
+
+    def _set_selection(self, serials: Iterable[str]) -> List[str]:
+        if self._syncing_selection:
+            return list(self.window.device_selection_manager.get_selected_serials())
+
+        self._syncing_selection = True
+        try:
+            selected = self.window.device_selection_manager.set_selected_serials(serials)
+            self._synchronize_ui_selection(selected)
+        finally:
+            self._syncing_selection = False
+
+        self.update_selection_count()
+        return selected
+
+    def _apply_selection_change(self, serial: str, is_checked: bool) -> List[str]:
+        if self._syncing_selection:
+            return list(self.window.device_selection_manager.get_selected_serials())
+
+        self._syncing_selection = True
+        try:
+            selected = self.window.device_selection_manager.apply_toggle(
+                serial,
+                is_checked,
+                self.window.device_dict.keys(),
+            )
+            self._synchronize_ui_selection(selected)
+        finally:
+            self._syncing_selection = False
+
+        self.update_selection_count()
+        return selected
+
+    def _on_standard_checkbox_state_changed(self, serial: str, state: int, checkbox: QCheckBox) -> None:
+        is_checked = state == Qt.CheckState.Checked.value
+        selected = self._apply_selection_change(serial, is_checked)
+        desired_state = Qt.CheckState.Checked.value if serial in selected else Qt.CheckState.Unchecked.value
+        self._update_checkbox_visual_state(checkbox, desired_state)
+        self._apply_active_flag(checkbox, serial == self.window.device_selection_manager.get_active_serial())
+
+    # ------------------------------------------------------------------
     # Shared formatting helpers
     # ------------------------------------------------------------------
     def get_on_off_status(self, status) -> str:
@@ -588,6 +643,13 @@ class DeviceListController:
         # Styling handled by stylesheet; method retained for potential future hooks.
         if state not in (0, 2):
             return
+
+    def _apply_active_flag(self, checkbox: QCheckBox, is_active: bool) -> None:
+        checkbox.setProperty('activeDevice', 'true' if is_active else 'false')
+        style = checkbox.style()
+        style.unpolish(checkbox)
+        style.polish(checkbox)
+        checkbox.update()
 
     def get_additional_device_info(self, serial: str) -> Dict[str, str]:
         return self._get_additional_device_info(serial)

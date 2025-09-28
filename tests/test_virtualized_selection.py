@@ -3,14 +3,18 @@
 
 import os
 import pathlib
+import sys
 import unittest
 from types import SimpleNamespace
 
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 os.environ["HOME"] = str(PROJECT_ROOT / ".test_home")
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from lazy_blacktea_pyqt import WindowMain
+from ui.device_list_controller import DeviceListController
+from ui.device_selection_manager import DeviceSelectionManager
 
 
 class FakeCheckbox:
@@ -84,7 +88,7 @@ class FakeVirtualizedDeviceList:
     def apply_search_and_sort(self):  # pragma: no cover - compatibility stub
         pass
 
-    def set_checked_serials(self, serials):
+    def set_checked_serials(self, serials, emit_signal=True):
         self.call_history.append("set")
         serials_set = set(serials)
         current_serials = set(self.device_dict.keys())
@@ -108,6 +112,13 @@ class VirtualizedSelectionPreservationTest(unittest.TestCase):
         self.window.check_devices = {}
         self.window.checkbox_pool = []
         self.window.device_layout = None
+        self.window.device_selection_manager = DeviceSelectionManager()
+        self.window.selection_summary_label = SimpleNamespace(setText=lambda value: None)
+        self.window.title_label = SimpleNamespace(setText=lambda value: None)
+        self.window.device_search_manager = SimpleNamespace(
+            get_search_text=lambda: '',
+            get_sort_mode=lambda: 'name'
+        )
 
         standard_widget = FakeWidget()
         self.window.device_scroll = FakeScrollArea(standard_widget)
@@ -122,6 +133,7 @@ class VirtualizedSelectionPreservationTest(unittest.TestCase):
         self.window._release_device_checkbox = lambda checkbox: None
         self.window._apply_device_checkbox_style = lambda checkbox: None
         self.window._get_filtered_sorted_devices = lambda device_dict: list(device_dict.values())
+        self.window.device_list_controller = DeviceListController(self.window)
 
     def test_preserves_selection_when_virtualization_is_enabled(self):
         """Ensure checked devices remain selected after switching views."""
@@ -131,13 +143,17 @@ class VirtualizedSelectionPreservationTest(unittest.TestCase):
             self.window.check_devices[serial] = FakeCheckbox(checked=(serial == selected_serial))
 
         initial_devices = {
-            serial: SimpleNamespace(device_serial_num=serial)
+            serial: SimpleNamespace(device_serial_num=serial, device_model=f'Device {serial}')
             for serial in self.window.check_devices
         }
         self.window.device_dict = initial_devices
+        self.window.device_selection_manager.set_selected_serials([selected_serial])
 
         expanded_devices = {
-            f"device-{idx}": SimpleNamespace(device_serial_num=f"device-{idx}")
+            f"device-{idx}": SimpleNamespace(
+                device_serial_num=f"device-{idx}",
+                device_model=f"Device device-{idx}"
+            )
             for idx in range(12)
         }
 

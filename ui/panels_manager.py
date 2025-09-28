@@ -493,6 +493,23 @@ class PanelsManager(QObject):
 
         device_layout.addLayout(control_layout)
 
+        # Selection summary and helper hint
+        selection_summary_label = QLabel('Selected 0 of 0 · Active: None')
+        selection_summary_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        selection_summary_label.setStyleSheet('font-weight: 600;')
+
+        hint_label = QLabel('Tip: Use the checkboxes for multi-select. Toggle a device last to mark it active for single-device actions.')
+        hint_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet('color: #666666; font-size: 11px; margin-top: 2px;')
+
+        selection_container = QVBoxLayout()
+        selection_container.setContentsMargins(0, 6, 0, 6)
+        selection_container.addWidget(selection_summary_label)
+        selection_container.addWidget(hint_label)
+
+        device_layout.addLayout(selection_container)
+
         # Device list scroll area
         device_scroll = QScrollArea()
         device_scroll.setWidgetResizable(True)
@@ -521,5 +538,7 @@ class PanelsManager(QObject):
             'device_scroll': device_scroll,
             'device_widget': device_widget_inner,
             'device_layout': device_layout_inner,
-            'no_devices_label': no_devices_label
+            'no_devices_label': no_devices_label,
+            'selection_summary_label': selection_summary_label,
+            'selection_hint_label': hint_label,
         }

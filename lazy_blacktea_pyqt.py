@@ -64,6 +64,7 @@ from ui.system_actions_manager import SystemActionsManager
 from ui.file_dialog_manager import FileDialogManager
 from ui.battery_info_manager import BatteryInfoManager
 from ui.device_detail_dialog import DeviceDetailDialog
+from ui.device_selection_manager import DeviceSelectionManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -110,6 +111,7 @@ class WindowMain(QMainWindow):
         self.recording_manager = RecordingManager()
         self.panels_manager = PanelsManager(self)
         self.device_file_browser_manager = DeviceFileBrowserManager(self)
+        self.device_selection_manager = DeviceSelectionManager()
 
         # Connect device manager signals to main UI update
         self.device_manager.device_found.connect(self._on_device_found_from_manager)
@@ -144,6 +146,7 @@ class WindowMain(QMainWindow):
         self.device_file_browser_device_label = None
         self.device_file_browser_current_serial: Optional[str] = None
         self.device_file_browser_current_path: str = '/'
+        self.selection_summary_label = None
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -305,16 +308,23 @@ class WindowMain(QMainWindow):
         self.device_widget = device_components['device_widget']
         self.device_layout = device_components['device_layout']
         self.no_devices_label = device_components['no_devices_label']
+        self.selection_summary_label = device_components['selection_summary_label']
 
         self.standard_device_widget = self.device_widget
         self.virtualized_device_list = VirtualizedDeviceList(self.device_widget, main_window=self)
         self.virtualized_widget = self.virtualized_device_list.get_widget()
+        self.device_list_controller.update_selection_count()
 
         # Create tools panel via controller
         self.tools_panel_controller.create_tools_panel(main_splitter)
 
-        # Set splitter proportions
-        main_splitter.setSizes([400, 800])
+        # Set splitter proportions (default 50/50 but still resizable)
+        default_width = UIConstants.WINDOW_WIDTH
+        left_width = max(1, int(default_width * 0.4))
+        right_width = max(1, default_width - left_width)
+        main_splitter.setSizes([left_width, right_width])
+        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(1, 1)
 
         # Create console panel at bottom
         self.create_console_panel(main_layout)
@@ -385,14 +395,26 @@ class WindowMain(QMainWindow):
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            return self.virtualized_device_list.get_checked_devices()
+        selected_serials = self.device_selection_manager.get_selected_serials()
+        return [
+            self.device_dict[serial]
+            for serial in selected_serials
+            if serial in self.device_dict
+        ]
 
-        checked_devices = []
-        for serial, checkbox in self.check_devices.items():
-            if checkbox.isChecked() and serial in self.device_dict:
-                checked_devices.append(self.device_dict[serial])
-        return checked_devices
+    def require_single_device_selection(self, action_label: str) -> Optional[adb_models.DeviceInfo]:
+        """Validate that exactly one device is selected for a single-target action."""
+        valid, serials, message = self.device_selection_manager.require_single_device(action_label)
+        if not valid:
+            self.show_warning('Device Selection', message)
+            return None
+
+        serial = serials[0]
+        device = self.device_dict.get(serial)
+        if device is None:
+            self.show_error('Device Selection', f'The selected device ({serial}) is no longer available.')
+            return None
+        return device
 
     def show_info(self, title: str, message: str):
         """Show info message box."""
@@ -1309,11 +1331,30 @@ class WindowMain(QMainWindow):
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed executing in main thread')
 
         self.completion_dialog_manager.show_screenshot_summary(output_path, device_models)
+        self._show_screenshot_quick_actions(output_path, device_models)
 
         self._update_screenshot_button_state(False)
 
         logger.info(f'📷 [SIGNAL] _on_screenshot_completed notification shown')
         return
+
+    def _show_screenshot_quick_actions(self, output_path: str, device_models: List[str]) -> None:
+        """Show a lightweight follow-up prompt after screenshots complete."""
+        if not output_path:
+            logger.debug('Screenshot quick actions skipped: empty output path')
+            return
+
+        device_summary = '\n'.join(f'• {model}' for model in device_models) if device_models else 'No device name metadata captured.'
+        message = (
+            f'Screenshots saved to:\n{output_path}\n\n'
+            f'{device_summary}'
+        )
+
+        try:
+            self.show_info('Screenshots Ready', message)
+        except Exception as exc:  # pragma: no cover - UI fallback
+            logger.debug('Quick actions dialog failed: %s', exc)
+            self.write_to_console(f'📷 Screenshots available at {output_path}')
 
 
     def _handle_screenshot_completion(self, output_path, device_count, device_models, devices):
@@ -1571,19 +1612,13 @@ class WindowMain(QMainWindow):
             logger.error('Failed to open logcat window: %s', exc)
             self.show_error('Logcat Error', f'Unable to launch Logcat viewer.\n\nDetails: {exc}')
 
-    @ensure_devices_selected
     def show_logcat(self):
         """Show logcat viewer for the single selected device."""
-        selected_devices = self.get_checked_devices()
-        if not selected_devices:
-            self.show_error('Error', 'Please select a device.')
+        device = self.require_single_device_selection('Logcat viewer')
+        if device is None:
             return
 
-        if len(selected_devices) > 1:
-            self.show_error('Error', 'Please select only one device for logcat viewing.')
-            return
-
-        self._open_logcat_for_device(selected_devices[0])
+        self._open_logcat_for_device(device)
 
     def view_logcat_for_device(self, device_serial: str) -> None:
         """Launch the logcat viewer for the device under the context menu pointer."""
@@ -1938,17 +1973,11 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.show_error('Device Files', 'Device file browser UI is not ready yet.')
             return
 
-        devices = self.get_checked_devices()
-        if len(devices) != 1:
-            self.show_warning(
-                'Device Selection Required',
-                'Device file browser requires exactly one selected device.'
-            )
+        device = self.require_single_device_selection('Device file browser')
+        if device is None:
             self._set_device_file_status('Select exactly one device to browse files.')
             self.device_file_browser_current_serial = None
             return
-
-        device = devices[0]
         serial = device.device_serial_num
         raw_path = path if path is not None else self.device_file_browser_path_edit.text()
         normalized_path = self._normalize_device_remote_path(raw_path)
@@ -2001,12 +2030,11 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.show_error('Device Files', 'Device file browser UI is not ready yet.')
             return
 
-        devices = self.get_checked_devices()
-        if len(devices) != 1:
-            self.show_warning('Device Selection Required', 'Select exactly one device to download files from.')
+        device = self.require_single_device_selection('Device files download')
+        if device is None:
             return
 
-        serial = devices[0].device_serial_num
+        serial = device.device_serial_num
         remote_paths: List[str] = []
         for index in range(self.device_file_tree.topLevelItemCount()):
             item = self.device_file_tree.topLevelItem(index)
@@ -2087,17 +2115,12 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         output_path = self._get_file_generation_output_path()
         self.ui_hierarchy_manager.export_hierarchy(output_path)
 
-    @ensure_devices_selected
     def launch_ui_inspector(self):
         """Launch the interactive UI Inspector for selected devices."""
-        devices = self.get_checked_devices()
-        if len(devices) != 1:
-            self.show_warning('Single Device Required',
-                            'UI Inspector requires exactly one device to be selected.\n\n'
-                            'Please select only one device and try again.')
+        device = self.require_single_device_selection('UI Inspector')
+        if device is None:
             return
 
-        device = devices[0]
         serial = device.device_serial_num
         model = device.device_model
 

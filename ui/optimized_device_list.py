@@ -307,10 +307,15 @@ class VirtualizedDeviceList(QObject):
         """設備選擇狀態變更"""
         is_checked = state == Qt.CheckState.Checked.value
 
-        if is_checked:
-            self.checked_devices.add(serial)
+        if self.main_window is not None:
+            final_selection = self.main_window.device_list_controller.handle_virtualized_selection_change(serial, is_checked)
+            self.checked_devices = set(final_selection)
+            is_checked = serial in self.checked_devices
         else:
-            self.checked_devices.discard(serial)
+            if is_checked:
+                self.checked_devices.add(serial)
+            else:
+                self.checked_devices.discard(serial)
 
         # 更新統計
         self._update_stats()
@@ -318,8 +323,6 @@ class VirtualizedDeviceList(QObject):
         # 發送信號
         self.device_selection_changed.emit(serial, is_checked)
         self.selection_count_changed.emit(len(self.checked_devices))
-        if self.main_window is not None:
-            self.main_window._handle_virtualized_selection_change(serial, is_checked)
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """獲取已選擇的設備"""
@@ -328,24 +331,34 @@ class VirtualizedDeviceList(QObject):
 
     def select_all_devices(self):
         """全選設備"""
+        if self.main_window is not None:
+            selected = self.main_window.device_list_controller._set_selection(self.device_dict.keys())
+            self.checked_devices = set(selected)
+            return
+
         self.checked_devices = set(self.device_dict.keys())
         self._update_all_checkbox_states()
         self.selection_count_changed.emit(len(self.checked_devices))
-        if self.main_window is not None:
-            self.main_window.update_selection_count()
 
     def deselect_all_devices(self):
         """取消全選"""
+        if self.main_window is not None:
+            selected = self.main_window.device_list_controller._set_selection([])
+            self.checked_devices = set(selected)
+            return
+
         self.checked_devices.clear()
         self._update_all_checkbox_states()
         self.selection_count_changed.emit(0)
-        if self.main_window is not None:
-            self.main_window.update_selection_count()
 
     def _update_all_checkbox_states(self):
         """更新所有可見checkbox的狀態"""
         for serial, checkbox in self.device_widgets.items():
-            checkbox.setChecked(serial in self.checked_devices)
+            desired = serial in self.checked_devices
+            if checkbox.isChecked() != desired:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(desired)
+                checkbox.blockSignals(False)
 
     def get_widget(self) -> QWidget:
         """獲取主UI組件"""
@@ -363,14 +376,16 @@ class VirtualizedDeviceList(QObject):
             self.scroll_position = 0
             self._schedule_ui_update()
 
-    def set_checked_serials(self, serials: Set[str]):
+    def set_checked_serials(self, serials: Set[str], *, emit_signal: bool = True):
         """設定指定序號為勾選狀態"""
         current_serials = set(self.device_dict.keys())
         self.checked_devices = set(serials) & current_serials
         self._update_all_checkbox_states()
-        self.selection_count_changed.emit(len(self.checked_devices))
-        if self.main_window is not None:
-            self.main_window.update_selection_count()
+        self._update_stats()
+        if emit_signal:
+            self.selection_count_changed.emit(len(self.checked_devices))
+            if self.main_window is not None:
+                self.main_window.update_selection_count()
 
     def clear_widgets(self):
         """釋放目前建立的checkbox組件"""

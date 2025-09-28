@@ -309,6 +309,20 @@ class StyleManager:
                     ("border", "2px solid {secondary}"),
                 ),
             ),
+            (
+                'QCheckBox[activeDevice="true"]',
+                (
+                    ('border', '2px solid rgba(60, 120, 220, 0.85)'),
+                    ('background-color', 'rgba(90, 160, 255, 0.25)'),
+                ),
+            ),
+            (
+                'QCheckBox[activeDevice="true"]:checked',
+                (
+                    ('background-color', 'rgba(70, 140, 240, 0.4)'),
+                    ('border', '2px solid rgba(50, 110, 210, 0.95)'),
+                ),
+            ),
         ),
         "menu": (
             (
