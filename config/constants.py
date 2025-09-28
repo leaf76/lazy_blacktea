@@ -5,8 +5,8 @@ class UIConstants:
     """UI-related constants."""
 
     # Window dimensions
-    WINDOW_WIDTH = 1200
-    WINDOW_HEIGHT = 800
+    WINDOW_WIDTH = 1360
+    WINDOW_HEIGHT = 900
     WINDOW_MIN_WIDTH = 800
     WINDOW_MIN_HEIGHT = 600
 
@@ -216,6 +216,7 @@ class PanelText:
     GROUP_LOGCAT = '📄 Logcat'
     GROUP_DEVICE_CONTROL = '📱 Device Control'
     GROUP_CAPTURE = '📱 Screen Capture & Recording'
+    GROUP_FILE_OPERATIONS = '🗂️ Device Reports'
     GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_COMMAND_HISTORY = '📜 Command History'
@@ -244,6 +245,7 @@ class PanelText:
     BUTTON_GO = 'Go'
     BUTTON_UP = '⬆️ Up'
     BUTTON_DOWNLOAD_SELECTED = '⬇️ Download Selected'
+    BUTTON_GENERATE_BUG_REPORT = '🐛 Generate Bug Report'
 
     LABEL_NO_RECORDING = 'No active recordings'
     LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'

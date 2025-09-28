@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QTextEdit,
     QTreeWidget,
@@ -77,6 +78,15 @@ class ToolsPanelController:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        layout.addWidget(scroll_area)
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_area.setWidget(content_widget)
+
         output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
         output_layout = QHBoxLayout(output_group)
 
@@ -91,7 +101,7 @@ class ToolsPanelController:
         )
         output_layout.addWidget(browse_btn)
 
-        layout.addWidget(output_group)
+        content_layout.addWidget(output_group)
 
         logcat_group = QGroupBox(PanelText.GROUP_LOGCAT)
         logcat_layout = QGridLayout(logcat_group)
@@ -102,8 +112,16 @@ class ToolsPanelController:
             click_handler=lambda: self.window.clear_logcat(),
             tooltip='Clear logcat on selected devices'
         )
-        logcat_layout.addWidget(clear_logcat_btn, 0, 0, 1, 2)
-        layout.addWidget(logcat_group)
+        logcat_layout.addWidget(clear_logcat_btn, 0, 0)
+
+        bug_report_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_GENERATE_BUG_REPORT,
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.window.generate_android_bug_report(),
+            tooltip='Generate Android bug report using current selection'
+        )
+        logcat_layout.addWidget(bug_report_btn, 0, 1)
+        content_layout.addWidget(logcat_group)
 
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
         device_control_layout = QGridLayout(device_control_group)
@@ -121,7 +139,7 @@ class ToolsPanelController:
             row, col = divmod(idx, 2)
             device_control_layout.addWidget(btn, row, col)
 
-        layout.addWidget(device_control_group)
+        content_layout.addWidget(device_control_group)
 
         capture_group = QGroupBox(PanelText.GROUP_CAPTURE)
         capture_layout = QGridLayout(capture_group)
@@ -151,8 +169,9 @@ class ToolsPanelController:
         )
         capture_layout.addWidget(self.window.recording_timer_label, 3, 0, 1, 2)
 
-        layout.addWidget(capture_group)
-        layout.addStretch()
+        content_layout.addWidget(capture_group)
+
+        content_layout.addStretch(1)
 
         tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
 
