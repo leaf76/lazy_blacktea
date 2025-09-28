@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QTextEdit,
     QTreeWidget,
@@ -358,20 +359,57 @@ class ToolsPanelController:
 
         left_group = QGroupBox(PanelText.GROUP_CREATE_UPDATE)
         left_layout = QVBoxLayout(left_group)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(10)
 
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel('Group Name:'))
+        helper_label = QLabel('Create a reusable device group from the current selection.')
+        helper_label.setWordWrap(True)
+        helper_label.setStyleSheet('color: #d8d8d8; font-size: 12px; margin-bottom: 6px;')
+        left_layout.addWidget(helper_label)
+
+        name_label = QLabel('Group Name')
+        name_label.setStyleSheet('color: #f0f0f0; font-size: 11px; margin-bottom: 2px;')
+        left_layout.addWidget(name_label)
+
         self.window.group_name_edit.setPlaceholderText(PanelText.PLACEHOLDER_GROUP_NAME)
-        name_layout.addWidget(self.window.group_name_edit)
-        left_layout.addLayout(name_layout)
+        self.window.group_name_edit.setFixedHeight(32)
+        left_layout.addWidget(self.window.group_name_edit)
 
         save_group_btn = QPushButton(PanelText.BUTTON_SAVE_GROUP)
+        save_group_btn.setToolTip('Save the current device selection as a named group')
         save_group_btn.clicked.connect(lambda: self.window.save_group())
-        self._style_button(save_group_btn, ButtonStyle.PRIMARY, height=36, min_width=240)
+        self._style_button(save_group_btn, ButtonStyle.PRIMARY, height=34)
+        save_group_btn.setMinimumHeight(34)
         left_layout.addWidget(save_group_btn)
 
+        left_layout.addSpacing(6)
+
+        quick_actions_layout = QHBoxLayout()
+        quick_actions_layout.setSpacing(10)
+
+        select_group_btn = QPushButton(PanelText.BUTTON_SELECT_GROUP)
+        select_group_btn.setToolTip('Load and select all devices belonging to the chosen group')
+        select_group_btn.clicked.connect(lambda: self.window.select_devices_in_group())
+        self._style_button(select_group_btn, ButtonStyle.SECONDARY, height=32)
+        select_group_btn.setMinimumHeight(32)
+        select_group_btn.setMinimumWidth(0)
+        select_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        quick_actions_layout.addWidget(select_group_btn)
+
+        delete_group_btn = QPushButton(PanelText.BUTTON_DELETE_GROUP)
+        delete_group_btn.setToolTip('Remove the selected device group')
+        delete_group_btn.clicked.connect(lambda: self.window.delete_group())
+        self._style_button(delete_group_btn, ButtonStyle.DANGER, height=32)
+        delete_group_btn.setMinimumHeight(32)
+        delete_group_btn.setMinimumWidth(0)
+        delete_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        quick_actions_layout.addWidget(delete_group_btn)
+
+        quick_actions_layout.addStretch(1)
+
+        left_layout.addLayout(quick_actions_layout)
         left_layout.addStretch()
-        layout.addWidget(left_group)
+        layout.addWidget(left_group, stretch=2)
 
         right_group = QGroupBox(PanelText.GROUP_EXISTING)
         right_layout = QVBoxLayout(right_group)
@@ -379,21 +417,7 @@ class ToolsPanelController:
         self.window.groups_listbox.itemSelectionChanged.connect(self.window.on_group_select)
         right_layout.addWidget(self.window.groups_listbox)
 
-        group_buttons_layout = QHBoxLayout()
-
-        select_group_btn = QPushButton(PanelText.BUTTON_SELECT_GROUP)
-        select_group_btn.clicked.connect(lambda: self.window.select_devices_in_group())
-        self._style_button(select_group_btn, ButtonStyle.SECONDARY, height=34, min_width=220)
-        group_buttons_layout.addWidget(select_group_btn)
-
-        delete_group_btn = QPushButton(PanelText.BUTTON_DELETE_GROUP)
-        delete_group_btn.clicked.connect(lambda: self.window.delete_group())
-        self._style_button(delete_group_btn, ButtonStyle.DANGER, height=34, min_width=220)
-        group_buttons_layout.addWidget(delete_group_btn)
-
-        group_buttons_layout.addStretch()
-        right_layout.addLayout(group_buttons_layout)
-        layout.addWidget(right_group)
+        layout.addWidget(right_group, stretch=3)
 
         tab_widget.addTab(tab, PanelText.TAB_DEVICE_GROUPS)
 
