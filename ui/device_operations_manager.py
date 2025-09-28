@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from utils import adb_models, adb_tools, common
 from utils.recording_utils import RecordingManager
 from utils.screenshot_utils import take_screenshots_batch
+from ui.ui_inspector_dialog import UIInspectorDialog
 
 
 class DeviceOperationsManager(QObject):
@@ -525,9 +526,6 @@ class DeviceOperationsManager(QObject):
             device_name = device_info.device_model if device_info else device_serial
 
             self._log_console(f"🔍 Launching UI Inspector for {device_name} ({device_serial})...")
-
-            # 導入並創建UI檢查器對話框
-            from lazy_blacktea_pyqt import UIInspectorDialog
 
             dialog = UIInspectorDialog(self.parent_window, device_serial, device_name)
             dialog.show()

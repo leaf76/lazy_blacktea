@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
+from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
@@ -52,6 +53,59 @@ from ui.ui_factory import UIInspectorFactory
 
 logger = common.get_logger('lazy_blacktea')
 
+
+class UIInspectorWorker(QObject):
+    """Background worker for capturing screenshot and hierarchy data."""
+
+    progress_updated = pyqtSignal(int, str)
+    completed = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, device_serial: str):
+        super().__init__()
+        self.device_serial = device_serial
+
+    def _check_interruption(self) -> None:
+        thread = QThread.currentThread()
+        if thread and thread.isInterruptionRequested():  # pragma: no cover - defensive
+            raise RuntimeError('Operation cancelled')
+
+    def run(self) -> None:
+        temp_dir: Optional[str] = None
+        try:
+            temp_dir, screenshot_path, xml_path = create_temp_files()
+            self.progress_updated.emit(15, '📸 Capturing screenshot...')
+            self._check_interruption()
+
+            if not capture_device_screenshot(self.device_serial, screenshot_path):
+                raise RuntimeError('Failed to capture screenshot')
+
+            self.progress_updated.emit(33, '✅ Screenshot captured')
+            self._check_interruption()
+
+            self.progress_updated.emit(45, '🌳 Dumping UI hierarchy...')
+            if not dump_ui_hierarchy(self.device_serial, xml_path):
+                raise RuntimeError('Failed to dump UI hierarchy')
+
+            self.progress_updated.emit(75, '🖼️ Processing screenshot...')
+            self._check_interruption()
+
+            ui_elements = parse_ui_elements_cached(xml_path)
+            self.progress_updated.emit(90, '🎨 Preparing interface...')
+
+            self.completed.emit({
+                'temp_dir': temp_dir,
+                'screenshot_path': screenshot_path,
+                'xml_path': xml_path,
+                'ui_elements': ui_elements,
+            })
+
+        except Exception as exc:  # pragma: no cover - defensive path
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            self.failed.emit(str(exc))
+
+
 class UIInspectorDialog(QDialog):
     """Interactive UI Inspector dialog with screenshot and hierarchy overlay."""
 
@@ -70,8 +124,12 @@ class UIInspectorDialog(QDialog):
         self.setModal(True)
         self.resize(1200, 800)
 
+        self._worker_thread: Optional[QThread] = None
+        self._worker: Optional[UIInspectorWorker] = None
+        self._current_temp_dir: Optional[str] = None
+
         self.setup_ui()
-        self.refresh_ui_data()
+        QTimer.singleShot(0, self.refresh_ui_data)
 
     def setup_ui(self):
         """Setup the redesigned UI Inspector interface."""
@@ -305,94 +363,142 @@ class UIInspectorDialog(QDialog):
         self.element_details_layout.addWidget(error_widget)
         self._add_section_spacer()
 
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._cleanup_worker()
+        self._cleanup_temp_dir()
+        super().closeEvent(event)
+
     def refresh_ui_data(self):
-        """Refresh both screenshot and UI hierarchy data with progress indication."""
+        """Trigger an asynchronous refresh of screenshot and hierarchy data."""
+        if self._worker_thread is not None:
+            logger.info('UI Inspector refresh already running for %s', self.device_serial)
+            return
+
+        self._prepare_loading_state()
+        self._start_worker()
+
+    # ------------------------------------------------------------------
+    # Worker lifecycle helpers
+    # ------------------------------------------------------------------
+    def _prepare_loading_state(self) -> None:
+        self._cleanup_temp_dir()
+        self.screenshot_data = None
+        self.ui_elements = []
+        self.screenshot_label.clear()
+        self.screenshot_label.setText('🔄 Loading screenshot and UI data...')
+        self.screenshot_label.set_ui_elements([], 1.0)
+        self.screenshot_label.set_selected_element(None)
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat('🔄 Initializing...')
+
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText('🔄 Loading...')
+
+        self.show_loading_message()
+
+    def _start_worker(self) -> None:
+        self._worker_thread = QThread(self)
+        self._worker_thread.setObjectName(f'UIInspectorWorker-{self.device_serial}')
+        self._worker = UIInspectorWorker(self.device_serial)
+        self._worker.moveToThread(self._worker_thread)
+
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.progress_updated.connect(self._on_worker_progress)  # type: ignore[arg-type]
+        self._worker.completed.connect(self._on_worker_completed)  # type: ignore[arg-type]
+        self._worker.failed.connect(self._on_worker_failed)  # type: ignore[arg-type]
+
+        self._worker_thread.start()
+
+    def _cleanup_worker(self) -> None:
+        if self._worker_thread is None:
+            return
 
         try:
-            # Show progress and disable refresh button
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
-            self.progress_bar.setFormat("🔄 Initializing...")
-            self.refresh_btn.setEnabled(False)
-            self.refresh_btn.setText('🔄 Loading...')
+            self._worker_thread.requestInterruption()
+        except RuntimeError:  # pragma: no cover - thread already gone
+            pass
 
-            # Show loading message
-            self.screenshot_label.setText('🔄 Loading screenshot and UI data...')
-            self.show_loading_message()
+        self._worker_thread.quit()
+        self._worker_thread.wait()
+        self._worker_thread.deleteLater()
 
-            # Create temporary files using optimized utility
-            _, screenshot_path, xml_path = create_temp_files()
+        if self._worker:
+            self._worker.deleteLater()
 
-            # Step 1: Capture screenshot (33% progress)
-            self.progress_bar.setValue(15)
-            self.progress_bar.setFormat("📸 Capturing screenshot...")
+        self._worker_thread = None
+        self._worker = None
 
-            if not capture_device_screenshot(self.device_serial, screenshot_path):
-                raise Exception("Failed to capture screenshot")
+    def _on_worker_progress(self, value: int, label: str) -> None:
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(label)
 
-            self.progress_bar.setValue(33)
-            self.progress_bar.setFormat("✅ Screenshot captured")
+    def _on_worker_completed(self, payload: dict) -> None:
+        self._cleanup_worker()
 
-            # Step 2: Dump UI hierarchy (66% progress)
-            self.progress_bar.setValue(45)
-            self.progress_bar.setFormat("🌳 Dumping UI hierarchy...")
+        temp_dir = payload.get('temp_dir')
+        screenshot_path = payload.get('screenshot_path')
+        ui_elements = payload.get('ui_elements', [])
 
-            if not dump_ui_hierarchy(self.device_serial, xml_path):
-                raise Exception("Failed to dump UI hierarchy")
+        if temp_dir:
+            self._current_temp_dir = temp_dir
 
-            self.progress_bar.setValue(75)
-            self.progress_bar.setFormat("🖼️ Processing screenshot...")
+        pixmap = QPixmap(screenshot_path) if screenshot_path else QPixmap()
+        if pixmap.isNull():
+            self._on_worker_failed('Failed to load processed screenshot')
+            return
 
-            # Load screenshot
-            pixmap = QPixmap(screenshot_path)
-            if not pixmap.isNull():
-                # Scale screenshot to fit display
-                target_width = 600
-                scale_factor = target_width / pixmap.width()
-                scaled_pixmap = pixmap.scaled(target_width, int(pixmap.height() * scale_factor), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                self.screenshot_label.setPixmap(scaled_pixmap)
-                self.screenshot_data = screenshot_path
+        target_width = 600
+        scale_factor = target_width / pixmap.width() if pixmap.width() else 1.0
+        scaled_pixmap = pixmap.scaled(
+            target_width,
+            int(pixmap.height() * scale_factor) if pixmap.height() else target_width,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
 
-                self.progress_bar.setValue(85)
-                self.progress_bar.setFormat("🌳 Parsing UI hierarchy...")
+        self.screenshot_label.setPixmap(scaled_pixmap)
+        self.screenshot_label.set_ui_elements(ui_elements, scale_factor)
+        self.screenshot_data = screenshot_path
+        self.ui_elements = ui_elements
 
-                # Parse UI hierarchy using optimized cached function
-                self.ui_elements = parse_ui_elements_cached(xml_path)
+        self.update_hierarchy_tree()
+        self.show_success_message(len(ui_elements))
 
-                self.progress_bar.setValue(95)
-                self.progress_bar.setFormat("🎨 Building interface...")
+        self.progress_bar.setValue(100)
+        self.progress_bar.setFormat('✅ Complete!')
+        QTimer.singleShot(1500, lambda: self.progress_bar.setVisible(False))
 
-                # Set UI elements for overlay drawing
-                self.screenshot_label.set_ui_elements(self.ui_elements, scale_factor)
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText('🔄 Refresh')
 
-                # Update tree view
-                self.update_hierarchy_tree()
+        logger.info('UI Inspector data refreshed for device: %s - Found %s elements', self.device_serial, len(ui_elements))
 
-                # Complete progress
-                self.progress_bar.setValue(100)
-                self.progress_bar.setFormat("✅ Complete!")
+    def _on_worker_failed(self, message: str) -> None:
+        logger.error('Error refreshing UI data for %s: %s', self.device_serial, message)
+        self._cleanup_worker()
 
-                element_count = len(self.ui_elements)
-                self.show_success_message(element_count)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat('❌ Error occurred')
+        self.progress_bar.setVisible(False)
 
-                # Hide progress bar after a short delay
-                QTimer.singleShot(1500, lambda: self.progress_bar.setVisible(False))
+        self.screenshot_label.setText(
+            f'❌ Error loading data from {self.device_model}:\n{message}\n\n🔄 Click Refresh to try again'
+        )
+        self.show_error_message(message)
 
-            logger.info(f'UI Inspector data refreshed for device: {self.device_serial} - Found {len(self.ui_elements)} elements')
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText('🔄 Refresh')
 
-        except Exception as e:
-            logger.error(f'Error refreshing UI data: {e}')
-            self.progress_bar.setValue(0)
-            self.progress_bar.setFormat("❌ Error occurred")
-            self.progress_bar.setVisible(False)
-
-            self.screenshot_label.setText(f'❌ Error loading data from {self.device_model}:\n{str(e)}\n\n🔄 Click Refresh to try again')
-            self.show_error_message(str(e))
-
+    def _cleanup_temp_dir(self) -> None:
+        if not self._current_temp_dir:
+            return
+        try:
+            shutil.rmtree(self._current_temp_dir, ignore_errors=True)
         finally:
-            # Re-enable refresh button
-            self.refresh_btn.setEnabled(True)
-            self.refresh_btn.setText('🔄 Refresh')
+            self._current_temp_dir = None
 
 
     def update_hierarchy_tree(self):
