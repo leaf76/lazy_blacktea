@@ -221,12 +221,10 @@ class StyleRefactorTest(unittest.TestCase):
         # 檢查所有按鈕樣式是否使用統一的顏色
         for button_style in [ButtonStyle.PRIMARY, ButtonStyle.SECONDARY, ButtonStyle.WARNING]:
             css = StyleManager.get_button_style(button_style)
-            if button_style == ButtonStyle.PRIMARY:
-                self.assertIn(StyleManager.COLORS['primary'], css)
-            elif button_style == ButtonStyle.SECONDARY:
-                self.assertIn(StyleManager.COLORS['secondary'], css)
-            elif button_style == ButtonStyle.WARNING:
-                self.assertIn(StyleManager.COLORS['warning'], css)
+            profile = StyleManager.BUTTON_STYLE_PROFILES[button_style]
+            self.assertIn(profile['bg'], css)
+            self.assertIn(profile['border'], css)
+            self.assertIn(profile['hover'], css)
 
             print(f"    ✅ {button_style.name} 使用正確顏色")
 

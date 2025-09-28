@@ -103,12 +103,58 @@ class StyleManager:
         'background_hover': 'rgba(200, 220, 255, 0.5)',
     }
 
-    _BUTTON_COLOR_MAP = {
-        ButtonStyle.PRIMARY: 'primary',
-        ButtonStyle.SECONDARY: 'secondary',
-        ButtonStyle.WARNING: 'warning',
-        ButtonStyle.DANGER: 'danger',
-        ButtonStyle.NEUTRAL: 'neutral',
+    BUTTON_STYLE_PROFILES: Dict[ButtonStyle, Dict[str, str]] = {
+        ButtonStyle.PRIMARY: {
+            'bg': '#111111',
+            'fg': '#ffffff',
+            'hover': '#000000',
+            'hover_fg': '#ffffff',
+            'pressed': '#1a1a1a',
+            'pressed_fg': '#ffffff',
+            'border': '#000000',
+        },
+        ButtonStyle.SECONDARY: {
+            'bg': '#f9f9f9',
+            'fg': '#111111',
+            'hover': '#e8e8e8',
+            'hover_fg': '#111111',
+            'pressed': '#dcdcdc',
+            'pressed_fg': '#111111',
+            'border': '#111111',
+        },
+        ButtonStyle.WARNING: {
+            'bg': '#444444',
+            'fg': '#ffffff',
+            'hover': '#2f2f2f',
+            'hover_fg': '#ffffff',
+            'pressed': '#1f1f1f',
+            'pressed_fg': '#ffffff',
+            'border': '#444444',
+        },
+        ButtonStyle.DANGER: {
+            'bg': '#000000',
+            'fg': '#ffffff',
+            'hover': '#1a1a1a',
+            'hover_fg': '#ffffff',
+            'pressed': '#000000',
+            'pressed_fg': '#ffffff',
+            'border': '#000000',
+        },
+        ButtonStyle.NEUTRAL: {
+            'bg': '#f2f2f2',
+            'fg': '#111111',
+            'hover': '#dfdfdf',
+            'hover_fg': '#111111',
+            'pressed': '#d0d0d0',
+            'pressed_fg': '#111111',
+            'border': '#c4c4c4',
+        },
+    }
+
+    BUTTON_DISABLED_STATE: Dict[str, str] = {
+        'disabled_bg': '#ebebeb',
+        'disabled_fg': '#9a9a9a',
+        'disabled_border': '#d1d1d1',
     }
 
     _LABEL_STYLE_BLOCKS: Dict[LabelStyle, CSSBlocks] = {
@@ -392,12 +438,13 @@ class StyleManager:
             "QPushButton",
             (
                 ("padding", "8px 16px"),
-                ("border", "none"),
                 ("border-radius", "4px"),
-                ("font-weight", "bold"),
+                ("font-weight", "600"),
                 ("font-size", "12px"),
-                ("min-width", "80px"),
+                ("min-width", "92px"),
                 ("height", "{button_height}"),
+                ("letter-spacing", "0.2px"),
+                ("transition", "background-color 100ms ease, color 100ms ease"),
             ),
         ),
     )
@@ -416,27 +463,37 @@ class StyleManager:
         ),
     )
 
-    @classmethod
-    def _colored_button_blocks(cls, color_key: str) -> CSSBlocks:
+    @staticmethod
+    def _monochrome_button_blocks() -> CSSBlocks:
         return (
             (
                 "QPushButton",
                 (
-                    ("background-color", f"{{{color_key}}}"),
-                    ("color", "white"),
+                    ("background-color", "{bg}"),
+                    ("color", "{fg}"),
+                    ("border", "1px solid {border}"),
                 ),
             ),
             (
                 "QPushButton:hover",
                 (
-                    ("background-color", f"{{{color_key}_hover}}"),
+                    ("background-color", "{hover}"),
+                    ("color", "{hover_fg}"),
+                ),
+            ),
+            (
+                "QPushButton:pressed",
+                (
+                    ("background-color", "{pressed}"),
+                    ("color", "{pressed_fg}"),
                 ),
             ),
             (
                 "QPushButton:disabled",
                 (
-                    ("background-color", "#CCCCCC"),
-                    ("color", "#888888"),
+                    ("background-color", "{disabled_bg}"),
+                    ("color", "{disabled_fg}"),
+                    ("border", "1px solid {disabled_border}"),
                 ),
             ),
         )
@@ -449,11 +506,13 @@ class StyleManager:
             return _render_css(cls._SYSTEM_BUTTON_BLOCKS, cls.COLORS, overrides)
 
         base_style = _render_css(cls._BUTTON_BASE_BLOCKS, cls.COLORS, overrides)
-        color_key = cls._BUTTON_COLOR_MAP.get(style)
-        if color_key:
-            color_css = _render_css(cls._colored_button_blocks(color_key), cls.COLORS)
-            return _combine_css(base_style, color_css)
-        return base_style
+        profile = dict(cls.BUTTON_STYLE_PROFILES.get(style, cls.BUTTON_STYLE_PROFILES[ButtonStyle.NEUTRAL]))
+        profile.setdefault('hover_fg', profile['fg'])
+        profile.setdefault('pressed', profile['hover'])
+        profile.setdefault('pressed_fg', profile['hover_fg'])
+        css_tokens = {**cls.BUTTON_DISABLED_STATE, **profile}
+        button_css = _render_css(cls._monochrome_button_blocks(), {}, css_tokens)
+        return _combine_css(base_style, button_css)
 
     @classmethod
     def get_label_style(cls, style: LabelStyle) -> str:
