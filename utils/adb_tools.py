@@ -20,6 +20,7 @@ from utils import adb_commands
 from utils import adb_models
 from utils import common
 from utils import dump_device_ui
+from utils import native_bridge
 
 
 ## GMS app package name
@@ -104,6 +105,37 @@ def _execute_commands_parallel(commands: List[str], operation_name: str) -> List
     results = list(executor.map(common.run_command, commands))
     logger.info(f'{operation_name} completed - executed {len(commands)} commands')
     return results
+
+
+def _normalize_parallel_results(raw_results: List[Any]) -> List[List[str]]:
+  normalized: List[List[str]] = []
+  for item in raw_results:
+    if isinstance(item, list):
+      normalized.append([str(line) for line in item])
+    elif isinstance(item, tuple):
+      normalized.append([str(line) for line in item])
+    elif item is None:
+      normalized.append([])
+    else:
+      normalized.append([str(item)])
+  return normalized
+
+
+def _execute_commands_parallel_native(commands: List[str], operation_name: str) -> List[List[str]]:
+  """Execute commands in parallel using the native runner when available."""
+  if not commands:
+    return []
+
+  if not native_bridge.is_available():
+    fallback = _execute_commands_parallel(commands, operation_name)
+    return _normalize_parallel_results(fallback)
+
+  try:
+    return native_bridge.run_commands_parallel(commands)
+  except native_bridge.NativeBridgeError as exc:
+    logger.warning('Native command runner failed for %s: %s', operation_name, exc)
+    fallback = _execute_commands_parallel(commands, operation_name)
+    return _normalize_parallel_results(fallback)
 
 
 def _execute_functions_parallel(functions: List[Callable], args_list: List[Any], operation_name: str) -> List[Any]:
@@ -1156,7 +1188,8 @@ def pull_device_paths(serial_num: str, remote_paths: list[str], output_path: str
     )
 
   logger.info('Pulling %d paths for device %s into %s', len(commands), serial_num, final_output)
-  return _execute_commands_parallel(commands, 'pull_device_paths')
+  native_results = _execute_commands_parallel_native(commands, 'pull_device_paths')
+  return ['\n'.join(result) if result else '' for result in native_results]
 
 
 def pull_device_dcim_folders_with_device_folder(serial_nums: list[str], output_path: str) -> list[str]:
@@ -1624,15 +1657,27 @@ def start_screen_record_device(serial: str, output_path: str, filename: str) -> 
   """
   logger.info(f'🎬 [WRAPPER] Starting screen recording for device {serial}, file: {filename}, output: {output_path}')
 
-  # Store the recording info for later use in stop function
-  _active_recordings[serial] = {
+  base_name = filename.replace('.mp4', '') if filename.endswith('.mp4') else filename
+  remote_path = f'/sdcard/screenrecord_{serial}_{base_name}.mp4'
+
+  entry = {
     'filename': filename,
-    'output_path': output_path
+    'output_path': output_path,
+    'remote_path': remote_path,
   }
 
-  # Extract just the base name without extension for the start function
-  # The start function expects just the base name, not the full filename
-  base_name = filename.replace('.mp4', '') if filename.endswith('.mp4') else filename
+  if native_bridge.is_available():
+    try:
+      native_bridge.start_screen_record(serial, remote_path)
+      entry['native'] = True
+      _active_recordings[serial] = entry
+      _verify_recording_started([serial])
+      return
+    except native_bridge.NativeBridgeError as exc:
+      logger.warning('Native screen recording start failed for %s: %s', serial, exc)
+
+  entry['native'] = False
+  _active_recordings[serial] = entry
   start_to_record_android_devices([serial], base_name)
 
 
@@ -1644,40 +1689,39 @@ def stop_screen_record_device(serial: str) -> None:
   """
   logger.info(f'🔴 [WRAPPER] Stopping screen recording for device {serial}')
 
-  if serial in _active_recordings:
-    recording_info = _active_recordings[serial]
-    filename = recording_info['filename']
-    output_path = recording_info['output_path']
-
-    # Extract base name for the stop function
-    base_name = filename.replace('.mp4', '') if filename.endswith('.mp4') else filename
-
-    logger.info(f'🔴 [WRAPPER] Using stored info - filename: {filename}, base_name: {base_name}, output_path: {output_path}')
-
-    try:
-      # Use the existing stop function which handles the complete workflow
-      stop_to_screen_record_android_device(serial, base_name, output_path)
-
-      # Clean up the tracking info
-      del _active_recordings[serial]
-      logger.info(f'✅ [WRAPPER] Screen recording stopped successfully for device {serial}')
-
-    except Exception as e:
-      logger.error(f'❌ [WRAPPER] Error stopping screen recording for {serial}: {e}')
-      # Clean up even on error
-      if serial in _active_recordings:
-        del _active_recordings[serial]
-      raise
-  else:
+  recording_info = _active_recordings.get(serial)
+  if recording_info is None:
     logger.warning(f'⚠️ [WRAPPER] No active recording found for device {serial}, attempting simple stop')
     try:
-      # Fallback to simple stop command
       stop_cmd = f'adb -s {serial} shell pkill -f screenrecord'
       common.run_command(stop_cmd)
       logger.info(f'📱 [WRAPPER] Simple stop command executed for device {serial}')
-    except Exception as e:
-      logger.error(f'❌ [WRAPPER] Error with simple stop for {serial}: {e}')
-      raise
+    except Exception as exc:
+      logger.error(f'❌ [WRAPPER] Error executing simple stop for {serial}: {exc}')
+    return
+
+  filename = recording_info['filename']
+  output_path = recording_info['output_path']
+  base_name = filename.replace('.mp4', '') if filename.endswith('.mp4') else filename
+  is_native = recording_info.get('native', False)
+
+  if is_native and native_bridge.is_available():
+    try:
+      native_bridge.stop_screen_record(serial)
+    except native_bridge.NativeBridgeError as exc:
+      logger.warning('Native screen recording stop failed for %s: %s', serial, exc)
+
+  try:
+    stop_to_screen_record_android_device(serial, base_name, output_path)
+    if serial in _active_recordings:
+      del _active_recordings[serial]
+    logger.info(f'✅ [WRAPPER] Screen recording stopped successfully for device {serial}')
+  except Exception as exc:
+    logger.error(f'❌ [WRAPPER] Error stopping screen recording for {serial}: {exc}')
+    if serial in _active_recordings:
+      del _active_recordings[serial]
+    raise
+
 
 def take_screenshot_single_device(serial: str, output_path: str, filename: str) -> bool:
   """Take screenshot for a single device (wrapper function).

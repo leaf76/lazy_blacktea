@@ -125,13 +125,13 @@ class AdbToolsDeviceFileTests(unittest.TestCase):
         with patch('utils.common.make_gen_dir_path', side_effect=lambda p: p), \
              patch('utils.common.make_full_path', side_effect=lambda root, name: f"{root}/{name}"), \
              patch('utils.adb_commands.cmd_pull_device_file', side_effect=lambda serial, remote, local: f'pull {serial} {remote} {local}') as mock_cmd, \
-             patch('utils.adb_tools._execute_commands_parallel', return_value=['ok-a', 'ok-b']) as mock_exec:
+             patch('utils.adb_tools._execute_commands_parallel_native', return_value=[['ok-a'], ['ok-b']]) as mock_native:
             results = adb_tools.pull_device_paths('SER123', ['/a/b', '/c/d'], '/tmp/out')
 
         self.assertEqual(results, ['ok-a', 'ok-b'])
         mock_cmd.assert_any_call('SER123', '/a/b', '/tmp/out/device_SER123')
         mock_cmd.assert_any_call('SER123', '/c/d', '/tmp/out/device_SER123')
-        mock_exec.assert_called_once()
+        mock_native.assert_called_once()
 
 
 if __name__ == '__main__':

@@ -26,6 +26,7 @@ a = Analysis(
         ('config', 'config'),
         ('ui', 'ui'),
         ('utils', 'utils'),
+        ('build/native-libs', 'native'),
     ] + qt_plugins,
     hiddenimports=[
         'PyQt6.QtCore',

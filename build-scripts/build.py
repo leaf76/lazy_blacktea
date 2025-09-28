@@ -10,6 +10,14 @@ import platform
 import subprocess
 import shutil
 from pathlib import Path
+from typing import Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from build_scripts.native_support import prepare_native_library
 
 def print_header(text):
     """Print a formatted header"""
@@ -145,6 +153,30 @@ def install_dependencies():
 
     print_success("Dependencies installed successfully")
     return True
+
+
+def stage_native_library(project_root: Path) -> Optional[Path]:
+    """Build and stage the Rust native library for packaging."""
+    print_step("Building native accelerators...")
+    output_dir = project_root / 'build' / 'native-libs'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        artifact = prepare_native_library(project_root, output_dir)
+    except FileNotFoundError as exc:
+        print_warning(f"Native project missing: {exc}")
+        return None
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else 'no output'
+        print_warning(f"Native build failed (cargo error): {stderr}")
+        return None
+    except Exception as exc:  # pragma: no cover - defensive
+        print_warning(f"Native build failed: {exc}")
+        return None
+
+    print_success(f"Native library staged: {artifact}")
+    return artifact
+
 
 def clean_build():
     """Clean previous build artifacts"""
@@ -407,12 +439,15 @@ def main():
     # Step 4: Clean previous builds
     clean_build()
 
-    # Step 5: Build application
+    # Step 5: Build native library
+    stage_native_library(Path(os.getcwd()))
+
+    # Step 6: Build application
     if not build_application():
         print_error("Build failed")
         sys.exit(1)
 
-    # Step 6: Create distribution
+    # Step 7: Create distribution
     if not create_distribution():
         print_error("Distribution creation failed")
         sys.exit(1)
