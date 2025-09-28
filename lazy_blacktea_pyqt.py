@@ -268,7 +268,7 @@ class WindowMain(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         logger.info('[INIT] init_ui method started')
-        self.setWindowTitle(f'🍵 {ApplicationConstants.APP_NAME}')
+        self.setWindowTitle(f'🍵 {ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}')
         self.setGeometry(100, 100, UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
 
 

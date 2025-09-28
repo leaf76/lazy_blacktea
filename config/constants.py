@@ -191,7 +191,7 @@ class ApplicationConstants:
 
     # Application info
     APP_NAME = "Lazy Blacktea"
-    APP_VERSION = "2.0.0"
+    APP_VERSION = "0.0.24"
     APP_DESCRIPTION = "A PyQt6 GUI application for simplifying Android ADB and automation tasks"
 
     # Configuration

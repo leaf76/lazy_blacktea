@@ -33,11 +33,28 @@ class DummyProgressBar:
         self.value = value
 
 
+class DummyLabel:
+    def __init__(self):
+        self.text = ''
+        self.style = ''
+        self.object_name = ''
+
+    def setText(self, text):
+        self.text = text
+
+    def setStyleSheet(self, style):
+        self.style = style
+
+    def setObjectName(self, name):
+        self.object_name = name
+
+
 class DummyWindow:
     def __init__(self):
         self.status_bar = None
         self.progress_bar = None
         self.status_bar_set = False
+        self.version_label = None
 
     def setStatusBar(self, status_bar):
         self.status_bar = status_bar
@@ -47,15 +64,18 @@ class DummyWindow:
 class StatusBarManagerTest(unittest.TestCase):
     def setUp(self):
         from ui.status_bar_manager import StatusBarManager
+        from config.constants import ApplicationConstants
 
         self.window = DummyWindow()
         self.status_bar = DummyStatusBar()
         self.progress_bar = DummyProgressBar()
+        self.expected_version_text = f"{ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}"
 
         self.manager = StatusBarManager(
             self.window,
             status_bar_factory=lambda: self.status_bar,
             progress_bar_factory=lambda: self.progress_bar,
+            version_label_factory=lambda: DummyLabel(),
         )
 
     def test_create_status_bar_initialises_components(self):
@@ -65,6 +85,9 @@ class StatusBarManagerTest(unittest.TestCase):
         self.assertIs(self.window.progress_bar, self.progress_bar)
         self.assertTrue(self.progress_bar.visible is False)
         self.assertIn(('Ready', 0), self.status_bar.message_calls)
+        self.assertIsInstance(self.window.version_label, DummyLabel)
+        self.assertEqual(self.status_bar.widgets[0], self.window.version_label)
+        self.assertEqual(self.window.version_label.text, self.expected_version_text)
 
     def test_show_message_delegates(self):
         self.manager.create_status_bar()

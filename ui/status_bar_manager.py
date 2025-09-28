@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional, TYPE_CHECKING
 
-from PyQt6.QtWidgets import QProgressBar, QStatusBar
+from PyQt6.QtWidgets import QLabel, QProgressBar, QStatusBar
 
 from utils import common
+from config.constants import ApplicationConstants
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -26,24 +27,40 @@ class StatusBarManager:
         window: "WindowMain",
         status_bar_factory: Optional[StatusBarFactory] = None,
         progress_bar_factory: Optional[ProgressBarFactory] = None,
+        version_label_factory: Optional[Callable[[], QLabel]] = None,
     ) -> None:
         self.window = window
         self._status_bar_factory = status_bar_factory or QStatusBar
         self._progress_bar_factory = progress_bar_factory or QProgressBar
+        self._version_label_factory = version_label_factory or QLabel
 
     def create_status_bar(self) -> None:
         status_bar = self._status_bar_factory()
+        version_label = self._create_version_label()
         progress_bar = self._progress_bar_factory()
         progress_bar.setVisible(False)
 
         self.window.setStatusBar(status_bar)
+        status_bar.addPermanentWidget(version_label)
         status_bar.addPermanentWidget(progress_bar)
 
         self.window.status_bar = status_bar
         self.window.progress_bar = progress_bar
+        self.window.version_label = version_label
 
         self.show_message("Ready")
         logger.debug("Status bar and progress bar initialised")
+
+    def _create_version_label(self) -> QLabel:
+        label = self._version_label_factory()
+        version_text = f"{ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}"
+        if hasattr(label, "setText"):
+            label.setText(version_text)
+        if hasattr(label, "setObjectName"):
+            label.setObjectName("appVersionLabel")
+        if hasattr(label, "setStyleSheet"):
+            label.setStyleSheet("color: #6c6c6c; padding-right: 12px;")
+        return label
 
     def show_message(self, message: str, timeout: int = 0) -> None:
         status_bar = getattr(self.window, "status_bar", None)
