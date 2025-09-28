@@ -1,5 +1,7 @@
 """Application constants and configuration values."""
 
+from pathlib import Path
+
 
 class UIConstants:
     """UI-related constants."""
@@ -186,12 +188,21 @@ class PerformanceConstants:
     UI_BATCH_UPDATE_DELAY_MS = 50
 
 
+def _read_version() -> str:
+    """Read application version from the central VERSION file."""
+    version_path = Path(__file__).resolve().parent.parent / 'VERSION'
+    try:
+        return version_path.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return '0.0.0'
+
+
 class ApplicationConstants:
     """General application constants."""
 
     # Application info
     APP_NAME = "Lazy Blacktea"
-    APP_VERSION = "0.0.25"
+    APP_VERSION = _read_version()
     APP_DESCRIPTION = "A PyQt6 GUI application for simplifying Android ADB and automation tasks"
 
     # Configuration
