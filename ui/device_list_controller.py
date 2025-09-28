@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QCheckBox
 
 from utils import adb_models, adb_tools, common
@@ -302,7 +302,7 @@ class DeviceListController:
         return (
             f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
             f'🆔 {device.device_serial_num:<20} | '
-            f'🤖 Android {android_ver:<7} (API {android_api:<7}) | '
+            f'🤖 Android {android_ver:<5} (API {android_api:<4}) | '
             f'🎯 GMS: {gms_display:<12} | '
             f'📶 WiFi: {wifi_status:<3} | '
             f'🔵 BT: {bt_status}'
@@ -324,7 +324,9 @@ class DeviceListController:
         checkbox.customContextMenuRequested.connect(
             lambda pos, s=serial, cb=checkbox: self.window.device_actions_controller.show_context_menu(pos, s, cb)
         )
-        checkbox.setFont(QFont('Segoe UI', 10))
+        fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        fixed_font.setPointSize(10)
+        checkbox.setFont(fixed_font)
         self._apply_device_checkbox_style(checkbox)
         self._apply_checkbox_content(checkbox, serial, device)
         self._apply_active_flag(checkbox, serial == self.window.device_selection_manager.get_active_serial())
