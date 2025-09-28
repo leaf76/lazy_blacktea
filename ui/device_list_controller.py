@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QFontDatabase
-from PyQt6.QtWidgets import QCheckBox
+from PyQt6.QtCore import QPoint, Qt
 
 from utils import adb_models, adb_tools, common
-from ui.style_manager import StyleManager
-from ui.optimized_device_list import DeviceListPerformanceOptimizer
+from ui.device_table_widget import DeviceTableWidget
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -19,76 +16,211 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = common.get_logger('lazy_blacktea')
 
 
+class _SelectionProxy:
+    """Compatibility proxy mimicking a QCheckBox interface for legacy code paths."""
+
+    class _DummySignal:
+        def __init__(self) -> None:
+            self._callbacks = []
+
+        def connect(self, callback):  # pragma: no cover - used by legacy hooks
+            self._callbacks.append(callback)
+
+        def emit(self, *args, **kwargs):  # pragma: no cover - reserved for future use
+            for callback in self._callbacks:
+                callback(*args, **kwargs)
+
+    class _DummyStyle:
+        def unpolish(self, _):  # pragma: no cover - no-op for compatibility
+            return None
+
+        def polish(self, _):  # pragma: no cover - no-op for compatibility
+            return None
+
+    def __init__(self, controller: 'DeviceListController', serial: str) -> None:
+        self._controller = controller
+        self._serial = serial
+        self._visible = True
+        self.customContextMenuRequested = self._DummySignal()
+        self._style = self._DummyStyle()
+
+    # Qt-like API ------------------------------------------------------
+    def isChecked(self) -> bool:
+        selected = self._controller.window.device_selection_manager.get_selected_serials()
+        return self._serial in selected
+
+    def setChecked(self, value: bool) -> None:
+        manager = self._controller.window.device_selection_manager
+        selected = manager.get_selected_serials()
+        if value and self._serial not in selected:
+            selected.append(self._serial)
+        elif not value and self._serial in selected:
+            selected = [serial for serial in selected if serial != self._serial]
+        self._controller._set_selection(selected)
+
+    def blockSignals(self, *_args, **_kwargs) -> None:  # pragma: no cover - compatibility hook
+        return None
+
+    def hide(self) -> None:  # pragma: no cover - legacy compatibility
+        self._visible = False
+
+    def show(self) -> None:  # pragma: no cover - legacy compatibility
+        self._visible = True
+
+    def setVisible(self, value: bool) -> None:
+        self._visible = bool(value)
+
+    def isVisible(self) -> bool:
+        return self._visible
+
+    def setToolTip(self, *_args, **_kwargs) -> None:  # pragma: no cover - no-op
+        return None
+
+    def setFont(self, *_args, **_kwargs) -> None:  # pragma: no cover - no-op
+        return None
+
+    def setContextMenuPolicy(self, *_args, **_kwargs) -> None:  # pragma: no cover - no-op
+        return None
+
+    def style(self):  # pragma: no cover - compatibility shim
+        return self._style
+
+    def setProperty(self, *_args, **_kwargs) -> None:  # pragma: no cover
+        return None
+
+    def update(self) -> None:  # pragma: no cover - no-op
+        return None
+
+    # Compatibility hooks for legacy lambdas --------------------------
+    def enterEvent(self, *_args, **_kwargs) -> None:  # pragma: no cover
+        return None
+
+    def leaveEvent(self, *_args, **_kwargs) -> None:  # pragma: no cover
+        return None
+
+
 class DeviceListController:
     """Encapsulates device list updates to keep the main window lean."""
 
+    _SORT_MODE_BY_COLUMN: Dict[int, str] = {
+        1: 'name',
+        2: 'serial',
+        3: 'android',
+        4: 'api',
+        5: 'gms',
+        6: 'wifi',
+        7: 'bt',
+    }
+
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
+        self.table: Optional[DeviceTableWidget] = None
         self._syncing_selection = False
+        self._captured_sort: Optional[tuple[int, Qt.SortOrder]] = None
+
+        table = getattr(main_window, 'device_table', None)
+        if isinstance(table, DeviceTableWidget):
+            self.attach_table(table)
+
+    # ------------------------------------------------------------------
+    # Wiring helpers
+    # ------------------------------------------------------------------
+    def attach_table(self, table: DeviceTableWidget) -> None:
+        """Attach a table instance and wire signals."""
+        if self.table is table:
+            return
+
+        if self.table is not None:
+            try:
+                self.table.selection_toggled.disconnect(self._on_table_selection_toggled)
+            except TypeError:  # pragma: no cover - safeguard
+                pass
+            try:
+                self.table.horizontalHeader().sortIndicatorChanged.disconnect(self._on_sort_indicator_changed)
+            except TypeError:  # pragma: no cover
+                pass
+            try:
+                self.table.device_context_menu_requested.disconnect(self._on_table_device_context_menu)
+            except TypeError:  # pragma: no cover
+                pass
+
+        self.table = table
+        self.table.selection_toggled.connect(self._on_table_selection_toggled)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
+        self.table.device_context_menu_requested.connect(self._on_table_device_context_menu)
+        self._captured_sort = self.table.get_sort_indicator()
 
     # ------------------------------------------------------------------
     # Public API used by WindowMain
     # ------------------------------------------------------------------
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
-        """Update the device list display with performance optimisations."""
+        """Update the device list display with the current device dictionary."""
         self.window.device_dict = device_dict
+        if self.table is None:
+            logger.warning('Device table not attached; skipping update')
+            return
+
         selected_serials = self.window.device_selection_manager.prune_selection(device_dict.keys())
-        selected_set = set(selected_serials)
+        active_serial = self.window.device_selection_manager.get_active_serial()
 
-        device_count = len(device_dict)
-        if DeviceListPerformanceOptimizer.should_use_virtualization(device_count):
-            self._activate_virtualized_view(selected_set)
-            if self.window.virtualized_device_list is not None:
-                vlist = self.window.virtualized_device_list
-                vlist.update_device_list(device_dict)
-                vlist.set_checked_serials(selected_set, emit_signal=False)
-                vlist.apply_search_and_sort()
-            self._update_virtualized_title()
-            self.update_selection_count()
-            return
+        filtered_devices = self._get_filtered_sorted_devices(device_dict)
+        sort_indicator = self._captured_sort or self.table.get_sort_indicator()
 
-        self._deactivate_virtualized_view()
+        logger.debug('Rendering %s devices (%s visible after search)', len(device_dict), len(filtered_devices))
 
-        if device_count > 5:
-            logger.debug('Updating %s devices using optimized mode', device_count)
-            self._update_device_list_optimized(device_dict)
-            return
-
-        logger.debug('Updating %s devices using standard mode', device_count)
-        self._perform_standard_device_update(device_dict)
+        self.table.update_devices(filtered_devices)
+        self.table.restore_sort_indicator(*sort_indicator)
+        self._synchronize_ui_selection(selected_serials, active_serial)
+        self._refresh_check_devices()
+        self._update_empty_state(len(device_dict), len(filtered_devices))
+        self.update_selection_count()
 
     def select_all_devices(self) -> None:
-        """Select every device, respecting virtualized list state."""
-        all_serials = list(self.window.device_dict.keys())
-        selected = self._set_selection(all_serials)
-        logger.info('Selected all %s devices (active=%s)', len(all_serials), self.window.device_selection_manager.get_active_serial())
+        """Select every available device."""
+        serials = list(self.window.device_dict.keys())
+        self.window.device_selection_manager.set_selected_serials(serials)
+        self._synchronize_ui_selection(serials, self.window.device_selection_manager.get_active_serial())
+        self.update_selection_count()
+        logger.info('Selected all %s devices', len(serials))
 
     def select_no_devices(self) -> None:
-        """Deselect all devices, handling virtualized lists."""
-        self._set_selection([])
+        """Clear selection state."""
+        self.window.device_selection_manager.clear()
+        self._synchronize_ui_selection([], None)
+        self.update_selection_count()
         logger.info('Deselected all devices')
+
+    def _set_selection(
+        self,
+        serials: Iterable[str],
+        active_serial: Optional[str] = None,
+    ) -> List[str]:
+        """Programmatically replace the tracked selection."""
+        serial_list = [serial for serial in serials if serial in self.window.device_dict]
+        self.window.device_selection_manager.set_selected_serials(serial_list)
+        if active_serial is not None:
+            self.window.device_selection_manager.set_active_serial(active_serial)
+        self._synchronize_ui_selection(serial_list, self.window.device_selection_manager.get_active_serial())
+        self.update_selection_count()
+        return serial_list
 
     def update_selection_count(self) -> None:
         """Refresh device count title according to current selection/search."""
-        device_count = len(self.window.device_dict)
+        total_count = len(self.window.device_dict)
         selected_serials = self.window.device_selection_manager.get_selected_serials()
         selected_count = len(selected_serials)
         active_serial = self.window.device_selection_manager.get_active_serial()
+
+        visible_count = self._visible_row_count()
         search_text = self.window.device_search_manager.get_search_text()
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            self._update_virtualized_title()
+
+        if search_text:
+            title_text = f'Connected Devices ({visible_count}/{total_count}) - Selected: {selected_count}'
         else:
-            if search_text:
-                visible_count = sum(
-                    1 for checkbox in self.window.check_devices.values() if checkbox.isVisible()
-                )
-                self.window.title_label.setText(
-                    f'Connected Devices ({visible_count}/{device_count}) - Selected: {selected_count}'
-                )
-            else:
-                self.window.title_label.setText(
-                    f'Connected Devices ({device_count}) - Selected: {selected_count}'
-                )
+            title_text = f'Connected Devices ({total_count}) - Selected: {selected_count}'
+
+        if hasattr(self.window, 'title_label') and self.window.title_label is not None:
+            self.window.title_label.setText(title_text)
 
         if hasattr(self.window, 'selection_summary_label') and self.window.selection_summary_label is not None:
             if active_serial and active_serial in self.window.device_dict:
@@ -99,184 +231,99 @@ class DeviceListController:
             else:
                 active_label = 'None'
             self.window.selection_summary_label.setText(
-                f'Selected {selected_count} of {device_count} · Active: {active_label}'
+                f'Selected {selected_count} of {total_count} · Active: {active_label}'
             )
 
     def filter_and_sort_devices(self) -> None:
-        """Filter and sort devices based on current search and sort settings."""
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            self.window.virtualized_device_list.apply_search_and_sort()
-            self._update_virtualized_title()
-            return
-
-        if not hasattr(self.window, 'device_layout'):
-            return
-
-        devices = list(self.window.device_dict.values())
-        sorted_devices = self.window.device_search_manager.search_and_sort_devices(
-            devices,
-            self.window.device_search_manager.get_search_text(),
-            self.window.device_search_manager.get_sort_mode(),
-        )
-
-        device_items = []
-        for device in sorted_devices:
-            serial = device.device_serial_num
-            if serial in self.window.check_devices:
-                checkbox = self.window.check_devices[serial]
-                device_items.append((serial, device, checkbox))
-
-        visible_serials = set()
-        for i, (serial, _device, checkbox) in enumerate(device_items):
-            self.window.device_layout.removeWidget(checkbox)
-            self.window.device_layout.insertWidget(i, checkbox)
-            checkbox.setVisible(True)
-            visible_serials.add(serial)
-
-        for serial, checkbox in self.window.check_devices.items():
-            if serial not in visible_serials:
-                checkbox.setVisible(False)
-
-        visible_count = len(device_items)
-        total_count = len(self.window.device_dict)
-        if hasattr(self.window, 'title_label'):
-            search_text = self.window.device_search_manager.get_search_text()
-            if search_text:
-                self.window.title_label.setText(
-                    f'Connected Devices ({visible_count}/{total_count})'
-                )
-            else:
-                self.window.title_label.setText(f'Connected Devices ({total_count})')
+        """Reapply search filtering and render the table."""
+        self.update_device_list(self.window.device_dict)
 
     def on_search_changed(self, text: str) -> None:
-        """Handle search text change."""
+        """Handle search text changes."""
         self.window.device_search_manager.set_search_text(text.strip())
         self.filter_and_sort_devices()
 
-    def on_sort_changed(self, sort_mode: str) -> None:
-        """Handle sort mode change."""
+    def on_sort_changed(self, sort_mode: str) -> None:  # pragma: no cover - legacy hook
+        """Compatibility shim kept for callers that still emit sort changes."""
         self.window.device_search_manager.set_sort_mode(sort_mode)
         self.filter_and_sort_devices()
 
-    def handle_virtualized_selection_change(self, serial: str, is_checked: bool) -> List[str]:
-        """Synchronize selection after a virtualized checkbox toggle."""
-        selected = self._apply_selection_change(serial, is_checked)
-        self._update_virtualized_title()
-        return selected
-
-    def acquire_device_checkbox(self) -> QCheckBox:
-        """Fetch a checkbox from the shared pool or create a new one."""
-        checkbox = (
-            self.window.checkbox_pool.pop()
-            if self.window.checkbox_pool
-            else QCheckBox()
-        )
-
-        try:
-            checkbox.stateChanged.disconnect()
-        except TypeError:
-            pass
-
-        try:
-            checkbox.customContextMenuRequested.disconnect()
-        except TypeError:
-            pass
-
-        checkbox.enterEvent = lambda event, cb=checkbox: QCheckBox.enterEvent(cb, event)
-        checkbox.leaveEvent = lambda event, cb=checkbox: QCheckBox.leaveEvent(cb, event)
-        checkbox.show()
-        return checkbox
-
-    def release_device_checkbox(self, checkbox: QCheckBox) -> None:
-        """Recycle checkbox widgets to reduce churn during list updates."""
-        checkbox.blockSignals(True)
-        checkbox.setChecked(False)
-        checkbox.blockSignals(False)
-        checkbox.hide()
-
-        try:
-            checkbox.stateChanged.disconnect()
-        except TypeError:
-            pass
-
-        try:
-            checkbox.customContextMenuRequested.disconnect()
-        except TypeError:
-            pass
-
-        checkbox.enterEvent = lambda event, cb=checkbox: QCheckBox.enterEvent(cb, event)
-        checkbox.leaveEvent = lambda event, cb=checkbox: QCheckBox.leaveEvent(cb, event)
-        checkbox.setParent(None)
-        self.window.checkbox_pool.append(checkbox)
-
     # ------------------------------------------------------------------
-    # Internal helpers mirrored from the main window implementation
+    # Selection synchronisation helpers
     # ------------------------------------------------------------------
-    def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
-        if hasattr(self.window, '_update_timer') and self.window._update_timer.isActive():
-            self.window._update_timer.stop()
-
-        self.window._update_timer = QTimer()
-        self.window._update_timer.setSingleShot(True)
-        self.window._update_timer.timeout.connect(
-            lambda: self._perform_batch_device_update(device_dict)
-        )
-        self.window._update_timer.start(5)
-
-    def _perform_batch_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
-        try:
-            self.window.device_scroll.setUpdatesEnabled(False)
-            checked_serials = self._get_current_checked_serials()
-
-            current_serials = set(self.window.check_devices.keys())
-            new_serials = set(device_dict.keys())
-
-            self._batch_remove_devices(current_serials - new_serials)
-            self._batch_add_devices(new_serials - current_serials, device_dict, checked_serials)
-            self._batch_update_existing(current_serials & new_serials, device_dict)
-        finally:
-            self.window.device_scroll.setUpdatesEnabled(True)
-            self.window.device_scroll.update()
-            self.filter_and_sort_devices()
-            logger.debug('Batch device update completed: %s devices', len(device_dict))
-
-    def _batch_remove_devices(self, devices_to_remove: Iterable[str]) -> None:
-        for serial in devices_to_remove:
-            if serial in self.window.check_devices:
-                checkbox = self.window.check_devices[serial]
-                self.window.device_layout.removeWidget(checkbox)
-                self.release_device_checkbox(checkbox)
-                del self.window.check_devices[serial]
-
-    def _batch_add_devices(
+    def _synchronize_ui_selection(
         self,
-        devices_to_add: Iterable[str],
-        device_dict: Dict[str, adb_models.DeviceInfo],
-        checked_serials: Iterable[str],
+        selected_serials: Iterable[str],
+        active_serial: Optional[str],
     ) -> None:
-        devices_list = list(devices_to_add)
-        batch_size = max(
-            1,
-            DeviceListPerformanceOptimizer.calculate_batch_size(len(device_dict)),
-        )
+        if self.table is None:
+            return
+        selected_list = list(selected_serials)
+        active_serial = active_serial if active_serial in selected_list else (selected_list[-1] if selected_list else None)
 
-        def process_device_batch(start_idx: int) -> None:
-            end_idx = min(start_idx + batch_size, len(devices_list))
+        self._syncing_selection = True
+        try:
+            self.table.set_checked_serials(selected_list, active_serial=active_serial)
+            self.table.set_active_serial(active_serial)
+        finally:
+            self._syncing_selection = False
 
-            for idx in range(start_idx, end_idx):
-                serial = devices_list[idx]
-                if serial in device_dict:
-                    self._create_single_device_ui(
-                        serial,
-                        device_dict[serial],
-                        checked_serials,
-                    )
+    def _on_table_selection_toggled(self, serial: str, is_checked: bool) -> None:
+        if self._syncing_selection:
+            return
 
-            if end_idx < len(devices_list):
-                QTimer.singleShot(2, lambda: process_device_batch(end_idx))
+        selected = self.window.device_selection_manager.apply_toggle(serial, is_checked, self.window.device_dict.keys())
+        self._synchronize_ui_selection(selected, self.window.device_selection_manager.get_active_serial())
+        self.update_selection_count()
 
-        if devices_list:
-            process_device_batch(0)
+    def _on_sort_indicator_changed(self, column: int, order: Qt.SortOrder) -> None:
+        self._captured_sort = (column, order)
+        sort_mode = self._SORT_MODE_BY_COLUMN.get(column)
+        if sort_mode:
+            mapped_mode = f'{sort_mode}:{order.name.lower()}'
+            self.window.device_search_manager.set_sort_mode(mapped_mode)
+
+    def _on_table_device_context_menu(self, position: QPoint, serial: str) -> None:
+        if self.table is None:
+            return
+        anchor = self.table.viewport()
+        self.window.show_device_context_menu(position, serial, anchor)
+
+    # ------------------------------------------------------------------
+    # Data helpers
+    # ------------------------------------------------------------------
+    def _visible_row_count(self) -> int:
+        if self.table is None:
+            return 0
+        count = 0
+        for row in range(self.table.rowCount()):
+            if not self.table.isRowHidden(row):
+                count += 1
+        return count
+
+    def _update_empty_state(self, total_count: int, visible_count: int) -> None:
+        table_widget = self.table
+        no_devices_label = getattr(self.window, 'no_devices_label', None)
+        if table_widget is None:
+            return
+
+        show_placeholder = total_count == 0
+        table_widget.setHidden(show_placeholder)
+        if no_devices_label is not None:
+            no_devices_label.setVisible(show_placeholder)
+            if show_placeholder and hasattr(no_devices_label, 'setText'):
+                if self.window.device_search_manager.get_search_text():
+                    no_devices_label.setText('No devices match the current search')
+                else:
+                    no_devices_label.setText('No devices found')
+        logger.debug('Empty state updated (total=%s, visible=%s)', total_count, visible_count)
+
+    def _refresh_check_devices(self) -> None:
+        proxies = {
+            serial: _SelectionProxy(self, serial)
+            for serial in self.window.device_dict.keys()
+        }
+        self.window.check_devices = proxies
 
     def _get_filtered_sorted_devices(
         self, device_dict: Optional[Dict[str, adb_models.DeviceInfo]] = None
@@ -288,337 +335,22 @@ class DeviceListController:
             self.window.device_search_manager.get_sort_mode(),
         )
 
-    def _build_device_display_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        operation_status = self.get_device_operation_status(serial)
-        recording_status = self.get_device_recording_status(serial)
+    # ------------------------------------------------------------------
+    # Device detail helpers used by other controllers
+    # ------------------------------------------------------------------
+    def get_additional_device_info(self, serial: str) -> Dict[str, str]:
+        return self._get_additional_device_info(serial)
 
-        android_ver = device.android_ver or 'Unknown'
-        android_api = device.android_api_level or 'Unknown'
-        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+    def get_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        return self._build_device_detail_text(device, serial)
 
-        wifi_status = self.get_on_off_status(device.wifi_is_on)
-        bt_status = self.get_on_off_status(device.bt_is_on)
-
-        return (
-            f'{operation_status}{recording_status}📱 {device.device_model:<20} | '
-            f'🆔 {device.device_serial_num:<20} | '
-            f'🤖 Android {android_ver:<5} (API {android_api:<4}) | '
-            f'🎯 GMS: {gms_display:<12} | '
-            f'📶 WiFi: {wifi_status:<3} | '
-            f'🔵 BT: {bt_status}'
-        )
-
-    def _apply_checkbox_content(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo) -> None:
-        checkbox.setText(self._build_device_display_text(device, serial))
-        checkbox.setToolTip('Right-click to view detailed device information')
-
-    def _configure_device_checkbox(
-        self,
-        checkbox: QCheckBox,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        checked_set = set(checked_serials)
-        checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        checkbox.customContextMenuRequested.connect(
-            lambda pos, s=serial, cb=checkbox: self.window.device_actions_controller.show_context_menu(pos, s, cb)
-        )
-        fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        fixed_font.setPointSize(10)
-        checkbox.setFont(fixed_font)
-        self._apply_device_checkbox_style(checkbox)
-        self._apply_checkbox_content(checkbox, serial, device)
-        self._apply_active_flag(checkbox, serial == self.window.device_selection_manager.get_active_serial())
-
-        is_checked = serial in checked_set
-        checkbox.blockSignals(True)
-        checkbox.setChecked(is_checked)
-        checkbox.blockSignals(False)
-
-        checkbox.stateChanged.connect(
-            lambda state, s=serial, cb=checkbox: self._on_standard_checkbox_state_changed(s, state, cb)
-        )
-
-    def _initialize_virtualized_checkbox(
-        self,
-        checkbox: QCheckBox,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-    def _get_current_checked_serials(self) -> set:
-        return set(self.window.device_selection_manager.get_selected_serials())
-
-    def _release_all_standard_checkboxes(self) -> None:
-        for serial, checkbox in list(self.window.check_devices.items()):
-            if isinstance(checkbox, QCheckBox):
-                self.window.device_layout.removeWidget(checkbox)
-                self.release_device_checkbox(checkbox)
-        self.window.check_devices.clear()
-
-    def _activate_virtualized_view(self, checked_serials: Optional[Iterable[str]] = None) -> None:
-        if self.window.virtualized_device_list is None or self.window.virtualized_active:
-            return
-
-        preserved_serials = set(checked_serials or [])
-        self.window.pending_checked_serials = set(preserved_serials)
-
-        self._release_all_standard_checkboxes()
-
-        current_widget = self.window.device_scroll.takeWidget()
-        if current_widget is not None and current_widget is not self.window.virtualized_widget:
-            self.window.standard_device_widget = current_widget
-
-        if self.window.virtualized_widget.parent() is not None:
-            self.window.virtualized_widget.setParent(None)
-        self.window.device_scroll.setWidget(self.window.virtualized_widget)
-        self.window.virtualized_active = True
-
-    def _deactivate_virtualized_view(self) -> None:
-        if not self.window.virtualized_active:
-            return
-
-        if self.window.virtualized_device_list is not None:
-            self.window.pending_checked_serials = set(self.window.virtualized_device_list.checked_devices)
-
-        current_widget = self.window.device_scroll.takeWidget()
-        if current_widget is not None and current_widget is self.window.virtualized_widget:
-            self.window.virtualized_widget.setParent(None)
-
-        if self.window.standard_device_widget is not None:
-            self.window.device_scroll.setWidget(self.window.standard_device_widget)
-
-        if self.window.virtualized_device_list is not None:
-            self.window.virtualized_device_list.clear_widgets()
-
-        self.window.virtualized_active = False
-
-    def _update_virtualized_title(self) -> None:
-        if not hasattr(self.window, 'title_label') or self.window.title_label is None:
-            return
-
-        total = len(self.window.device_dict)
-        if self.window.virtualized_device_list:
-            visible = len(self.window.virtualized_device_list.sorted_devices)
-            selected = len(self.window.virtualized_device_list.checked_devices)
-        else:
-            visible = total
-            selected = 0
-
-        search_text = self.window.device_search_manager.get_search_text() if hasattr(self.window, 'device_search_manager') else ''
-
-        if search_text:
-            self.window.title_label.setText(f'Connected Devices ({visible}/{total}) - Selected: {selected}')
-        else:
-            self.window.title_label.setText(f'Connected Devices ({total}) - Selected: {selected}')
-
-    def _create_single_device_ui(
-        self,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        checkbox = self.acquire_device_checkbox()
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-        self.window.check_devices[serial] = checkbox
-        insert_index = self.window.device_layout.count() - 1
-        self.window.device_layout.insertWidget(insert_index, checkbox)
-
-    def _batch_update_existing(
-        self,
-        devices_to_update: Iterable[str],
-        device_dict: Dict[str, adb_models.DeviceInfo],
-    ) -> None:
-        for serial in devices_to_update:
-            if serial in self.window.check_devices and serial in device_dict:
-                device = device_dict[serial]
-                checkbox = self.window.check_devices[serial]
-                self._apply_checkbox_content(checkbox, serial, device)
-
-    def _perform_standard_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
-        self.window.device_scroll.setUpdatesEnabled(False)
-
-        checked_serials = self._get_current_checked_serials()
-        current_serials = set(self.window.check_devices.keys())
-        new_serials = set(device_dict.keys())
-
-        for serial in current_serials - new_serials:
-            if serial in self.window.check_devices:
-                checkbox = self.window.check_devices[serial]
-                self.window.device_layout.removeWidget(checkbox)
-                self.release_device_checkbox(checkbox)
-                del self.window.check_devices[serial]
-
-        for serial in new_serials - current_serials:
-            if serial in device_dict:
-                device = device_dict[serial]
-                self._create_standard_device_ui(serial, device, checked_serials)
-
-        for serial in current_serials & new_serials:
-            if serial in self.window.check_devices and serial in device_dict:
-                device = device_dict[serial]
-                checkbox = self.window.check_devices[serial]
-                self._apply_checkbox_content(checkbox, serial, device)
-
-        self.window.device_scroll.setUpdatesEnabled(True)
-        self.filter_and_sort_devices()
-
-    def _create_standard_device_ui(
-        self,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        checkbox = self.acquire_device_checkbox()
-        self._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-        self.window.check_devices[serial] = checkbox
-        insert_index = self.window.device_layout.count() - 1
-        self.window.device_layout.insertWidget(insert_index, checkbox)
-
-    def _update_device_checkbox_text(
-        self, checkbox: QCheckBox, device: adb_models.DeviceInfo, serial: str
-    ) -> None:
-        self._apply_checkbox_content(checkbox, serial, device)
+    # Backward compatibility shim
+    def create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        return self._build_device_detail_text(device, serial)
 
     # ------------------------------------------------------------------
-    # Selection synchronisation helpers
+    # Internal detail-building helpers (ported from legacy implementation)
     # ------------------------------------------------------------------
-    def _synchronize_ui_selection(self, selected_serials: Iterable[str]) -> None:
-        selected_set = set(selected_serials)
-        active_serial = self.window.device_selection_manager.get_active_serial()
-
-        for serial, checkbox in self.window.check_devices.items():
-            desired = serial in selected_set
-            if checkbox.isChecked() != desired:
-                checkbox.blockSignals(True)
-                checkbox.setChecked(desired)
-                checkbox.blockSignals(False)
-            self._apply_active_flag(checkbox, serial == active_serial)
-
-        if self.window.virtualized_device_list is not None:
-            if self.window.virtualized_active:
-                self.window.virtualized_device_list.checked_devices = selected_set
-                self.window.virtualized_device_list.set_checked_serials(selected_set, emit_signal=False)
-            else:
-                self.window.virtualized_device_list.checked_devices = selected_set
-            for serial, checkbox in self.window.virtualized_device_list.device_widgets.items():
-                self._apply_active_flag(checkbox, serial == active_serial)
-
-        self.window.pending_checked_serials = set(selected_set)
-
-    def _set_selection(self, serials: Iterable[str]) -> List[str]:
-        if self._syncing_selection:
-            return list(self.window.device_selection_manager.get_selected_serials())
-
-        self._syncing_selection = True
-        try:
-            selected = self.window.device_selection_manager.set_selected_serials(serials)
-            self._synchronize_ui_selection(selected)
-        finally:
-            self._syncing_selection = False
-
-        self.update_selection_count()
-        return selected
-
-    def _apply_selection_change(self, serial: str, is_checked: bool) -> List[str]:
-        if self._syncing_selection:
-            return list(self.window.device_selection_manager.get_selected_serials())
-
-        self._syncing_selection = True
-        try:
-            selected = self.window.device_selection_manager.apply_toggle(
-                serial,
-                is_checked,
-                self.window.device_dict.keys(),
-            )
-            self._synchronize_ui_selection(selected)
-        finally:
-            self._syncing_selection = False
-
-        self.update_selection_count()
-        return selected
-
-    def _on_standard_checkbox_state_changed(self, serial: str, state: int, checkbox: QCheckBox) -> None:
-        is_checked = state == Qt.CheckState.Checked.value
-        selected = self._apply_selection_change(serial, is_checked)
-        desired_state = Qt.CheckState.Checked.value if serial in selected else Qt.CheckState.Unchecked.value
-        self._update_checkbox_visual_state(checkbox, desired_state)
-        self._apply_active_flag(checkbox, serial == self.window.device_selection_manager.get_active_serial())
-
-    # ------------------------------------------------------------------
-    # Shared formatting helpers
-    # ------------------------------------------------------------------
-    def get_on_off_status(self, status) -> str:
-        if status is None or status == 'None':
-            return 'Unknown'
-        return 'On' if status else 'Off'
-
-    def get_device_operation_status(self, serial: str) -> str:
-        operation = self.window.device_operations.get(serial)
-        if operation:
-            return f'⚙️ {operation.upper()} | '
-        return ''
-
-    def get_device_recording_status(self, serial: str) -> str:
-        record_info = self.window.device_recordings.get(serial)
-        if record_info and record_info.get('active', False):
-            return '🔴 REC | '
-        return ''
-
-    @staticmethod
-    def _format_detail(label: str, value, width: int = 18) -> str:
-        if value in (None, ""):
-            safe_value = "Unknown"
-        else:
-            safe_value = str(value)
-        return f"{label:<{width}}: {safe_value}"
-
-    def _build_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        base_tooltip = (
-            '📱 Device Information\n'
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f"{self._format_detail('Model', device.device_model)}\n"
-            f"{self._format_detail('Serial', device.device_serial_num)}\n"
-            f"{self._format_detail('Android', device.android_ver)} "
-            f"(API {device.android_api_level if device.android_api_level else 'Unknown'})\n"
-            f"{self._format_detail('GMS Version', device.gms_version)}\n"
-            f"{self._format_detail('Product', device.device_prod)}\n"
-            f"{self._format_detail('USB', device.device_usb)}\n"
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            '📡 Connectivity\n'
-            f"{self._format_detail('WiFi', self.get_on_off_status(device.wifi_is_on))}\n"
-            f"{self._format_detail('Bluetooth', self.get_on_off_status(device.bt_is_on))}\n"
-            f"{self._format_detail('Audio', device.audio_state)}\n"
-            f"{self._format_detail('BT Manager', device.bluetooth_manager_state)}\n"
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            '🔧 Build Information\n'
-            f"{self._format_detail('Build Fingerprint', (device.build_fingerprint[:50] + '...') if device.build_fingerprint else 'Unknown')}"
-        )
-
-        try:
-            additional_info = self._get_additional_device_info(serial)
-            return base_tooltip + (
-                f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🖥️ Hardware Information\n'
-                f"{self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown'))}\n"
-                f"{self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown'))}\n"
-                f"{self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown'))}\n"
-                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🔋 Battery Information\n'
-                f"{self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown'))}\n"
-                f"{self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown'))}\n"
-                f"{self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown'))}\n"
-                f"{self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown'))}"
-            )
-        except Exception as exc:
-            logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
-            return base_tooltip
-
     def _get_additional_device_info(self, serial: str) -> Dict[str, str]:
         cache_source = getattr(self.window, 'battery_info_manager', None)
         if cache_source is not None:
@@ -631,7 +363,7 @@ class DeviceListController:
             if cache_source is not None:
                 cache_source.update_cache(serial, info)
             return info
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - defensive logging
             logger.error('Error getting additional device info for %s: %s', serial, exc)
             info = {
                 'screen_density': 'Unknown',
@@ -646,30 +378,90 @@ class DeviceListController:
                 cache_source.update_cache(serial, info)
             return info
 
-    def _apply_device_checkbox_style(self, checkbox: QCheckBox) -> None:
-        checkbox.setStyleSheet(StyleManager.get_checkbox_style())
+    def _build_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
+        operation_status = self.get_device_operation_status(serial)
+        recording_status = self.get_device_recording_status(serial)
 
-    def _update_checkbox_visual_state(self, checkbox: QCheckBox, state: int) -> None:
-        # Styling handled by stylesheet; method retained for potential future hooks.
-        if state not in (0, 2):
-            return
+        android_ver = device.android_ver or 'Unknown'
+        android_api = device.android_api_level or 'Unknown'
+        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
 
-    def _apply_active_flag(self, checkbox: QCheckBox, is_active: bool) -> None:
-        checkbox.setProperty('activeDevice', 'true' if is_active else 'false')
-        style = checkbox.style()
-        style.unpolish(checkbox)
-        style.polish(checkbox)
-        checkbox.update()
+        wifi_status = self.get_on_off_status(device.wifi_is_on)
+        bt_status = self.get_on_off_status(device.bt_is_on)
 
-    def get_additional_device_info(self, serial: str) -> Dict[str, str]:
-        return self._get_additional_device_info(serial)
+        base_tooltip = (
+            f"{self._format_title(device.device_model)}\n"
+            f"{self._format_subtitle(device.device_serial_num)}\n"
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            '📱 Device Overview\n'
+            f"{self._format_detail('Model', device.device_model)}\n"
+            f"{self._format_detail('Serial', device.device_serial_num)}\n"
+            f"{self._format_detail('Android', android_ver)} "
+            f"(API {android_api})\n"
+            f"{self._format_detail('GMS Version', gms_display)}\n"
+            f"{self._format_detail('Product', device.device_prod)}\n"
+            f"{self._format_detail('USB', device.device_usb)}\n"
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            '📡 Connectivity\n'
+            f"{self._format_detail('WiFi', wifi_status)}\n"
+            f"{self._format_detail('Bluetooth', bt_status)}\n"
+            f"{self._format_detail('Audio', device.audio_state)}\n"
+            f"{self._format_detail('BT Manager', device.bluetooth_manager_state)}\n"
+        )
 
-    def get_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        return self._build_device_detail_text(device, serial)
+        try:
+            additional_info = self._get_additional_device_info(serial)
+            return base_tooltip + (
+                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🖥️ Hardware Information\n'
+                f"{self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown'))}\n"
+                f"{self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown'))}\n"
+                f"{self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown'))}\n"
+                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+                f'🔋 Battery Information\n'
+                f"{self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown'))}\n"
+                f"{self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown'))}\n"
+                f"{self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown'))}\n"
+                f"{self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown'))}"
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
+            return base_tooltip
 
-    # Backward compatibility shim
-    def create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        return self._build_device_detail_text(device, serial)
+    # ------------------------------------------------------------------
+    # Legacy compatibility helpers retained for other modules
+    # ------------------------------------------------------------------
+    def get_device_operation_status(self, serial: str) -> str:
+        manager = getattr(self.window, 'device_manager', None)
+        if manager is not None and hasattr(manager, 'get_device_operation_status'):
+            return manager.get_device_operation_status(serial) or ''
+        return ''
+
+    def get_device_recording_status(self, serial: str) -> str:
+        manager = getattr(self.window, 'device_manager', None)
+        if manager is not None and hasattr(manager, 'get_device_recording_status'):
+            status = manager.get_device_recording_status(serial)
+            if status:
+                return status.get('status', '')
+        return ''
+
+    @staticmethod
+    def get_on_off_status(value: Optional[bool]) -> str:
+        if value is None:
+            return 'Unknown'
+        return 'On' if value else 'Off'
+
+    @staticmethod
+    def _format_title(text: str) -> str:
+        return f"{text or 'Unknown Device'}"
+
+    @staticmethod
+    def _format_subtitle(text: str) -> str:
+        return f"Serial: {text or 'Unknown'}"
+
+    @staticmethod
+    def _format_detail(label: str, value: Optional[str]) -> str:
+        return f"{label}: {value or 'Unknown'}"
 
 
 __all__ = ["DeviceListController"]

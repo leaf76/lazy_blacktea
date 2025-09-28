@@ -225,8 +225,7 @@ class DeviceManager(QObject):
         super().__init__()
         self.parent = parent_widget
         self.device_dict: Dict[str, adb_models.DeviceInfo] = {}
-        self.check_devices: Dict[str, QCheckBox] = {}
-        self.device_labels: Dict[str, QLabel] = {}
+        self.check_devices: Dict[str, object] = {}
         self.device_operations: Dict[str, str] = {}
         self.device_recording_status: Dict[str, Dict] = {}
 
@@ -270,11 +269,11 @@ class DeviceManager(QObject):
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
-        checked_devices = []
-        for serial, checkbox in self.check_devices.items():
-            if checkbox.isChecked() and serial in self.device_dict:
-                checked_devices.append(self.device_dict[serial])
-        return checked_devices
+        selection_manager = getattr(self.parent, 'device_selection_manager', None)
+        if selection_manager is None:
+            return []
+        serials = selection_manager.get_selected_serials()
+        return [self.device_dict[serial] for serial in serials if serial in self.device_dict]
 
     def _on_device_basic_loaded(self, serial: str, device_info: adb_models.DeviceInfo):
         """處理設備基本信息加載完成"""
@@ -370,17 +369,19 @@ class DeviceManager(QObject):
 
     def _cleanup_device_ui(self, serial: str):
         """Clean up device-related UI elements."""
-        if serial in self.check_devices:
-            checkbox = self.check_devices.pop(serial)
-            if checkbox.parent():
+        checkbox = self.check_devices.pop(serial, None)
+        if checkbox is not None:
+            if hasattr(checkbox, 'setParent'):
                 checkbox.setParent(None)
+            if hasattr(checkbox, 'deleteLater'):
                 checkbox.deleteLater()
 
-        if serial in self.device_labels:
-            label = self.device_labels.pop(serial)
-            if label.parent():
-                label.setParent(None)
-                label.deleteLater()
+        selection_manager = getattr(self.parent, 'device_selection_manager', None)
+        if selection_manager is not None:
+            remaining = [s for s in selection_manager.get_selected_serials() if s != serial]
+            selection_manager.set_selected_serials(remaining)
+            if hasattr(self.parent, 'device_list_controller'):
+                self.parent.device_list_controller.update_selection_count()
 
     def force_refresh(self):
         """Force immediate device refresh."""

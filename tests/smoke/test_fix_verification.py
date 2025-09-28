@@ -55,14 +55,12 @@ def test_optimized_functions():
 def test_performance_tools():
     """測試性能測試工具"""
     try:
-        from ui.optimized_device_list import VirtualizedDeviceList, DeviceListPerformanceOptimizer
-        print("✅ 優化工具導入成功")
+        from ui.device_table_widget import DeviceTableWidget
 
-        # 測試性能優化器功能
-        assert DeviceListPerformanceOptimizer.should_use_virtualization(15) == True
-        assert DeviceListPerformanceOptimizer.should_use_virtualization(3) == False
-        assert DeviceListPerformanceOptimizer.calculate_batch_size(10) == 5
-        print("✅ 性能優化器功能正常")
+        table = DeviceTableWidget()
+        table.update_devices([])
+        table.sortItems(1)
+        print("✅ DeviceTableWidget 初始化成功並支援排序")
 
         return True
     except Exception as e:

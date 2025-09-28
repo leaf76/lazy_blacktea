@@ -13,7 +13,6 @@ from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
-    QCheckBox,
     QTreeWidget,
     QTreeWidgetItem
 )
@@ -47,7 +46,6 @@ from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager, ConsoleHandler
-from ui.optimized_device_list import VirtualizedDeviceList
 from ui.device_list_controller import DeviceListController
 from ui.device_actions_controller import DeviceActionsController
 from ui.tools_panel_controller import ToolsPanelController
@@ -127,13 +125,9 @@ class WindowMain(QMainWindow):
 
         # Initialize variables (keeping some for compatibility)
         self.device_dict: Dict[str, adb_models.DeviceInfo] = {}
-        self.check_devices: Dict[str, QCheckBox] = {}
-        self.checkbox_pool: List[QCheckBox] = []
-        self.virtualized_device_list = None
-        self.virtualized_widget = None
         self.virtualized_active = False
-        self.standard_device_widget = None
-        self.pending_checked_serials: Set[str] = set()
+        self.virtualized_device_list = None
+        self.check_devices: Dict[str, object] = {}
         self.device_groups: Dict[str, List[str]] = {}
         self.refresh_interval = 30
         self.refresh_interval_actions: Dict[int, QAction] = {}
@@ -304,15 +298,12 @@ class WindowMain(QMainWindow):
         # Create device panel using panels_manager
         device_components = self.panels_manager.create_device_panel(main_splitter, self)
         self.title_label = device_components['title_label']
-        self.device_scroll = device_components['device_scroll']
-        self.device_widget = device_components['device_widget']
-        self.device_layout = device_components['device_layout']
+        self.device_table = device_components['device_table']
         self.no_devices_label = device_components['no_devices_label']
         self.selection_summary_label = device_components['selection_summary_label']
 
-        self.standard_device_widget = self.device_widget
-        self.virtualized_device_list = VirtualizedDeviceList(self.device_widget, main_window=self)
-        self.virtualized_widget = self.virtualized_device_list.get_widget()
+        self.device_list_controller.attach_table(self.device_table)
+        self.no_devices_label.hide()
         self.device_list_controller.update_selection_count()
 
         # Create tools panel via controller
@@ -478,83 +469,6 @@ class WindowMain(QMainWindow):
     def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         self.device_list_controller._update_device_list_optimized(device_dict)
 
-    def _perform_batch_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        self.device_list_controller._perform_batch_device_update(device_dict)
-
-    def _batch_remove_devices(self, devices_to_remove):
-        self.device_list_controller._batch_remove_devices(devices_to_remove)
-
-    def _batch_add_devices(self, devices_to_add, device_dict, checked_serials):
-        self.device_list_controller._batch_add_devices(devices_to_add, device_dict, checked_serials)
-
-    def _get_filtered_sorted_devices(
-        self, device_dict: Optional[Dict[str, adb_models.DeviceInfo]] = None
-    ) -> List[adb_models.DeviceInfo]:
-        return self.device_list_controller._get_filtered_sorted_devices(device_dict)
-
-    def _build_device_display_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        return self.device_list_controller._build_device_display_text(device, serial)
-
-    def _apply_checkbox_content(self, checkbox: QCheckBox, serial: str, device: adb_models.DeviceInfo) -> None:
-        self.device_list_controller._apply_checkbox_content(checkbox, serial, device)
-
-    def _configure_device_checkbox(
-        self,
-        checkbox: QCheckBox,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        self.device_list_controller._configure_device_checkbox(checkbox, serial, device, checked_serials)
-
-    def _initialize_virtualized_checkbox(
-        self,
-        checkbox: QCheckBox,
-        serial: str,
-        device: adb_models.DeviceInfo,
-        checked_serials: Iterable[str],
-    ) -> None:
-        self.device_list_controller._initialize_virtualized_checkbox(checkbox, serial, device, checked_serials)
-
-    def _get_current_checked_serials(self) -> set:
-        return self.device_list_controller._get_current_checked_serials()
-
-    def _release_all_standard_checkboxes(self) -> None:
-        self.device_list_controller._release_all_standard_checkboxes()
-
-    def _activate_virtualized_view(self, checked_serials: Optional[Iterable[str]] = None) -> None:
-        self.device_list_controller._activate_virtualized_view(checked_serials)
-
-    def _deactivate_virtualized_view(self) -> None:
-        self.device_list_controller._deactivate_virtualized_view()
-
-    def _update_virtualized_title(self) -> None:
-        self.device_list_controller._update_virtualized_title()
-
-    def _handle_virtualized_selection_change(self, serial: str, is_checked: bool) -> None:
-        self.device_list_controller.handle_virtualized_selection_change(serial, is_checked)
-
-    def _acquire_device_checkbox(self) -> QCheckBox:
-        return self.device_list_controller.acquire_device_checkbox()
-
-    def _release_device_checkbox(self, checkbox: QCheckBox) -> None:
-        self.device_list_controller.release_device_checkbox(checkbox)
-
-    def _create_single_device_ui(self, serial, device, checked_serials):
-        self.device_list_controller._create_single_device_ui(serial, device, checked_serials)
-
-    def _batch_update_existing(self, devices_to_update, device_dict):
-        self.device_list_controller._batch_update_existing(devices_to_update, device_dict)
-
-    def _perform_standard_device_update(self, device_dict: Dict[str, adb_models.DeviceInfo]):
-        self.device_list_controller._perform_standard_device_update(device_dict)
-
-    def _create_standard_device_ui(self, serial, device, checked_serials):
-        self.device_list_controller._create_standard_device_ui(serial, device, checked_serials)
-
-    def _update_device_checkbox_text(self, checkbox, device, serial):
-        self.device_list_controller._update_device_checkbox_text(checkbox, device, serial)
-
     def filter_and_sort_devices(self):
         self.device_list_controller.filter_and_sort_devices()
 
@@ -670,57 +584,8 @@ class WindowMain(QMainWindow):
         self.device_actions_controller.launch_scrcpy_single_device(device_serial)
 
     def filter_and_sort_devices(self):
-        """Filter and sort devices based on current search and sort settings."""
-        if self.virtualized_active and self.virtualized_device_list is not None:
-            self.virtualized_device_list.apply_search_and_sort()
-            self._update_virtualized_title()
-            return
-
-        if not hasattr(self, 'device_layout'):
-            return
-
-        # Get all devices
-        devices = list(self.device_dict.values())
-
-        # Use search manager to filter and sort
-        sorted_devices = self.device_search_manager.search_and_sort_devices(
-            devices,
-            self.device_search_manager.get_search_text(),
-            self.device_search_manager.get_sort_mode()
-        )
-
-        # Create device items with checkboxes
-        device_items = []
-        for device in sorted_devices:
-            serial = device.device_serial_num
-            if serial in self.check_devices:
-                checkbox = self.check_devices[serial]
-                device_items.append((serial, device, checkbox))
-
-        # Reorder widgets in layout
-        visible_serials = set()
-        for i, (serial, device, checkbox) in enumerate(device_items):
-            # Remove from layout
-            self.device_layout.removeWidget(checkbox)
-            # Insert at correct position (before the stretch item)
-            self.device_layout.insertWidget(i, checkbox)
-            checkbox.setVisible(True)
-            visible_serials.add(serial)
-
-        # Hide devices that don't match search
-        for serial, checkbox in self.check_devices.items():
-            if serial not in visible_serials:
-                checkbox.setVisible(False)
-
-        # Update device count
-        visible_count = len(device_items)
-        total_count = len(self.device_dict)
-        if hasattr(self, 'title_label'):
-            search_text = self.device_search_manager.get_search_text()
-            if search_text:
-                self.title_label.setText(f'Connected Devices ({visible_count}/{total_count})')
-            else:
-                self.title_label.setText(f'Connected Devices ({total_count})')
+        """Delegate filtering to the device list controller."""
+        self.device_list_controller.filter_and_sort_devices()
 
     def on_search_changed(self, text: str):
         """Handle search text change."""

@@ -35,7 +35,9 @@ class DeviceListContextMenuManager:
 
     def show_context_menu(self, position) -> None:
         menu = self.create_context_menu()
-        global_pos = self.window.device_scroll.mapToGlobal(position)
+        table = getattr(self.window, 'device_table', None)
+        anchor = table.viewport() if table is not None else self.window
+        global_pos = anchor.mapToGlobal(position)
         menu.exec(global_pos)
 
     # ------------------------------------------------------------------

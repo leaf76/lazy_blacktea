@@ -4,7 +4,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
-    QCheckBox, QLineEdit, QProgressBar, QApplication, QComboBox,
+    QCheckBox, QLineEdit, QProgressBar, QApplication,
     QTreeWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFont, QAction, QActionGroup
 
 from utils import common
 from ui.style_manager import StyleManager, ButtonStyle
+from ui.device_table_widget import DeviceTableWidget
 
 
 class PanelsManager(QObject):
@@ -465,15 +466,6 @@ class PanelsManager(QObject):
         search_field.textChanged.connect(lambda text: main_window.on_search_changed(text))
         search_layout.addWidget(search_field)
 
-        # Sort dropdown
-        sort_label = QLabel('Sort:')
-        search_layout.addWidget(sort_label)
-
-        sort_combo = QComboBox()
-        sort_combo.addItems(['Name', 'Serial', 'Status', 'Selected'])
-        sort_combo.currentTextChanged.connect(lambda text: main_window.on_sort_changed(text.lower()))
-        search_layout.addWidget(sort_combo)
-
         device_layout.addLayout(search_layout)
 
         # Control buttons
@@ -510,34 +502,22 @@ class PanelsManager(QObject):
 
         device_layout.addLayout(selection_container)
 
-        # Device list scroll area
-        device_scroll = QScrollArea()
-        device_scroll.setWidgetResizable(True)
-        device_widget_inner = QWidget()
-        device_layout_inner = QVBoxLayout(device_widget_inner)
-        device_scroll.setWidget(device_widget_inner)
-
-        # Enable context menu for device list
-        device_scroll.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        device_scroll.customContextMenuRequested.connect(main_window.show_device_list_context_menu)
-
-        device_layout.addWidget(device_scroll)
-
-        # Add stretch item at the end to push devices to top
-        device_layout_inner.addStretch()
+        device_table = DeviceTableWidget()
+        device_table.list_context_menu_requested.connect(main_window.show_device_list_context_menu)
+        device_layout.addWidget(device_table)
 
         # No devices label (will be added dynamically)
         no_devices_label = QLabel('No devices found')
         no_devices_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        no_devices_label.hide()
+        device_layout.addWidget(no_devices_label)
 
         parent.addWidget(device_widget)
 
         # Return references to components that need to be accessed by main window
         return {
             'title_label': title_label,
-            'device_scroll': device_scroll,
-            'device_widget': device_widget_inner,
-            'device_layout': device_layout_inner,
+            'device_table': device_table,
             'no_devices_label': no_devices_label,
             'selection_summary_label': selection_summary_label,
             'selection_hint_label': hint_label,

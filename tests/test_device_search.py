@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import adb_models
 from ui.device_search_manager import DeviceSearchManager
+from ui.device_selection_manager import DeviceSelectionManager
 
 
 class MockMainWindow:
@@ -21,6 +22,7 @@ class MockMainWindow:
 
     def __init__(self):
         self.check_devices = {}
+        self.device_selection_manager = DeviceSelectionManager()
         # Initialize the search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
 

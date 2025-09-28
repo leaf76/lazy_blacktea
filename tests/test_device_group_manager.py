@@ -1,16 +1,13 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ['HOME'] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.test_home')
 
-
-class DummyItem:
-    def __init__(self, text: str) -> None:
-        self._text = text
-
-    def text(self) -> str:
-        return self._text
+from ui.device_group_manager import DeviceGroupManager
+from ui.device_selection_manager import DeviceSelectionManager
 
 
 class DummyListBox:
@@ -28,7 +25,7 @@ class DummyListBox:
         return self.current
 
     def setCurrent(self, text: str) -> None:
-        self.current = DummyItem(text)
+        self.current = SimpleNamespace(text=lambda: text)
 
 
 class DummyLineEdit:
@@ -41,21 +38,8 @@ class DummyLineEdit:
     def clear(self) -> None:
         self.text_value = ""
 
-
-class DummyCheckbox:
-    def __init__(self) -> None:
-        self.checked = False
-
-    def setChecked(self, value: bool) -> None:
-        self.checked = bool(value)
-
-
-class DummyVirtualizedList:
-    def __init__(self) -> None:
-        self.checked_serials = set()
-
-    def set_checked_serials(self, serials):
-        self.checked_serials = set(serials)
+    def text(self) -> str:
+        return self.text_value
 
 
 class DummyWindow:
@@ -64,11 +48,12 @@ class DummyWindow:
         self.device_dict = {}
         self.groups_listbox = DummyListBox()
         self.group_name_edit = DummyLineEdit()
-        self.virtualized_active = False
-        self.virtualized_device_list = None
-        self.check_devices = {}
+        self.device_selection_manager = DeviceSelectionManager()
+        self.device_list_controller = SimpleNamespace(_set_selection=self._set_selection_proxy)
         self.info_messages = []
-        self.cleared_groups = 0
+
+    def _set_selection_proxy(self, serials):
+        self.device_selection_manager.set_selected_serials(serials)
 
     def show_info(self, _title: str, message: str) -> None:
         self.info_messages.append(message)
@@ -77,15 +62,11 @@ class DummyWindow:
         self.info_messages.append(message)
 
     def select_no_devices(self) -> None:
-        for checkbox in self.check_devices.values():
-            checkbox.setChecked(False)
-        self.cleared_groups += 1
+        self.device_selection_manager.clear()
 
 
 class DeviceGroupManagerTest(unittest.TestCase):
     def setUp(self) -> None:
-        from ui.device_group_manager import DeviceGroupManager
-
         self.window = DummyWindow()
         self.manager = DeviceGroupManager(self.window)
 
@@ -94,32 +75,20 @@ class DeviceGroupManagerTest(unittest.TestCase):
         self.manager.update_groups_listbox()
         self.assertEqual(self.window.groups_listbox.items, ["alpha", "beta"])
 
-    def test_select_devices_marks_present_checkboxes(self):
+    def test_select_devices_sets_selection_manager(self):
         self.window.device_groups = {"team": ["A", "B"]}
-        self.window.check_devices = {"A": DummyCheckbox()}
+        self.window.device_dict = {
+            "A": object(),
+            "B": object(),
+        }
         self.manager.select_devices_in_group_by_name("team")
-        self.assertTrue(self.window.check_devices["A"].checked)
-        self.assertIn("B", self.window.info_messages[-1])
+        self.assertEqual(self.window.device_selection_manager.get_selected_serials(), ["A", "B"])
 
-        from ui.device_group_manager import DeviceGroupSelection
-
-        selection = DeviceGroupSelection(
-            available_checkboxes=set(self.window.check_devices.keys()),
-            available_device_serials=set(self.window.device_dict.keys()),
-        )
-        connected, missing = selection.classify(self.window.device_groups["team"], use_device_dict=False)
-        self.assertEqual(connected, ["A"])
-        self.assertEqual(missing, ["B"])
-
-    def test_virtualized_selection_sets_checked_serials(self):
-        self.window.virtualized_active = True
-        self.window.virtualized_device_list = DummyVirtualizedList()
-        self.window.device_groups = {"qa": ["A", "C"]}
+    def test_select_devices_reports_missing(self):
+        self.window.device_groups = {"team": ["A", "C"]}
         self.window.device_dict = {"A": object()}
-
-        self.manager.select_devices_in_group_by_name("qa")
-        self.assertEqual(self.window.virtualized_device_list.checked_serials, {"A"})
-        self.assertIn("C", self.window.info_messages[-1])
+        self.manager.select_devices_in_group_by_name("team")
+        self.assertIn("C", "\n".join(self.window.info_messages))
 
 
 if __name__ == "__main__":

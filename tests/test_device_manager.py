@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch, MagicMock, call
 
 # Add the project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ['HOME'] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.test_home')
 
 # Import Qt modules for testing
 from PyQt6.QtCore import QCoreApplication, QThread, pyqtSignal, QObject

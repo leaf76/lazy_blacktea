@@ -79,9 +79,10 @@ class DeviceActionsController:
         self.window.device_list_controller._set_selection([target_serial])
 
     def deselect_device(self, target_serial: str) -> None:
-        current = set(self.window.device_selection_manager.get_selected_serials())
-        if target_serial in current:
-            current.discard(target_serial)
+        current = [
+            serial for serial in self.window.device_selection_manager.get_selected_serials()
+            if serial != target_serial
+        ]
         self.window.device_list_controller._set_selection(current)
 
     def launch_ui_inspector_for_device(self, device_serial: str) -> None:
@@ -221,31 +222,15 @@ class DeviceActionsController:
             self._restore_device_selections(original_selections, active_serial)
 
     def _backup_device_selections(self) -> tuple[Dict[str, bool], Optional[str]]:
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            selections = {serial: True for serial in self.window.virtualized_device_list.checked_devices}
-            active = self.window.device_selection_manager.get_active_serial()
-            return selections, active
-
-        selections = {
-            serial: checkbox.isChecked()
-            for serial, checkbox in self.window.check_devices.items()
-        }
+        selections = self.window.device_selection_manager.get_selected_serials()
         active = self.window.device_selection_manager.get_active_serial()
-        return selections, active
+        return {serial: True for serial in selections}, active
 
     def _restore_device_selections(self, selections: Dict[str, bool], active_serial: Optional[str]) -> None:
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            selected_serials = {serial for serial, is_checked in selections.items() if is_checked}
-            self.window.virtualized_device_list.set_checked_serials(selected_serials)
-            self.window.device_selection_manager.set_active_serial(active_serial)
-            self.window.device_list_controller.update_selection_count()
-            return
-
-        for serial, checkbox in self.window.check_devices.items():
-            if serial in selections:
-                checkbox.setChecked(selections[serial])
-
+        selected_serials = [serial for serial, is_checked in selections.items() if is_checked]
+        self.window.device_selection_manager.set_selected_serials(selected_serials)
         self.window.device_selection_manager.set_active_serial(active_serial)
+        self.window.device_list_controller.update_device_list(self.window.device_dict)
         self.window.device_list_controller.update_selection_count()
 
 

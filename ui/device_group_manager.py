@@ -19,13 +19,11 @@ if TYPE_CHECKING:  # pragma: no cover - imported only for typing hints
 class DeviceGroupSelection:
     """Utility to classify serials that can be selected vs. missing."""
 
-    available_checkboxes: Set[str]
     available_device_serials: Set[str]
 
-    def classify(self, serials: Sequence[str], use_device_dict: bool) -> Tuple[List[str], List[str]]:
-        reference = self.available_device_serials if use_device_dict else self.available_checkboxes
-        connected = [serial for serial in serials if serial in reference]
-        missing = [serial for serial in serials if serial not in reference]
+    def classify(self, serials: Sequence[str]) -> Tuple[List[str], List[str]]:
+        connected = [serial for serial in serials if serial in self.available_device_serials]
+        missing = [serial for serial in serials if serial not in self.available_device_serials]
         return connected, missing
 
 
@@ -103,24 +101,11 @@ class DeviceGroupManager:
             logger.info("Group '%s' is empty.", group_name)
             return
 
-        self.window.select_no_devices()
+        selection = DeviceGroupSelection(available_device_serials=set(self.window.device_dict.keys()))
 
-        selection = DeviceGroupSelection(
-            available_checkboxes=set(self.window.check_devices.keys()),
-            available_device_serials=set(self.window.device_dict.keys()),
-        )
-
-        if self.window.virtualized_active and self.window.virtualized_device_list is not None:
-            connected, missing = selection.classify(serials_in_group, use_device_dict=True)
-            self.window.virtualized_device_list.set_checked_serials(set(connected))
-            connected_devices = len(connected)
-        else:
-            connected, missing = selection.classify(serials_in_group, use_device_dict=False)
-            for serial in connected:
-                checkbox = self.window.check_devices.get(serial)
-                if checkbox is not None:
-                    checkbox.setChecked(True)
-            connected_devices = len(connected)
+        connected, missing = selection.classify(serials_in_group)
+        self.window.device_list_controller._set_selection(connected)
+        connected_devices = len(connected)
 
         if missing:
             self.window.show_info(

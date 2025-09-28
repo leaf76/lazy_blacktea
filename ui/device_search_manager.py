@@ -177,16 +177,42 @@ class DeviceSearchManager:
 
     def sort_devices(self, devices: List[adb_models.DeviceInfo], sort_mode: str) -> List[adb_models.DeviceInfo]:
         """Sort devices by the specified mode."""
+        descending = False
+        if sort_mode and ':' in sort_mode:
+            base_mode, direction = sort_mode.split(':', 1)
+            sort_mode = base_mode
+            descending = direction.lower().startswith('desc')
+
         if sort_mode == "name":
-            return sorted(devices, key=lambda d: d.device_model or "")
+            result = sorted(devices, key=lambda d: d.device_model or "")
         elif sort_mode == "serial":
-            return sorted(devices, key=lambda d: d.device_serial_num or "")
+            result = sorted(devices, key=lambda d: d.device_serial_num or "")
         elif sort_mode == "status":
-            return sorted(devices, key=lambda d: self._get_device_operation_status(d.device_serial_num) or "idle")
+            result = sorted(devices, key=lambda d: self._get_device_operation_status(d.device_serial_num) or "idle")
         elif sort_mode == "selected":
-            return sorted(devices, key=lambda d: not self._is_device_selected(d.device_serial_num))
+            result = sorted(devices, key=lambda d: not self._is_device_selected(d.device_serial_num))
+        elif sort_mode == "wifi":
+            result = sorted(
+                devices,
+                key=lambda d: (
+                    not bool(d.wifi_is_on),
+                    d.device_model or "",
+                ),
+            )
+        elif sort_mode == "bt":
+            result = sorted(
+                devices,
+                key=lambda d: (
+                    not bool(d.bt_is_on),
+                    d.device_model or "",
+                ),
+            )
         else:
-            return devices
+            result = devices
+
+        if descending:
+            return list(reversed(result))
+        return result
 
     def search_and_sort_devices(self, devices: List[adb_models.DeviceInfo],
                               query: str = None, sort_mode: str = None) -> List[adb_models.DeviceInfo]:
@@ -224,9 +250,9 @@ class DeviceSearchManager:
 
     def _is_device_selected(self, device_serial: str) -> bool:
         """Check if device is selected from main window."""
-        if self.main_window and hasattr(self.main_window, 'check_devices'):
-            return (device_serial in self.main_window.check_devices and
-                   self.main_window.check_devices[device_serial].isChecked())
+        if self.main_window and hasattr(self.main_window, 'device_selection_manager'):
+            selected = self.main_window.device_selection_manager.get_selected_serials()
+            return device_serial in selected
         return False
 
     def set_search_text(self, text: str):
