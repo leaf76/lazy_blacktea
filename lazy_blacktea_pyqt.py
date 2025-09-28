@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
-from PyQt6.QtGui import (QTextCursor, QAction, QIcon)
+from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
 
 from utils import adb_models
 from utils import adb_tools
@@ -609,11 +609,22 @@ class WindowMain(QMainWindow):
             device,
             detail_text,
             lambda: self._refresh_device_detail_and_get_text(device_serial),
+            lambda text: self._copy_device_detail_text(device_serial, device.device_model, text),
         )
         dialog.exec()
 
     def copy_single_device_info(self, device_serial):
         self.device_actions_controller.copy_single_device_info(device_serial)
+
+    def _copy_device_detail_text(self, device_serial: str, device_model: str, detail_text: str) -> None:
+        try:
+            clipboard = QGuiApplication.clipboard()
+            clipboard.setText(detail_text)
+            self.show_info('📋 Copied!', f'Device details copied to clipboard for:\n{device_model}')
+            logger.info('Copied device details for %s', device_serial)
+        except Exception as exc:  # pragma: no cover - defensive UI path
+            logger.error('Failed to copy device details for %s: %s', device_serial, exc)
+            self.show_error('Error', f'Could not copy device details:\n{exc}')
 
     def _refresh_device_detail_and_get_text(self, device_serial: str) -> str:
         device = self.device_dict.get(device_serial)

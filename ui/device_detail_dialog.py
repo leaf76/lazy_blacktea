@@ -1,6 +1,7 @@
 """Dialog for displaying detailed device information."""
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -13,13 +14,14 @@ from PyQt6.QtWidgets import (
 class DeviceDetailDialog(QDialog):
     """Modal dialog that shows formatted device details."""
 
-    def __init__(self, parent, device, detail_text: str, refresh_callback):
+    def __init__(self, parent, device, detail_text: str, refresh_callback, copy_callback=None):
         super().__init__(parent)
         self.setWindowTitle(f'Device Details - {device.device_model}')
         self.setModal(True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(680, 520)
         self._refresh_callback = refresh_callback
+        self._copy_callback = copy_callback
 
         layout = QVBoxLayout(self)
 
@@ -37,6 +39,8 @@ class DeviceDetailDialog(QDialog):
         button_box.accepted.connect(self.accept)
         self.refresh_button = button_box.addButton('Refresh Details', QDialogButtonBox.ButtonRole.ActionRole)
         self.refresh_button.clicked.connect(self._refresh_details)
+        self.copy_button = button_box.addButton('📋 Copy Device Info', QDialogButtonBox.ButtonRole.ActionRole)
+        self.copy_button.clicked.connect(self._copy_device_info)
         layout.addWidget(button_box)
 
     def _refresh_details(self):
@@ -52,3 +56,18 @@ class DeviceDetailDialog(QDialog):
             QMessageBox.warning(self, 'Refresh Failed', str(exc))
         finally:
             self.refresh_button.setEnabled(True)
+
+    def _copy_device_info(self):
+        detail_text = self.detail_view.toPlainText()
+        if not detail_text.strip():
+            QMessageBox.warning(self, 'Copy Failed', 'No device details available to copy.')
+            return
+
+        try:
+            if callable(self._copy_callback):
+                self._copy_callback(detail_text)
+            else:
+                clipboard = QGuiApplication.clipboard()
+                clipboard.setText(detail_text)
+        except Exception as exc:  # pragma: no cover - defensive UI path
+            QMessageBox.warning(self, 'Copy Failed', str(exc))

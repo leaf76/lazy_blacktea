@@ -170,9 +170,57 @@ class DeviceDetailDialogTests(unittest.TestCase):
         def refresh_callback():
             return texts[1]
 
-        dialog = DeviceDetailDialog(None, device, texts[0], refresh_callback)
+        dialog = DeviceDetailDialog(None, device, texts[0], refresh_callback, None)
         dialog._refresh_details()
         self.assertEqual(dialog.detail_view.toPlainText(), texts[1])
+        dialog.close()
+
+    def test_copy_button_calls_callback_with_detail_text(self):
+        device = adb_models.DeviceInfo(
+            device_serial_num='SERIAL1000',
+            device_usb='usb',
+            device_prod='prod',
+            device_model='ModelCopy',
+            wifi_is_on=True,
+            bt_is_on=True,
+            android_ver='15',
+            android_api_level='35',
+            gms_version='3.0',
+            build_fingerprint='fp-copy',
+        )
+
+        received_payloads = []
+
+        def copy_callback(detail_text):
+            received_payloads.append(detail_text)
+
+        dialog = DeviceDetailDialog(None, device, 'initial details', lambda: 'refreshed', copy_callback)
+        dialog.copy_button.click()
+
+        self.assertEqual(received_payloads, ['initial details'])
+        dialog.close()
+
+    @patch('ui.device_detail_dialog.QGuiApplication')
+    def test_copy_button_without_callback_uses_clipboard(self, mock_gui_app):
+        device = adb_models.DeviceInfo(
+            device_serial_num='SERIAL2000',
+            device_usb='usb',
+            device_prod='prod',
+            device_model='ModelClipboard',
+            wifi_is_on=True,
+            bt_is_on=True,
+            android_ver='15',
+            android_api_level='35',
+            gms_version='3.1',
+            build_fingerprint='fp-clip',
+        )
+
+        clipboard_stub = mock_gui_app.clipboard.return_value
+
+        dialog = DeviceDetailDialog(None, device, 'detail text payload', lambda: 'detail text payload', None)
+        dialog.copy_button.click()
+
+        clipboard_stub.setText.assert_called_once_with('detail text payload')
         dialog.close()
 
 
