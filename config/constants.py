@@ -231,21 +231,21 @@ class PanelText:
     PLACEHOLDER_DEVICE_FILE_OUTPUT = 'Select download destination...'
     PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
 
-    BUTTON_BROWSE = '📂 Browse'
-    BUTTON_CLEAR = '🗑️ Clear'
-    BUTTON_EXPORT = '📤 Export'
-    BUTTON_IMPORT = '📥 Import'
+    BUTTON_BROWSE = 'Browse'
+    BUTTON_CLEAR = 'Clear'
+    BUTTON_EXPORT = 'Export'
+    BUTTON_IMPORT = 'Import'
     BUTTON_SAVE_GROUP = 'Save Group'
     BUTTON_SELECT_GROUP = 'Select Group'
     BUTTON_DELETE_GROUP = 'Delete Group'
-    BUTTON_RUN_SINGLE_COMMAND = '▶️ Run Single Command'
-    BUTTON_RUN_ALL_COMMANDS = '🚀 Run All Commands'
-    BUTTON_RUN_SINGLE_SHELL = '▶️ Run Single Shell Command'
-    BUTTON_REFRESH = '🔄 Refresh'
+    BUTTON_RUN_SINGLE_COMMAND = 'Run Single Command'
+    BUTTON_RUN_ALL_COMMANDS = 'Run All Commands'
+    BUTTON_RUN_SINGLE_SHELL = 'Run Shell Command'
+    BUTTON_REFRESH = 'Refresh'
     BUTTON_GO = 'Go'
-    BUTTON_UP = '⬆️ Up'
-    BUTTON_DOWNLOAD_SELECTED = '⬇️ Download Selected'
-    BUTTON_GENERATE_BUG_REPORT = '🐛 Generate Bug Report'
+    BUTTON_UP = 'Up'
+    BUTTON_DOWNLOAD_SELECTED = 'Download Selected'
+    BUTTON_GENERATE_BUG_REPORT = 'Generate Bug Report'
 
     LABEL_NO_RECORDING = 'No active recordings'
     LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'
@@ -255,10 +255,10 @@ class PanelConfig:
     """Configuration collections used by tool panels."""
 
     DEVICE_ACTIONS = [
-        ('🔄 Reboot Device', 'reboot_device'),
-        ('📦 Install APK', 'install_apk'),
-        ('🔵 Enable Bluetooth', 'enable_bluetooth'),
-        ('🔴 Disable Bluetooth', 'disable_bluetooth'),
+        ('Reboot Device', 'reboot_device'),
+        ('Install APK', 'install_apk'),
+        ('Enable Bluetooth', 'enable_bluetooth'),
+        ('Disable Bluetooth', 'disable_bluetooth'),
     ]
 
     SHELL_TEMPLATE_COMMANDS = [
