@@ -209,7 +209,7 @@ class PanelText:
 
     TAB_ADB_TOOLS = 'ADB Tools'
     TAB_SHELL_COMMANDS = 'Shell Commands'
-    TAB_FILE_GENERATION = 'File Generation'
+    TAB_DEVICE_FILES = 'Device Files'
     TAB_DEVICE_GROUPS = 'Device Groups'
 
     GROUP_OUTPUT_PATH = 'Output Path'
@@ -218,14 +218,16 @@ class PanelText:
     GROUP_CAPTURE = '📱 Screen Capture & Recording'
     GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
-    GROUP_FILE_GENERATION = '🛠️ File Generation Tools'
     GROUP_COMMAND_HISTORY = '📜 Command History'
+    GROUP_DEVICE_FILES = '📁 Device Browser'
+    GROUP_DEVICE_FILE_OUTPUT = '💾 Download'
     GROUP_CREATE_UPDATE = 'Create/Update Group'
     GROUP_EXISTING = 'Existing Groups'
 
     PLACEHOLDER_OUTPUT_DIR = 'Select output path (screenshots, recordings, etc.)'
-    PLACEHOLDER_OUTPUT_DIR_FILE = 'Optionally override file-generation output'
     PLACEHOLDER_GROUP_NAME = 'Enter group name...'
+    PLACEHOLDER_DEVICE_FILE_PATH = '/sdcard'
+    PLACEHOLDER_DEVICE_FILE_OUTPUT = 'Select download destination...'
     PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
 
     BUTTON_BROWSE = '📂 Browse'
@@ -238,6 +240,10 @@ class PanelText:
     BUTTON_RUN_SINGLE_COMMAND = '▶️ Run Single Command'
     BUTTON_RUN_ALL_COMMANDS = '🚀 Run All Commands'
     BUTTON_RUN_SINGLE_SHELL = '▶️ Run Single Shell Command'
+    BUTTON_REFRESH = '🔄 Refresh'
+    BUTTON_GO = 'Go'
+    BUTTON_UP = '⬆️ Up'
+    BUTTON_DOWNLOAD_SELECTED = '⬇️ Download Selected'
 
     LABEL_NO_RECORDING = 'No active recordings'
     LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'
@@ -262,11 +268,6 @@ class PanelConfig:
         ('🗑️ Clear Cache', 'pm trim-caches 1000000000'),
     ]
 
-    FILE_GENERATION_ACTIONS = [
-        ('🔍 Device Discovery', 'generate_device_discovery_file'),
-        ('📷 Device DCIM Pull', 'pull_device_dcim_with_folder'),
-        ('📁 Export UI Hierarchy', 'dump_device_hsv'),
-    ]
 
 
 class RecordingConstants:

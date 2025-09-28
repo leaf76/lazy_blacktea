@@ -1,6 +1,7 @@
 """Adb objects models."""
 
-from typing import Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 
 class DeviceInfo:
@@ -53,3 +54,27 @@ class DeviceInfo:
 
   def __repr__(self):
     return self.__str__()
+
+
+@dataclass(frozen=True)
+class DeviceFileEntry:
+  """Represents an entry inside a device directory listing."""
+
+  name: str
+  path: str
+  is_dir: bool
+
+
+@dataclass
+class DeviceDirectoryListing:
+  """Container describing the contents of a device directory."""
+
+  serial: str
+  path: str
+  entries: List[DeviceFileEntry]
+
+  def directories(self) -> List[DeviceFileEntry]:
+    return [entry for entry in self.entries if entry.is_dir]
+
+  def files(self) -> List[DeviceFileEntry]:
+    return [entry for entry in self.entries if not entry.is_dir]

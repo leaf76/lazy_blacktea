@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTabWidget,
     QTextEdit,
+    QTreeWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -64,7 +65,7 @@ class ToolsPanelController:
 
         self._create_adb_tools_tab(tab_widget)
         self._create_shell_commands_tab(tab_widget)
-        self._create_file_generation_tab(tab_widget)
+        self._create_device_file_browser_tab(tab_widget)
         self._create_device_groups_tab(tab_widget)
 
         parent.addWidget(tools_widget)
@@ -101,16 +102,7 @@ class ToolsPanelController:
             click_handler=lambda: self.window.clear_logcat(),
             tooltip='Clear logcat on selected devices'
         )
-        logcat_layout.addWidget(clear_logcat_btn, 0, 0)
-
-        bug_report_btn = UIFactory.create_standard_button(
-            '📊 Android Bug Report',
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.generate_android_bug_report(),
-            tooltip='Generate Android bug report'
-        )
-        logcat_layout.addWidget(bug_report_btn, 0, 1)
-
+        logcat_layout.addWidget(clear_logcat_btn, 0, 0, 1, 2)
         layout.addWidget(logcat_group)
 
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
@@ -255,41 +247,91 @@ class ToolsPanelController:
 
         tab_widget.addTab(tab, PanelText.TAB_SHELL_COMMANDS)
 
-    def _create_file_generation_tab(self, tab_widget: QTabWidget) -> None:
+    def _create_device_file_browser_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
+        device_label = QLabel('Select exactly one device to browse files.')
+        device_label.setObjectName('device_file_browser_device_label')
+        layout.addWidget(device_label)
+        self.window.device_file_browser_device_label = device_label
+
+        path_group = QGroupBox(PanelText.GROUP_DEVICE_FILES)
+        path_layout = QHBoxLayout(path_group)
+
+        self.window.device_file_browser_path_edit = QLineEdit()
+        self.window.device_file_browser_path_edit.setObjectName('device_file_browser_path')
+        self.window.device_file_browser_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_PATH)
+        path_layout.addWidget(self.window.device_file_browser_path_edit)
+
+        up_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_UP,
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.window.navigate_device_files_up(),
+            tooltip='Go to parent directory'
+        )
+        path_layout.addWidget(up_btn)
+
+        refresh_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_REFRESH,
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.window.refresh_device_file_browser(),
+            tooltip='Refresh current directory'
+        )
+        path_layout.addWidget(refresh_btn)
+
+        go_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_GO,
+            ButtonStyle.PRIMARY,
+            click_handler=lambda: self.window.navigate_device_files_to_path(),
+            tooltip='Navigate to the specified path'
+        )
+        path_layout.addWidget(go_btn)
+
+        layout.addWidget(path_group)
+
+        self.window.device_file_tree = QTreeWidget()
+        self.window.device_file_tree.setObjectName('device_file_browser_tree')
+        self.window.device_file_tree.setHeaderLabels(['Name', 'Type'])
+        self.window.device_file_tree.setRootIsDecorated(False)
+        self.window.device_file_tree.setColumnWidth(0, 320)
+        self.window.device_file_tree.setMinimumHeight(260)
+        self.window.device_file_tree.itemDoubleClicked.connect(
+            lambda item, column: self.window.on_device_file_item_double_clicked(item, column)
+        )
+        layout.addWidget(self.window.device_file_tree)
+
+        status_label = QLabel('Ready to browse device files.')
+        status_label.setObjectName('device_file_browser_status_label')
+        layout.addWidget(status_label)
+        self.window.device_file_status_label = status_label
+
+        output_group = QGroupBox(PanelText.GROUP_DEVICE_FILE_OUTPUT)
         output_layout = QHBoxLayout(output_group)
 
-        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR_FILE)
+        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_OUTPUT)
         output_layout.addWidget(self.window.file_gen_output_path_edit)
 
         browse_btn = UIFactory.create_standard_button(
             PanelText.BUTTON_BROWSE,
             ButtonStyle.SECONDARY,
             click_handler=lambda: self.window.browse_file_generation_output_path(),
-            tooltip='Select output directory for file generation'
+            tooltip='Select local download destination'
         )
         output_layout.addWidget(browse_btn)
 
+        download_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_DOWNLOAD_SELECTED,
+            ButtonStyle.PRIMARY,
+            click_handler=lambda: self.window.download_selected_device_files(),
+            tooltip='Download the checked files or folders'
+        )
+        output_layout.addWidget(download_btn)
+
         layout.addWidget(output_group)
-
-        generation_group = QGroupBox(PanelText.GROUP_FILE_GENERATION)
-        generation_layout = QGridLayout(generation_group)
-
-        for idx, (text, handler_name) in enumerate(PanelConfig.FILE_GENERATION_ACTIONS):
-            handler = getattr(self.window, handler_name)
-            btn = QPushButton(text)
-            btn.clicked.connect(lambda checked, func=handler: func())
-            self._style_button(btn, ButtonStyle.SECONDARY, height=40, min_width=220)
-            row, col = divmod(idx, 2)
-            generation_layout.addWidget(btn, row, col)
-
-        layout.addWidget(generation_group)
         layout.addStretch()
 
-        tab_widget.addTab(tab, PanelText.TAB_FILE_GENERATION)
+        tab_widget.addTab(tab, PanelText.TAB_DEVICE_FILES)
 
     def _create_device_groups_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()

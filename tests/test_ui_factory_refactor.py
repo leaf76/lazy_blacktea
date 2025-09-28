@@ -30,17 +30,21 @@ class UIFactoryRefactorTest(unittest.TestCase):
     def setUpClass(cls):
         """設置測試環境"""
         cls.module = lazy_blacktea_pyqt
+        from ui.ui_factory import UIFactory  # Local import to avoid side effects at module import time
+        cls.ui_factory_class = UIFactory
 
         # 定義需要重構的UI創建方法
         cls.ui_creation_methods = [
             'create_tools_panel',
             'create_adb_tools_tab',
             'create_shell_commands_tab',
-            'create_file_generation_tab',
+            'create_device_file_browser_tab',
             'create_device_groups_tab',
             'create_console_panel',
             'create_status_bar'
         ]
+
+        cls.removed_ui_methods = ['create_file_generation_tab']
 
         # UIInspectorDialog中的UI創建方法
         cls.ui_inspector_methods = [
@@ -52,26 +56,37 @@ class UIFactoryRefactorTest(unittest.TestCase):
             'create_hierarchy_tab'
         ]
 
-    def test_original_ui_methods_exist_in_main_class(self):
-        """測試原始UI方法在主類中存在"""
-        print("\n🔍 測試原始UI創建方法...")
+    def test_ui_factory_methods_exist(self):
+        """測試UI工廠方法存在且可調用"""
+        print("\n🔍 測試 UI 工廠創建方法...")
 
+        factory_class = getattr(self, 'ui_factory_class', None)
+        self.assertIsNotNone(factory_class, 'UIFactory 類不可用')
+
+        for method_name in self.ui_creation_methods:
+            with self.subTest(method=method_name):
+                self.assertTrue(
+                    hasattr(factory_class, method_name),
+                    f"UI創建方法 {method_name} 在 UIFactory 中不存在"
+                )
+
+                method = getattr(factory_class, method_name)
+                self.assertTrue(
+                    callable(method),
+                    f"UI創建方法 {method_name} 不可調用"
+                )
+                print(f"  ✅ {method_name} 存在且可調用")
+
+        # 確認主視窗不再暴露舊的 File Generation 標籤頁方法
         if hasattr(self.module, 'WindowMain'):
             WindowMain = getattr(self.module, 'WindowMain')
-
-            for method_name in self.ui_creation_methods:
-                with self.subTest(method=method_name):
-                    self.assertTrue(
-                        hasattr(WindowMain, method_name),
-                        f"UI創建方法 {method_name} 在WindowMain中不存在"
+            for removed_method in self.removed_ui_methods:
+                with self.subTest(method=removed_method):
+                    self.assertFalse(
+                        hasattr(WindowMain, removed_method),
+                        f"預期已移除的 UI 方法 {removed_method} 仍然存在於 WindowMain"
                     )
-
-                    method = getattr(WindowMain, method_name)
-                    self.assertTrue(
-                        callable(method),
-                        f"UI創建方法 {method_name} 不可調用"
-                    )
-                    print(f"  ✅ {method_name} 存在且可調用")
+                    print(f"  ✅ {removed_method} 已從 WindowMain 移除")
 
     def test_ui_inspector_methods_exist(self):
         """測試UIInspectorDialog中的UI方法存在"""
@@ -108,45 +123,43 @@ class UIFactoryRefactorTest(unittest.TestCase):
         mock_vlayout.return_value = mock_layout_instance
         mock_hlayout.return_value = mock_layout_instance
 
-        if hasattr(self.module, 'WindowMain'):
-            # 無法直接實例化WindowMain（需要QApplication），所以測試方法存在性
-            WindowMain = getattr(self.module, 'WindowMain')
+        factory_class = getattr(self, 'ui_factory_class', None)
+        self.assertIsNotNone(factory_class, 'UIFactory 類不可用')
 
-            # 檢查方法簽名
-            for method_name in self.ui_creation_methods:
-                method = getattr(WindowMain, method_name)
+        for method_name in self.ui_creation_methods:
+            method = getattr(factory_class, method_name)
 
-                # 檢查方法是否接受適當的參數
-                import inspect
-                sig = inspect.signature(method)
-                param_count = len(sig.parameters) - 1  # 減去self參數
+            # 檢查方法是否接受適當的參數
+            import inspect
+            sig = inspect.signature(method)
+            param_count = len(sig.parameters) - 1  # 減去self參數
 
-                print(f"  📋 {method_name}: {param_count} 個參數")
+            print(f"  📋 {method_name}: {param_count} 個參數")
 
-                # 基本的參數數量檢查
-                if method_name in ['create_tools_panel', 'create_console_panel']:
-                    self.assertGreaterEqual(param_count, 1, f"{method_name} 應該接受parent參數")
-                elif method_name in ['create_adb_tools_tab', 'create_shell_commands_tab',
-                                   'create_file_generation_tab', 'create_device_groups_tab']:
-                    self.assertGreaterEqual(param_count, 1, f"{method_name} 應該接受tab_widget參數")
+            # 基本的參數數量檢查
+            if method_name in ['create_tools_panel', 'create_console_panel']:
+                self.assertGreaterEqual(param_count, 1, f"{method_name} 應該接受parent參數")
+            elif method_name in ['create_adb_tools_tab', 'create_shell_commands_tab',
+                               'create_device_file_browser_tab', 'create_device_groups_tab']:
+                self.assertGreaterEqual(param_count, 1, f"{method_name} 應該接受tab_widget參數")
 
     def test_ui_method_return_types_documentation(self):
         """測試UI方法的返回類型文檔"""
         print("\n📝 測試UI方法文檔...")
 
-        if hasattr(self.module, 'WindowMain'):
-            WindowMain = getattr(self.module, 'WindowMain')
+        factory_class = getattr(self, 'ui_factory_class', None)
+        self.assertIsNotNone(factory_class, 'UIFactory 類不可用')
 
-            for method_name in self.ui_creation_methods:
-                method = getattr(WindowMain, method_name)
+        for method_name in self.ui_creation_methods:
+            method = getattr(factory_class, method_name)
 
-                # 檢查是否有文檔字符串
-                docstring = getattr(method, '__doc__', None)
+            # 檢查是否有文檔字符串
+            docstring = getattr(method, '__doc__', None)
 
-                if docstring:
-                    print(f"  📚 {method_name}: 有文檔")
-                else:
-                    print(f"  ⚠️  {method_name}: 缺少文檔")
+            if docstring:
+                print(f"  📚 {method_name}: 有文檔")
+            else:
+                print(f"  ⚠️  {method_name}: 缺少文檔")
 
     def test_prepare_for_ui_factory_extraction(self):
         """測試準備UI工廠提取的先決條件"""
@@ -178,27 +191,26 @@ class UIFactoryRefactorTest(unittest.TestCase):
         """測試方法之間的依賴關係"""
         print("\n🔗 測試方法依賴關係...")
 
-        if hasattr(self.module, 'WindowMain'):
-            WindowMain = getattr(self.module, 'WindowMain')
+        factory_class = getattr(self, 'ui_factory_class', None)
+        self.assertIsNotNone(factory_class, 'UIFactory 類不可用')
 
-            # 檢查create_方法是否依賴於其他方法
-            dependencies = {
-                'create_tools_panel': ['create_adb_tools_tab'],
-                'create_adb_tools_tab': [],
-                'create_shell_commands_tab': [],
-                'create_file_generation_tab': [],
-                'create_device_groups_tab': [],
-                'create_console_panel': [],
-                'create_status_bar': []
-            }
+        dependencies = {
+            'create_tools_panel': ['create_adb_tools_tab', 'create_device_file_browser_tab'],
+            'create_adb_tools_tab': [],
+            'create_shell_commands_tab': [],
+            'create_device_file_browser_tab': [],
+            'create_device_groups_tab': [],
+            'create_console_panel': [],
+            'create_status_bar': []
+        }
 
-            for method_name, expected_deps in dependencies.items():
-                print(f"  🔍 檢查 {method_name} 的依賴:")
-                for dep in expected_deps:
-                    if hasattr(WindowMain, dep):
-                        print(f"    ✅ 依賴 {dep} 存在")
-                    else:
-                        print(f"    ❌ 依賴 {dep} 缺失")
+        for method_name, expected_deps in dependencies.items():
+            print(f"  🔍 檢查 {method_name} 的依賴:")
+            for dep in expected_deps:
+                if hasattr(factory_class, dep):
+                    print(f"    ✅ 依賴 {dep} 存在")
+                else:
+                    print(f"    ❌ 依賴 {dep} 缺失")
 
     def test_ui_components_import_readiness(self):
         """測試UI組件導入準備情況"""

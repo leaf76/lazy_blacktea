@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
     QCheckBox, QLineEdit, QProgressBar, QComboBox, QListWidget,
-    QStatusBar, QToolBar, QFrame, QSizePolicy
+    QStatusBar, QToolBar, QFrame, QSizePolicy, QTreeWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QAction, QPixmap
@@ -136,7 +136,7 @@ class UIFactory:
         # 添加各個工具標籤頁
         self.create_adb_tools_tab(tab_widget)
         self.create_shell_commands_tab(tab_widget)
-        self.create_file_generation_tab(tab_widget)
+        self.create_device_file_browser_tab(tab_widget)
         self.create_device_groups_tab(tab_widget)
 
         tools_layout.addWidget(tab_widget)
@@ -324,76 +324,6 @@ class UIFactory:
         layout.addStretch()
         tab_widget.addTab(shell_tab, "Shell Commands")
 
-    def create_file_generation_tab(self, tab_widget: QTabWidget) -> None:
-        """創建文件生成標籤頁"""
-        file_tab = QWidget()
-        layout = QVBoxLayout(file_tab)
-
-        # 輸出路徑設定
-        path_group = QGroupBox("📁 Output Settings")
-        path_layout = QHBoxLayout(path_group)
-
-        path_layout.addWidget(QLabel("Output Directory:"))
-
-        path_edit = QLineEdit()
-        path_edit.setObjectName("file_gen_output_path")
-        path_edit.setPlaceholderText("Select output directory...")
-        path_layout.addWidget(path_edit)
-
-        browse_btn = QPushButton("📂 Browse")
-        browse_btn.setObjectName("browse_file_gen_output")
-        path_layout.addWidget(browse_btn)
-
-        layout.addWidget(path_group)
-
-        # 生成工具區域
-        tools_group = QGroupBox("🛠️ Generation Tools")
-        tools_layout = QGridLayout(tools_group)
-
-        generation_tools = [
-            ("🐛 Generate Bug Report", "generate_bug_report"),
-            ("🔍 Device Discovery File", "generate_device_discovery"),
-            ("📋 Device Info Files", "generate_device_info"),
-            ("📊 System Report", "generate_system_report"),
-            ("📱 Package List", "generate_package_list"),
-            ("🔋 Battery Report", "generate_battery_report"),
-        ]
-
-        for i, (text, action) in enumerate(generation_tools):
-            btn = QPushButton(text)
-            btn.setObjectName(action)
-            btn.setMinimumHeight(40)
-            row, col = divmod(i, 2)
-            tools_layout.addWidget(btn, row, col)
-
-        layout.addWidget(tools_group)
-
-        # 生成選項
-        options_group = QGroupBox("⚙️ Generation Options")
-        options_layout = QVBoxLayout(options_group)
-
-        # 包含隱私敏感信息選項
-        include_sensitive_cb = QCheckBox("Include sensitive information (logs, system info)")
-        include_sensitive_cb.setObjectName("include_sensitive_info")
-        options_layout.addWidget(include_sensitive_cb)
-
-        # 壓縮輸出選項
-        compress_output_cb = QCheckBox("Compress output files")
-        compress_output_cb.setObjectName("compress_output")
-        compress_output_cb.setChecked(True)
-        options_layout.addWidget(compress_output_cb)
-
-        # 包含截圖選項
-        include_screenshots_cb = QCheckBox("Include device screenshots")
-        include_screenshots_cb.setObjectName("include_screenshots")
-        include_screenshots_cb.setChecked(True)
-        options_layout.addWidget(include_screenshots_cb)
-
-        layout.addWidget(options_group)
-
-        layout.addStretch()
-        tab_widget.addTab(file_tab, "File Generation")
-
     def create_device_groups_tab(self, tab_widget: QTabWidget) -> None:
         """創建設備組管理標籤頁"""
         groups_tab = QWidget()
@@ -449,6 +379,66 @@ class UIFactory:
 
         layout.addStretch()
         tab_widget.addTab(groups_tab, "Device Groups")
+
+    def create_device_file_browser_tab(self, tab_widget: QTabWidget) -> None:
+        """創建裝置檔案瀏覽標籤頁"""
+        browser_tab = QWidget()
+        layout = QVBoxLayout(browser_tab)
+
+        device_label = QLabel("Select a device from the main list to browse files.")
+        device_label.setObjectName('device_file_browser_device_label')
+        layout.addWidget(device_label)
+
+        path_bar = QHBoxLayout()
+        path_edit = QLineEdit()
+        path_edit.setObjectName('device_file_browser_path')
+        path_edit.setPlaceholderText('/sdcard')
+        path_bar.addWidget(path_edit)
+
+        up_btn = QPushButton('⬆️ Up')
+        up_btn.setObjectName('device_file_browser_up')
+        path_bar.addWidget(up_btn)
+
+        refresh_btn = QPushButton('🔄 Refresh')
+        refresh_btn.setObjectName('device_file_browser_refresh')
+        path_bar.addWidget(refresh_btn)
+
+        go_btn = QPushButton('Go')
+        go_btn.setObjectName('device_file_browser_go')
+        path_bar.addWidget(go_btn)
+
+        layout.addLayout(path_bar)
+
+        tree = QTreeWidget()
+        tree.setObjectName('device_file_browser_tree')
+        tree.setHeaderLabels(['Name', 'Type'])
+        tree.setRootIsDecorated(False)
+        tree.setColumnWidth(0, 320)
+        tree.setMinimumHeight(260)
+        layout.addWidget(tree)
+
+        status_label = QLabel('Ready')
+        status_label.setObjectName('device_file_browser_status_label')
+        layout.addWidget(status_label)
+
+        download_bar = QHBoxLayout()
+        output_edit = QLineEdit()
+        output_edit.setObjectName('device_file_output_path')
+        output_edit.setPlaceholderText('Select download destination...')
+        download_bar.addWidget(output_edit)
+
+        browse_btn = QPushButton('📂 Browse')
+        browse_btn.setObjectName('device_file_output_browse')
+        download_bar.addWidget(browse_btn)
+
+        download_btn = QPushButton('⬇️ Download Selected')
+        download_btn.setObjectName('device_file_browser_download')
+        download_bar.addWidget(download_btn)
+
+        layout.addLayout(download_bar)
+        layout.addStretch()
+
+        tab_widget.addTab(browser_tab, 'Device Files')
 
     # ===== 控制台面板創建 =====
 

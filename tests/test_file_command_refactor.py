@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     import lazy_blacktea_pyqt
     from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
+    from ui.device_file_browser_manager import DeviceFileBrowserManager
     from ui.command_execution_manager import CommandExecutionManager
 except ImportError as e:
     print(f"❌ 無法導入模組: {e}")
@@ -43,6 +44,7 @@ class FileCommandRefactorTest(unittest.TestCase):
             ('FileOperationsManager', FileOperationsManager),
             ('CommandHistoryManager', CommandHistoryManager),
             ('UIHierarchyManager', UIHierarchyManager),
+            ('DeviceFileBrowserManager', DeviceFileBrowserManager),
             ('CommandExecutionManager', CommandExecutionManager),
         ]
 
@@ -63,6 +65,7 @@ class FileCommandRefactorTest(unittest.TestCase):
                 'file_operations_manager',
                 'command_history_manager',
                 'ui_hierarchy_manager',
+                'device_file_browser_manager',
                 'command_execution_manager'
             ]
 
@@ -187,6 +190,10 @@ class FileCommandRefactorTest(unittest.TestCase):
                 'generate_device_discovery_file',
                 'pull_device_dcim_with_folder',
                 'dump_device_hsv',
+                'refresh_device_file_browser',
+                'navigate_device_files_up',
+                'navigate_device_files_to_path',
+                'download_selected_device_files',
 
                 # 命令歷史方法
                 'export_command_history',
@@ -221,7 +228,9 @@ class FileCommandRefactorTest(unittest.TestCase):
                 'generate_android_bug_report': 'file_operations_manager',
                 'export_command_history': 'command_history_manager',
                 'run_shell_command': 'command_execution_manager',
-                'dump_device_hsv': 'ui_hierarchy_manager'
+                'dump_device_hsv': 'ui_hierarchy_manager',
+                'refresh_device_file_browser': 'device_file_browser_manager',
+                'download_selected_device_files': 'device_file_browser_manager'
             }
 
             for method_name, expected_manager in delegation_patterns.items():

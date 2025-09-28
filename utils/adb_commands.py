@@ -274,6 +274,20 @@ def cmd_switch_enable_bluetooth(serial_num: str, enable: bool) -> str:
 def cmd_pull_device_dcim(serial_num: str, output_path: str) -> str:
   return f'adb -s {serial_num} pull /sdcard/ dcims {output_path}'
 
+
+def cmd_list_device_directory(serial_num: str, remote_path: str) -> str:
+  """Build command to list a directory on the device."""
+  sanitized_path = remote_path if remote_path else '/'
+  return _build_adb_command(
+      serial_num,
+      'shell',
+      'ls',
+      '-a',
+      '-p',
+      '-1',
+      shlex.quote(sanitized_path)
+  )
+
 def cmd_adb_screen_shot(
     serial_num: str, file_name: str, output_folder_path: str
 ) -> str:

@@ -4,7 +4,8 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
-    QCheckBox, QLineEdit, QProgressBar, QApplication, QComboBox
+    QCheckBox, QLineEdit, QProgressBar, QApplication, QComboBox,
+    QTreeWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QAction, QActionGroup
@@ -109,9 +110,9 @@ class PanelsManager(QObject):
         shell_tab = self._create_shell_commands_tab()
         tab_widget.addTab(shell_tab, 'Shell Commands')
 
-        # File Generation tab
-        file_tab = self._create_file_generation_tab()
-        tab_widget.addTab(file_tab, 'File Generation')
+        # Device Files tab
+        files_tab = self._create_device_file_browser_tab()
+        tab_widget.addTab(files_tab, 'Device Files')
 
         # Device Groups tab
         groups_tab = self._create_device_groups_tab()
@@ -206,47 +207,45 @@ class PanelsManager(QObject):
         layout.addStretch()
         return tab
 
-    def _create_file_generation_tab(self) -> QWidget:
-        """Create file generation tab content."""
+    def _create_device_file_browser_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # Output path section
-        path_group = QGroupBox("📁 Output Settings")
-        path_layout = QHBoxLayout(path_group)
+        info_label = QLabel('Select a device to browse its files.')
+        layout.addWidget(info_label)
 
-        path_layout.addWidget(QLabel("Output Directory:"))
-
+        path_layout = QHBoxLayout()
         path_edit = QLineEdit()
-        path_edit.setPlaceholderText("Select output directory...")
+        path_edit.setPlaceholderText('/sdcard')
         path_layout.addWidget(path_edit)
 
-        browse_btn = QPushButton("Browse")
-        self._style_button(browse_btn, ButtonStyle.NEUTRAL, height=34, min_width=90)
-        browse_btn.clicked.connect(lambda: self._browse_folder(path_edit))
-        path_layout.addWidget(browse_btn)
+        refresh_btn = QPushButton('Refresh')
+        self._style_button(refresh_btn, ButtonStyle.SECONDARY, height=34, min_width=120)
+        path_layout.addWidget(refresh_btn)
 
-        layout.addWidget(path_group)
+        layout.addLayout(path_layout)
 
-        # Generation tools section
-        tools_group = QGroupBox("🛠️ Generation Tools")
-        tools_layout = QGridLayout(tools_group)
+        tree = QTreeWidget()
+        tree.setHeaderLabels(['Name', 'Type'])
+        tree.setRootIsDecorated(False)
+        tree.setColumnWidth(0, 320)
+        tree.setMinimumHeight(260)
+        layout.addWidget(tree)
 
-        tools = [
-            ("🐛 Generate Bug Report", "bug_report"),
-            ("🔍 Device Discovery File", "device_discovery"),
-            ("📋 Device Info Files", "device_info_files"),
-            ("📊 System Report", "system_report")
-        ]
+        output_layout = QHBoxLayout()
+        output_path_edit = QLineEdit()
+        output_path_edit.setPlaceholderText('Select download destination...')
+        output_layout.addWidget(output_path_edit)
 
-        for i, (tool_text, action) in enumerate(tools):
-            btn = QPushButton(tool_text)
-            btn.setObjectName(action)
-            self._style_button(btn, ButtonStyle.SECONDARY, height=40, min_width=200)
-            row, col = divmod(i, 2)
-            tools_layout.addWidget(btn, row, col)
+        browse_btn = QPushButton('Browse')
+        self._style_button(browse_btn, ButtonStyle.NEUTRAL, height=34, min_width=120)
+        output_layout.addWidget(browse_btn)
 
-        layout.addWidget(tools_group)
+        download_btn = QPushButton('Download Selected')
+        self._style_button(download_btn, ButtonStyle.PRIMARY, height=36, min_width=180)
+        output_layout.addWidget(download_btn)
+
+        layout.addLayout(output_layout)
         layout.addStretch()
         return tab
 

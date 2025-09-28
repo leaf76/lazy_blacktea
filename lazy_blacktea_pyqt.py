@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import platform
+import posixpath
 import subprocess
 import sys
 import threading
@@ -12,7 +13,9 @@ from typing import Dict, List, Iterable, Optional, Set
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
-    QCheckBox
+    QCheckBox,
+    QTreeWidget,
+    QTreeWidgetItem
 )
 from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import (QTextCursor, QAction, QIcon)
@@ -39,6 +42,7 @@ from ui.device_search_manager import DeviceSearchManager
 from ui.ui_factory import UIFactory
 from ui.device_operations_manager import DeviceOperationsManager
 from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
+from ui.device_file_browser_manager import DeviceFileBrowserManager
 from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
@@ -79,6 +83,10 @@ os.environ.setdefault('QT_DELAY_BEFORE_TIP', '300')
 from ui.logcat_viewer import LogcatWindow
 
 
+DEVICE_FILE_PATH_ROLE = Qt.ItemDataRole.UserRole + 1
+DEVICE_FILE_IS_DIR_ROLE = Qt.ItemDataRole.UserRole + 2
+
+
 class WindowMain(QMainWindow):
     finalize_operation_requested = pyqtSignal(list, str)
     """Main PyQt6 application window."""
@@ -101,11 +109,15 @@ class WindowMain(QMainWindow):
         self.device_manager = DeviceManager(self)
         self.recording_manager = RecordingManager()
         self.panels_manager = PanelsManager(self)
+        self.device_file_browser_manager = DeviceFileBrowserManager(self)
 
         # Connect device manager signals to main UI update
         self.device_manager.device_found.connect(self._on_device_found_from_manager)
         self.device_manager.device_lost.connect(self._on_device_lost_from_manager)
         self.device_manager.status_updated.connect(self._on_device_status_updated)
+        self.device_file_browser_manager.directory_listing_ready.connect(self._on_device_directory_listing)
+        self.device_file_browser_manager.download_completed.connect(self._on_device_file_download_completed)
+        self.device_file_browser_manager.operation_failed.connect(self._on_device_file_operation_failed)
 
         # Setup global error handler and exception hook
         global_error_handler.parent = self
@@ -126,6 +138,12 @@ class WindowMain(QMainWindow):
         self.auto_refresh_action: Optional[QAction] = None
         self.auto_refresh_enabled = True
         self.previous_output_path_value: str = ''
+        self.device_file_tree: Optional[QTreeWidget] = None
+        self.device_file_browser_path_edit = None
+        self.device_file_status_label = None
+        self.device_file_browser_device_label = None
+        self.device_file_browser_current_serial: Optional[str] = None
+        self.device_file_browser_current_path: str = '/'
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -1881,31 +1899,192 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
 
     # File generation methods
+    def _get_file_generation_output_path(self) -> str:
+        """Retrieve preferred output path for file generation workflows."""
+        if hasattr(self, 'file_gen_output_path_edit'):
+            candidate = self.file_gen_output_path_edit.text().strip()
+            if candidate:
+                return candidate
+
+        if hasattr(self, 'output_path_edit'):
+            return self.output_path_edit.text().strip()
+
+        return ''
+
+    @staticmethod
+    def _normalize_device_remote_path(path: str) -> str:
+        normalized = (path or '/').strip()
+        if not normalized:
+            return '/'
+        if not normalized.startswith('/'):
+            normalized = f'/{normalized}'
+        if normalized != '/' and normalized.endswith('/'):
+            normalized = normalized.rstrip('/')
+        return normalized or '/'
+
+    def _device_file_widgets_ready(self) -> bool:
+        if self.device_file_tree is None or self.device_file_browser_path_edit is None:
+            logger.debug('Device file browser widgets are not initialized yet.')
+            return False
+        return True
+
+    def _set_device_file_status(self, message: str) -> None:
+        if self.device_file_status_label is not None:
+            self.device_file_status_label.setText(message)
+
+    def refresh_device_file_browser(self, path: Optional[str] = None) -> None:
+        """Refresh the current directory listing for the selected device."""
+        if not self._device_file_widgets_ready():
+            self.show_error('Device Files', 'Device file browser UI is not ready yet.')
+            return
+
+        devices = self.get_checked_devices()
+        if len(devices) != 1:
+            self.show_warning(
+                'Device Selection Required',
+                'Device file browser requires exactly one selected device.'
+            )
+            self._set_device_file_status('Select exactly one device to browse files.')
+            self.device_file_browser_current_serial = None
+            return
+
+        device = devices[0]
+        serial = device.device_serial_num
+        raw_path = path if path is not None else self.device_file_browser_path_edit.text()
+        normalized_path = self._normalize_device_remote_path(raw_path)
+
+        self.device_file_browser_path_edit.setText(normalized_path)
+        if self.device_file_browser_device_label is not None:
+            self.device_file_browser_device_label.setText(
+                f'Browsing {device.device_model} ({serial}) — {normalized_path}'
+            )
+
+        self.device_file_browser_current_serial = serial
+        self.device_file_browser_current_path = normalized_path
+        self._set_device_file_status('Loading directory...')
+        self.device_file_browser_manager.fetch_directory(serial, normalized_path)
+
+    def navigate_device_files_up(self) -> None:
+        """Navigate to the parent directory."""
+        if not self._device_file_widgets_ready():
+            return
+        current_path = self._normalize_device_remote_path(self.device_file_browser_path_edit.text())
+        if current_path == '/':
+            self.refresh_device_file_browser('/')
+            return
+        parent_path = posixpath.dirname(current_path.rstrip('/')) or '/'
+        self.refresh_device_file_browser(parent_path)
+
+    def navigate_device_files_to_path(self) -> None:
+        """Navigate to the directory specified in the path edit box."""
+        if not self._device_file_widgets_ready():
+            return
+        self.refresh_device_file_browser(self.device_file_browser_path_edit.text())
+
+    def on_device_file_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        """Handle double-click interactions on the device file tree."""
+        if item is None:
+            return
+        is_dir = bool(item.data(0, DEVICE_FILE_IS_DIR_ROLE))
+        if is_dir:
+            target_path = item.data(0, DEVICE_FILE_PATH_ROLE)
+            self.refresh_device_file_browser(target_path)
+            return
+
+        current_state = item.checkState(0)
+        new_state = Qt.CheckState.Unchecked if current_state == Qt.CheckState.Checked else Qt.CheckState.Checked
+        item.setCheckState(0, new_state)
+
+    def download_selected_device_files(self) -> None:
+        """Download the checked files or folders from the current device."""
+        if not self._device_file_widgets_ready():
+            self.show_error('Device Files', 'Device file browser UI is not ready yet.')
+            return
+
+        devices = self.get_checked_devices()
+        if len(devices) != 1:
+            self.show_warning('Device Selection Required', 'Select exactly one device to download files from.')
+            return
+
+        serial = devices[0].device_serial_num
+        remote_paths: List[str] = []
+        for index in range(self.device_file_tree.topLevelItemCount()):
+            item = self.device_file_tree.topLevelItem(index)
+            if item.checkState(0) == Qt.CheckState.Checked:
+                path_value = item.data(0, DEVICE_FILE_PATH_ROLE)
+                if path_value:
+                    remote_paths.append(path_value)
+
+        if not remote_paths:
+            self.show_warning('No Items Selected', 'Please check files or folders in the list to download.')
+            return
+
+        output_path = self._get_file_generation_output_path()
+        if not output_path:
+            self.show_error('Output Directory Required', 'Please select a download destination first.')
+            return
+
+        self._set_device_file_status(f'Downloading {len(remote_paths)} item(s)...')
+        self.device_file_browser_manager.download_paths(serial, remote_paths, output_path)
+
+    def _on_device_directory_listing(self, serial: str, path: str, listing: adb_models.DeviceDirectoryListing) -> None:
+        if not self._device_file_widgets_ready():
+            return
+        if self.device_file_browser_current_serial and serial != self.device_file_browser_current_serial:
+            logger.debug('Ignoring directory listing for %s; current device is %s', serial, self.device_file_browser_current_serial)
+            return
+
+        normalized_path = self._normalize_device_remote_path(path)
+        self.device_file_browser_path_edit.setText(normalized_path)
+        self.device_file_browser_current_path = normalized_path
+        self.device_file_tree.clear()
+
+        for entry in listing.entries:
+            item = QTreeWidgetItem([entry.name, 'Folder' if entry.is_dir else 'File'])
+            item.setData(0, DEVICE_FILE_PATH_ROLE, entry.path)
+            item.setData(0, DEVICE_FILE_IS_DIR_ROLE, entry.is_dir)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+            self.device_file_tree.addTopLevelItem(item)
+
+        self.device_file_tree.sortItems(0, Qt.SortOrder.AscendingOrder)
+        self._set_device_file_status(f'{len(listing.entries)} item(s) in {normalized_path}')
+
+    def _on_device_file_download_completed(self, serial: str, output_path: str, remote_paths: List[str], results: List[str]) -> None:
+        self._set_device_file_status(f'Downloaded {len(remote_paths)} item(s) to {output_path}')
+        self.show_info('Download Complete', f'Downloaded {len(remote_paths)} item(s) to:\n{output_path}')
+        # Refresh the directory to reflect any potential changes
+        self.refresh_device_file_browser(self.device_file_browser_current_path)
+
+    def _on_device_file_operation_failed(self, message: str) -> None:
+        self._set_device_file_status(message)
+        self.show_error('Device Files', message)
+
     @ensure_devices_selected
     def generate_android_bug_report(self):
         """Generate Android bug report using file operations manager."""
         devices = self.get_checked_devices()
-        output_path = self.file_gen_output_path_edit.text().strip()
+        output_path = self._get_file_generation_output_path()
         self.file_operations_manager.generate_android_bug_report(devices, output_path)
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):
         """Generate device discovery file using file operations manager."""
         devices = self.get_checked_devices()
-        output_path = self.file_gen_output_path_edit.text().strip()
+        output_path = self._get_file_generation_output_path()
         self.file_operations_manager.generate_device_discovery_file(devices, output_path)
 
     @ensure_devices_selected
     def pull_device_dcim_with_folder(self):
         """Pull DCIM folder from devices using file operations manager."""
         devices = self.get_checked_devices()
-        output_path = self.file_gen_output_path_edit.text().strip()
+        output_path = self._get_file_generation_output_path()
         self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
 
     @ensure_devices_selected
     def dump_device_hsv(self):
         """Dump device UI hierarchy using UI hierarchy manager."""
-        output_path = self.file_gen_output_path_edit.text().strip()
+        output_path = self._get_file_generation_output_path()
         self.ui_hierarchy_manager.export_hierarchy(output_path)
 
     @ensure_devices_selected
