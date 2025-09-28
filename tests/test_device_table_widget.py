@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from utils import adb_models
@@ -205,6 +206,38 @@ class DeviceTableWidgetTest(unittest.TestCase):
             self.fail(f'Refreshing row styles should not recurse: {exc}')
 
         self.assertEqual(toggles, [])
+
+    def test_row_click_toggles_checkbox_selection(self):
+        devices = [
+            adb_models.DeviceInfo(
+                device_serial_num='serial-a',
+                device_usb='usb1',
+                device_prod='prod',
+                device_model='Pixel 8',
+                wifi_is_on=True,
+                bt_is_on=True,
+                android_ver='15',
+                android_api_level='35',
+                gms_version='35.2',
+                build_fingerprint='fp',
+            ),
+        ]
+
+        toggles: list[tuple[str, bool]] = []
+        self.table.selection_toggled.connect(lambda serial, state: toggles.append((serial, state)))
+
+        self.table.update_devices(devices)
+
+        target_rect = self.table.visualItemRect(self.table.item(0, 1))
+        click_position = target_rect.center()
+
+        QTest.mouseClick(self.table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, click_position)
+        self.assertEqual(self.table.item(0, 0).checkState(), Qt.CheckState.Checked)
+        self.assertEqual(toggles[-1], ('serial-a', True))
+
+        QTest.mouseClick(self.table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, click_position)
+        self.assertEqual(self.table.item(0, 0).checkState(), Qt.CheckState.Unchecked)
+        self.assertEqual(toggles[-1], ('serial-a', False))
 
 
 if __name__ == '__main__':

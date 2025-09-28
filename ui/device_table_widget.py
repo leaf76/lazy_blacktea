@@ -257,5 +257,25 @@ class DeviceTableWidget(QTableWidget):
                 return
         self.list_context_menu_requested.emit(position)
 
+    # ------------------------------------------------------------------
+    # Qt event overrides
+    # ------------------------------------------------------------------
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            point = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            index = self.indexAt(point)
+            if index.isValid() and index.column() != 0:
+                checkbox_item = self.item(index.row(), 0)
+                if checkbox_item is not None and checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    new_state = (
+                        Qt.CheckState.Unchecked
+                        if checkbox_item.checkState() == Qt.CheckState.Checked
+                        else Qt.CheckState.Checked
+                    )
+                    checkbox_item.setCheckState(new_state)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
 
 __all__ = ["DeviceTableWidget"]
