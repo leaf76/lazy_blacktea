@@ -102,18 +102,25 @@ class DeviceActionsController:
             return
 
         status_helper = self.window.device_list_controller.get_on_off_status
-        device_info = f'''Device Information:
-Model: {device.device_model}
-Serial: {device.device_serial_num}
-Android Version: {device.android_ver if device.android_ver else 'Unknown'} (API Level {device.android_api_level if device.android_api_level else 'Unknown'})
-GMS Version: {device.gms_version if device.gms_version else 'Unknown'}
-Product: {device.device_prod}
-USB: {device.device_usb}
-WiFi Status: {status_helper(device.wifi_is_on)}
-Bluetooth Status: {status_helper(device.bt_is_on)}
-Audio State: {device.audio_state or 'Unknown'}
-Bluetooth Manager: {device.bluetooth_manager_state or 'Unknown'}
-Build Fingerprint: {device.build_fingerprint}'''
+        format_detail = self.window.device_list_controller._format_detail
+        device_info_lines = [
+            'Device Information:',
+            format_detail('Model', device.device_model),
+            format_detail('Serial', device.device_serial_num),
+            format_detail(
+                'Android Version',
+                f"{device.android_ver if device.android_ver else 'Unknown'} (API {device.android_api_level if device.android_api_level else 'Unknown'})",
+            ),
+            format_detail('GMS Version', device.gms_version),
+            format_detail('Product', device.device_prod),
+            format_detail('USB', device.device_usb),
+            format_detail('WiFi Status', status_helper(device.wifi_is_on)),
+            format_detail('Bluetooth Status', status_helper(device.bt_is_on)),
+            format_detail('Audio State', device.audio_state),
+            format_detail('Bluetooth Manager', device.bluetooth_manager_state),
+            format_detail('Build Fingerprint', device.build_fingerprint),
+        ]
+        device_info = '\n'.join(device_info_lines)
 
         try:
             clipboard = QGuiApplication.clipboard()
@@ -132,28 +139,29 @@ Build Fingerprint: {device.build_fingerprint}'''
 
         device_info_sections = []
         status_helper = self.window.device_list_controller.get_on_off_status
+        format_detail = self.window.device_list_controller._format_detail
 
         for index, device in enumerate(checked_devices, start=1):
             section = [
                 f'Device #{index}',
                 '==================================================',
                 'BASIC INFORMATION:',
-                f'Model: {device.device_model}',
-                f'Serial Number: {device.device_serial_num}',
-                f'Product: {device.device_prod}',
-                f'USB: {device.device_usb}',
+                format_detail('Model', device.device_model),
+                format_detail('Serial Number', device.device_serial_num),
+                format_detail('Product', device.device_prod),
+                format_detail('USB', device.device_usb),
                 '',
                 'SYSTEM INFORMATION:',
-                f'Android Version: {device.android_ver if device.android_ver else "Unknown"}',
-                f'API Level: {device.android_api_level if device.android_api_level else "Unknown"}',
-                f'GMS Version: {device.gms_version if device.gms_version else "Unknown"}',
-                f'Build Fingerprint: {device.build_fingerprint if device.build_fingerprint else "Unknown"}',
+                format_detail('Android Version', device.android_ver),
+                format_detail('API Level', device.android_api_level),
+                format_detail('GMS Version', device.gms_version),
+                format_detail('Build Fingerprint', device.build_fingerprint),
                 '',
                 'CONNECTIVITY:',
-                f'WiFi Status: {status_helper(device.wifi_is_on)}',
-                f'Bluetooth Status: {status_helper(device.bt_is_on)}',
-                f'Audio State: {device.audio_state or "Unknown"}',
-                f'Bluetooth Manager: {device.bluetooth_manager_state or "Unknown"}',
+                format_detail('WiFi Status', status_helper(device.wifi_is_on)),
+                format_detail('Bluetooth Status', status_helper(device.bt_is_on)),
+                format_detail('Audio State', device.audio_state),
+                format_detail('Bluetooth Manager', device.bluetooth_manager_state),
                 '',
             ]
 
@@ -161,15 +169,15 @@ Build Fingerprint: {device.build_fingerprint}'''
                 additional_info = self.window.device_list_controller.get_additional_device_info(device.device_serial_num)
                 section.extend([
                     'HARDWARE INFORMATION:',
-                    f'Screen Size: {additional_info.get("screen_size", "Unknown")}',
-                    f'Screen Density: {additional_info.get("screen_density", "Unknown")}',
-                    f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}',
+                    format_detail('Screen Size', additional_info.get('screen_size')), 
+                    format_detail('Screen Density', additional_info.get('screen_density')),
+                    format_detail('CPU Architecture', additional_info.get('cpu_arch')),
                     '',
                     'BATTERY INFORMATION:',
-                    f'Battery Level: {additional_info.get("battery_level", "Unknown")}',
-                    f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}',
-                    f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}',
-                    f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}',
+                    format_detail('Battery Level', additional_info.get('battery_level')),
+                    format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah')),
+                    format_detail('Battery mAs', additional_info.get('battery_mas')),
+                    format_detail('Estimated DOU', additional_info.get('battery_dou_hours')),
                 ])
             except Exception as exc:
                 section.extend([

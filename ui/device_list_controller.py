@@ -568,26 +568,34 @@ class DeviceListController:
             return '🔴 REC | '
         return ''
 
+    @staticmethod
+    def _format_detail(label: str, value, width: int = 18) -> str:
+        if value in (None, ""):
+            safe_value = "Unknown"
+        else:
+            safe_value = str(value)
+        return f"{label:<{width}}: {safe_value}"
+
     def _build_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
         base_tooltip = (
-            f'📱 Device Information\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'Model: {device.device_model}\n'
-            f'Serial: {device.device_serial_num}\n'
-            f'Android: {device.android_ver if device.android_ver else "Unknown"} '
-            f'(API Level {device.android_api_level if device.android_api_level else "Unknown"})\n'
-            f'GMS Version: {device.gms_version if device.gms_version else "Unknown"}\n'
-            f'Product: {device.device_prod}\n'
-            f'USB: {device.device_usb}\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'📡 Connectivity\n'
-            f'WiFi: {self.get_on_off_status(device.wifi_is_on)}\n'
-            f'Bluetooth: {self.get_on_off_status(device.bt_is_on)}\n'
-            f'Audio: {device.audio_state or "Unknown"}\n'
-            f'BT Manager: {device.bluetooth_manager_state or "Unknown"}\n'
-            f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            f'🔧 Build Information\n'
-            f'Build Fingerprint: {(device.build_fingerprint[:50] + "...") if device.build_fingerprint else "Unknown"}'
+            '📱 Device Information\n'
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            f"{self._format_detail('Model', device.device_model)}\n"
+            f"{self._format_detail('Serial', device.device_serial_num)}\n"
+            f"{self._format_detail('Android', device.android_ver)} "
+            f"(API {device.android_api_level if device.android_api_level else 'Unknown'})\n"
+            f"{self._format_detail('GMS Version', device.gms_version)}\n"
+            f"{self._format_detail('Product', device.device_prod)}\n"
+            f"{self._format_detail('USB', device.device_usb)}\n"
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            '📡 Connectivity\n'
+            f"{self._format_detail('WiFi', self.get_on_off_status(device.wifi_is_on))}\n"
+            f"{self._format_detail('Bluetooth', self.get_on_off_status(device.bt_is_on))}\n"
+            f"{self._format_detail('Audio', device.audio_state)}\n"
+            f"{self._format_detail('BT Manager', device.bluetooth_manager_state)}\n"
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+            '🔧 Build Information\n'
+            f"{self._format_detail('Build Fingerprint', (device.build_fingerprint[:50] + '...') if device.build_fingerprint else 'Unknown')}"
         )
 
         try:
@@ -595,15 +603,15 @@ class DeviceListController:
             return base_tooltip + (
                 f'\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
                 f'🖥️ Hardware Information\n'
-                f'Screen Size: {additional_info.get("screen_size", "Unknown")}\n'
-                f'Screen Density: {additional_info.get("screen_density", "Unknown")}\n'
-                f'CPU Architecture: {additional_info.get("cpu_arch", "Unknown")}\n'
+                f"{self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown'))}\n"
+                f"{self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown'))}\n"
+                f"{self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown'))}\n"
                 f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
                 f'🔋 Battery Information\n'
-                f'Battery Level: {additional_info.get("battery_level", "Unknown")}\n'
-                f'Battery Capacity: {additional_info.get("battery_capacity_mah", "Unknown")}\n'
-                f'Battery mAs: {additional_info.get("battery_mas", "Unknown")}\n'
-                f'Estimated DOU: {additional_info.get("battery_dou_hours", "Unknown")}'
+                f"{self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown'))}\n"
+                f"{self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown'))}\n"
+                f"{self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown'))}\n"
+                f"{self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown'))}"
             )
         except Exception as exc:
             logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
