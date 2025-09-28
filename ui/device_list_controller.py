@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import QStackedWidget
 
 from utils import adb_models, adb_tools, common
 from ui.device_table_widget import DeviceTableWidget
@@ -308,14 +309,26 @@ class DeviceListController:
             return
 
         show_placeholder = total_count == 0
-        table_widget.setHidden(show_placeholder)
-        if no_devices_label is not None:
-            no_devices_label.setVisible(show_placeholder)
-            if show_placeholder and hasattr(no_devices_label, 'setText'):
+        device_stack = getattr(self.window, 'device_panel_stack', None)
+        handled_by_stack = isinstance(device_stack, QStackedWidget)
+
+        if handled_by_stack:
+            target_widget = no_devices_label if show_placeholder else table_widget
+            if target_widget is not None and device_stack.indexOf(target_widget) != -1:
+                if device_stack.currentWidget() is not target_widget:
+                    device_stack.setCurrentWidget(target_widget)
+        else:
+            table_widget.setHidden(show_placeholder)
+
+        if no_devices_label is not None and hasattr(no_devices_label, 'setText'):
+            if show_placeholder:
                 if self.window.device_search_manager.get_search_text():
                     no_devices_label.setText('No devices match the current search')
                 else:
                     no_devices_label.setText('No devices found')
+            if not handled_by_stack and hasattr(no_devices_label, 'setVisible'):
+                no_devices_label.setVisible(show_placeholder)
+
         logger.debug('Empty state updated (total=%s, visible=%s)', total_count, visible_count)
 
     def _refresh_check_devices(self) -> None:

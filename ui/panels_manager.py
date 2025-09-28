@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
     QCheckBox, QLineEdit, QProgressBar, QApplication,
-    QTreeWidget
+    QTreeWidget, QStackedWidget, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QAction, QActionGroup
@@ -503,14 +503,23 @@ class PanelsManager(QObject):
         device_layout.addLayout(selection_container)
 
         device_table = DeviceTableWidget()
+        device_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         device_table.list_context_menu_requested.connect(main_window.show_device_list_context_menu)
-        device_layout.addWidget(device_table)
 
-        # No devices label (will be added dynamically)
         no_devices_label = QLabel('No devices found')
         no_devices_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        no_devices_label.hide()
-        device_layout.addWidget(no_devices_label)
+        no_devices_label.setWordWrap(True)
+        no_devices_label.setObjectName('device_list_empty_state_label')
+        no_devices_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        device_stack = QStackedWidget()
+        device_stack.setObjectName('device_list_stack')
+        device_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        device_stack.addWidget(device_table)
+        device_stack.addWidget(no_devices_label)
+        device_stack.setCurrentWidget(device_table)
+
+        device_layout.addWidget(device_stack)
 
         parent.addWidget(device_widget)
 
@@ -519,6 +528,7 @@ class PanelsManager(QObject):
             'title_label': title_label,
             'device_table': device_table,
             'no_devices_label': no_devices_label,
+            'device_panel_stack': device_stack,
             'selection_summary_label': selection_summary_label,
             'selection_hint_label': hint_label,
         }

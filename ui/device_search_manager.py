@@ -102,7 +102,8 @@ class DeviceSearchManager:
 
         # Partial ratio to capture best window alignment
         partial_similarity = self._partial_ratio(normalized_query, normalized_text)
-        if partial_similarity >= 0.7:
+        shortest_length = min(len(normalized_query), len(normalized_text))
+        if shortest_length >= 2 and partial_similarity >= 0.7:
             scores.append(partial_similarity * 0.85)
 
         if not scores:

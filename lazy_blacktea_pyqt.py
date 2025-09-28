@@ -300,10 +300,10 @@ class WindowMain(QMainWindow):
         self.title_label = device_components['title_label']
         self.device_table = device_components['device_table']
         self.no_devices_label = device_components['no_devices_label']
+        self.device_panel_stack = device_components['device_panel_stack']
         self.selection_summary_label = device_components['selection_summary_label']
 
         self.device_list_controller.attach_table(self.device_table)
-        self.no_devices_label.hide()
         self.device_list_controller.update_selection_count()
 
         # Create tools panel via controller
