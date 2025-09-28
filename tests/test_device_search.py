@@ -138,6 +138,21 @@ class TestDeviceSearch(unittest.TestCase):
         score = self.main_window.device_search_manager.fuzzy_match_score("gal", "Samsung Galaxy S23")
         self.assertGreater(score, 0.5, "Partial match should have decent score")
 
+    def test_fuzzy_match_score_token_permutation(self):
+        """Tokens in different order should still yield a strong score."""
+        score = self.main_window.device_search_manager.fuzzy_match_score("pixel google", "Google Pixel 7")
+        self.assertGreater(score, 0.75, "Token permutation should remain a strong match")
+
+    def test_fuzzy_match_score_handles_minor_typos(self):
+        """Small typos should not drastically reduce the score."""
+        score = self.main_window.device_search_manager.fuzzy_match_score("samsng", "Samsung Galaxy S23")
+        self.assertGreater(score, 0.7, "Minor typo should still be considered a close match")
+
+    def test_fuzzy_match_score_collapsed_abbreviation(self):
+        """Collapsed model abbreviations should still match well."""
+        score = self.main_window.device_search_manager.fuzzy_match_score("sgs23", "Samsung Galaxy S23")
+        self.assertGreater(score, 0.7, "Common abbreviation should map to the device name")
+
     def test_fuzzy_match_score_no_match(self):
         """Test fuzzy match with no matches."""
         score = self.main_window.device_search_manager.fuzzy_match_score("xyz", "Samsung Galaxy S23")

@@ -1,5 +1,7 @@
 """Device search and filtering functionality for the device list."""
 
+from difflib import SequenceMatcher
+import re
 from typing import List, Dict, Tuple
 from utils import adb_models
 
@@ -15,6 +17,8 @@ class DeviceSearchManager:
     def fuzzy_match_score(self, query: str, text: str) -> float:
         """Calculate fuzzy match score between query and text.
         Returns a score between 0 (no match) and 1 (perfect match).
+        The algorithm combines substring, token, acronym and sequence
+        similarity to better tolerate permutations and minor typos.
         """
         if not query:
             return 1.0
@@ -22,54 +26,126 @@ class DeviceSearchManager:
         if not text:
             return 0.0
 
-        query = query.lower().strip()
-        text = text.lower()
+        normalized_query = query.lower().strip()
+        normalized_text = text.lower()
 
-        # Exact substring match gets highest score
-        if query in text:
-            # Perfect match for equal strings
-            if query == text:
-                return 1.0
-            # High score for substring matches, better for shorter text
-            position_factor = 1.0 - (text.find(query) / len(text)) if len(text) > 0 else 1.0
-            length_factor = len(query) / len(text) if len(text) > 0 else 0.0
-            return 0.8 + (position_factor * 0.1) + (length_factor * 0.1)
+        if not normalized_query:
+            return 1.0
 
-        # For non-substring matches, use character-by-character matching
-        query_chars = list(query)
-        text_chars = list(text)
-        matches = 0
-        text_index = 0
+        if normalized_query == normalized_text:
+            return 1.0
 
-        # Count sequential character matches
-        for query_char in query_chars:
-            found = False
-            # Find the character in remaining text
-            for i in range(text_index, len(text_chars)):
-                if text_chars[i] == query_char:
-                    matches += 1
-                    text_index = i + 1
-                    found = True
-                    break
+        token_pattern = re.compile(r"[^a-z0-9]+")
 
-            # If we can't find a character, this is a poor match
-            if not found:
-                break
+        def tokenize(value: str) -> List[str]:
+            return [token for token in token_pattern.split(value) if token]
 
-        # Score based on how many characters matched
-        if matches == 0:
+        def build_acronym(tokens: List[str]) -> str:
+            pieces: List[str] = []
+            for token in tokens:
+                if not token:
+                    continue
+                head = token[0]
+                digits = "".join(ch for ch in token if ch.isdigit())
+                if head.isdigit():
+                    pieces.append(token)
+                else:
+                    pieces.append(f"{head}{digits}")
+            return "".join(pieces)
+
+        query_tokens = tokenize(normalized_query)
+        text_tokens = tokenize(normalized_text)
+
+        collapsed_query = "".join(query_tokens)
+        collapsed_text = "".join(text_tokens)
+
+        scores = []
+
+        # Exact substring match gets the highest priority with positional bonus
+        if normalized_query in normalized_text:
+            position = normalized_text.find(normalized_query)
+            coverage = len(normalized_query) / len(normalized_text)
+            start_bonus = 0.1 if position == 0 else 0.0
+            scores.append(min(0.85 + (coverage * 0.1) + start_bonus, 1.0))
+
+        # Collapsed (alphanumeric only) substring helps with abbreviations
+        if collapsed_query and collapsed_query in collapsed_text:
+            position = collapsed_text.find(collapsed_query)
+            coverage = len(collapsed_query) / len(collapsed_text)
+            start_bonus = 0.05 if position == 0 else 0.0
+            scores.append(min(0.8 + (coverage * 0.15) + start_bonus, 0.98))
+
+        # Token coverage: ensure all query tokens appear regardless of order
+        if query_tokens:
+            token_hits = sum(1 for token in query_tokens if token in text_tokens)
+            if token_hits:
+                token_ratio = token_hits / len(query_tokens)
+                coverage = min(len(query_tokens) / max(len(text_tokens), 1), 1.0)
+                scores.append(0.5 + ((token_ratio ** 2) * 0.35) + (coverage * 0.05))
+
+        # All query tokens present (permutation match)
+        if query_tokens and text_tokens:
+            if set(query_tokens).issubset(set(text_tokens)):
+                scores.append(0.85)
+
+        # Acronym match (e.g., sgs23 -> Samsung Galaxy S23)
+        if collapsed_query and text_tokens:
+            acronym = build_acronym(text_tokens)
+            if collapsed_query in acronym:
+                coverage = len(collapsed_query) / len(acronym)
+                scores.append(0.75 + coverage * 0.1)
+
+        # Sequence similarity for general fuzzy matching / typos
+        seq_similarity = SequenceMatcher(None, normalized_query, normalized_text).ratio()
+        if seq_similarity >= 0.2:
+            scores.append(seq_similarity * 0.75)
+
+        # Partial ratio to capture best window alignment
+        partial_similarity = self._partial_ratio(normalized_query, normalized_text)
+        if partial_similarity >= 0.7:
+            scores.append(partial_similarity * 0.85)
+
+        if not scores:
             return 0.0
 
-        # Calculate score with emphasis on match completeness
-        char_ratio = matches / len(query)  # How much of query was matched
+        best_score = max(scores)
 
-        # Only give partial score if we matched most of the query
-        if char_ratio < 0.9:  # Stricter threshold
-            return char_ratio * 0.2  # Even lower score for poor matches
-        else:
-            # Better score for good character matches
-            density_factor = matches / len(text) if len(text) > 0 else 0.0
-            return char_ratio * 0.6 + density_factor * 0.2
+        # Short queries can easily match noise; dampen weak evidence
+        if len(normalized_query) <= 2 and best_score < 0.6:
+            best_score *= 0.5
+
+        if best_score < 0.3:
+            best_score *= 0.5
+
+        return max(0.0, min(best_score, 1.0))
+
+    @staticmethod
+    def _partial_ratio(text_a: str, text_b: str) -> float:
+        """Compute a simplified partial ratio between two strings."""
+        if not text_a or not text_b:
+            return 0.0
+
+        shorter, longer = (text_a, text_b) if len(text_a) <= len(text_b) else (text_b, text_a)
+
+        if not shorter:
+            return 0.0
+
+        if shorter in longer:
+            return 1.0
+
+        matcher = SequenceMatcher(None)
+        best_ratio = 0.0
+
+        for idx in range(len(longer) - len(shorter) + 1):
+            window = longer[idx : idx + len(shorter)]
+            matcher.set_seqs(shorter, window)
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                if best_ratio >= 0.99:
+                    break
+
+        return best_ratio
 
     def match_device(self, device: adb_models.DeviceInfo, query: str) -> float:
         """Calculate match score for a device against search query."""
