@@ -6,19 +6,21 @@ Provides real-time logcat streaming and filtering capabilities.
 import logging
 import os
 import re
+import subprocess
 import time
-from typing import Optional, Dict, List
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Any
 
 from PyQt6.QtWidgets import (
-    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QTextEdit,
+    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
     QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox, QFrame, QMessageBox,
-    QInputDialog, QFormLayout, QListWidget, QListWidgetItem, QAbstractItemView,
-    QSpinBox, QSizePolicy
+    QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView,
+    QSpinBox, QSizePolicy, QGroupBox, QFormLayout
 )
 from PyQt6.QtCore import (
-    QProcess, QTimer, QIODevice, Qt, pyqtSignal
+    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel
 )
-from PyQt6.QtGui import QFont, QTextCursor, QCloseEvent
+from PyQt6.QtGui import QFont, QCloseEvent
 
 try:
     from utils import adb_tools
@@ -69,6 +71,204 @@ PERFORMANCE_PRESETS = {
 }
 
 
+@dataclass(frozen=True)
+class LogLine:
+    """Represents a parsed logcat line with convenient accessors."""
+
+    timestamp: str
+    pid: str
+    tid: str
+    level: str
+    tag: str
+    message: str
+    raw: str
+
+    _THREADTIME_PATTERN = re.compile(
+        r'^(?P<timestamp>\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+'
+        r'(?P<pid>\d+)\s+(?P<tid>\d+)\s+'
+        r'(?P<level>[VDIWEF])\s+'
+        r'(?P<tag>[^:]*):\s'
+        r'(?P<message>.*)$'
+    )
+
+    @classmethod
+    def from_string(cls, line: str) -> "LogLine":
+        match = cls._THREADTIME_PATTERN.match(line)
+        if match:
+            parts = match.groupdict()
+            return cls(
+                timestamp=parts['timestamp'],
+                pid=parts['pid'],
+                tid=parts['tid'],
+                level=parts['level'],
+                tag=parts['tag'].strip(),
+                message=parts['message'].strip(),
+                raw=line,
+            )
+        cleaned = line.strip()
+        return cls('', '', '', 'I', 'Logcat', cleaned, raw=line)
+
+
+class LogcatListModel(QAbstractListModel):
+    """List model holding log lines for QListView rendering."""
+
+    def __init__(self, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._logs: List[LogLine] = []
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
+        if parent.isValid():
+            return 0
+        return len(self._logs)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # type: ignore[override]
+        if not index.isValid() or not (0 <= index.row() < len(self._logs)):
+            return None
+        log = self._logs[index.row()]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return log.raw
+        if role == Qt.ItemDataRole.UserRole:
+            return log
+        return None
+
+    def append_lines(self, lines: List[LogLine]) -> None:
+        if not lines:
+            return
+        start = len(self._logs)
+        end = start + len(lines) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self._logs.extend(lines)
+        self.endInsertRows()
+
+    def clear(self) -> None:
+        if not self._logs:
+            return
+        self.beginResetModel()
+        self._logs.clear()
+        self.endResetModel()
+
+    def trim(self, max_size: int) -> None:
+        if max_size <= 0 or len(self._logs) <= max_size:
+            return
+        remove_count = len(self._logs) - max_size
+        self.remove_first(remove_count)
+
+    def get_line(self, row: int) -> Optional[LogLine]:
+        if 0 <= row < len(self._logs):
+            return self._logs[row]
+        return None
+
+    def to_list(self) -> List[LogLine]:
+        return list(self._logs)
+
+    def remove_first(self, count: int) -> None:
+        if count <= 0 or not self._logs:
+            return
+        actual = min(count, len(self._logs))
+        self.beginRemoveRows(QModelIndex(), 0, actual - 1)
+        del self._logs[:actual]
+        self.endRemoveRows()
+
+
+class LogcatFilterProxyModel(QSortFilterProxyModel):
+    """Proxy model applying regex filters and visible limits."""
+
+    def __init__(self, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._live_pattern: Optional[str] = None
+        self._saved_patterns: List[str] = []
+        self._compiled_patterns: List[re.Pattern[str]] = []
+        self._visible_limit = 0
+        self._limit_cache: Optional[set[int]] = None
+
+    def set_live_pattern(self, pattern: Optional[str]) -> None:
+        normalized = pattern.strip() if pattern and pattern.strip() else None
+        if normalized == self._live_pattern:
+            return
+        self._live_pattern = normalized
+        self._limit_cache = None
+        self._rebuild_patterns()
+
+    def set_saved_patterns(self, patterns: List[str]) -> None:
+        normalized = [p.strip() for p in patterns if p and p.strip()]
+        if normalized == self._saved_patterns:
+            return
+        self._saved_patterns = normalized
+        self._limit_cache = None
+        self._rebuild_patterns()
+
+    def set_visible_limit(self, limit: int) -> None:
+        limit = max(0, int(limit))
+        if limit == self._visible_limit:
+            return
+        self._visible_limit = limit
+        self._limit_cache = None
+        self.invalidateFilter()
+
+    def _rebuild_patterns(self) -> None:
+        compiled: List[re.Pattern[str]] = []
+        for pattern in [self._live_pattern, *self._saved_patterns]:
+            if not pattern:
+                continue
+            try:
+                compiled.append(re.compile(pattern, re.IGNORECASE))
+            except re.error:
+                continue
+        self._compiled_patterns = compiled
+        self.invalidateFilter()
+
+    def _matches(self, text: str) -> bool:
+        if not self._compiled_patterns:
+            return True
+        return any(pattern.search(text) for pattern in self._compiled_patterns)
+
+    def reset_limit_cache(self) -> None:
+        """Clear cached limit computation so next filter pass recomputes it."""
+        self._limit_cache = None
+
+    def _ensure_limit_cache(self) -> Optional[set[int]]:
+        if self._visible_limit <= 0:
+            return None
+        if self._limit_cache is not None:
+            return self._limit_cache
+
+        model = self.sourceModel()
+        if model is None:
+            self._limit_cache = set()
+            return self._limit_cache
+
+        cache: set[int] = set()
+        remaining = self._visible_limit
+        for row in range(model.rowCount() - 1, -1, -1):
+            index = model.index(row, 0)
+            log: Optional[LogLine] = model.data(index, Qt.ItemDataRole.UserRole)
+            text = log.raw if log else (model.data(index, Qt.ItemDataRole.DisplayRole) or '')
+            if self._matches(str(text)):
+                cache.add(row)
+                remaining -= 1
+                if remaining <= 0:
+                    break
+
+        self._limit_cache = cache
+        return cache
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # type: ignore[override]
+        model = self.sourceModel()
+        if model is None:
+            return False
+
+        index = model.index(source_row, 0, source_parent)
+        log: Optional[LogLine] = model.data(index, Qt.ItemDataRole.UserRole)
+        text = log.raw if log else (model.data(index, Qt.ItemDataRole.DisplayRole) or '')
+
+        if not self._matches(str(text)):
+            return False
+
+        cache = self._ensure_limit_cache()
+        if cache is None:
+            return True
+        return source_row in cache
+
 class PerformanceSettingsDialog(QDialog):
     """Performance settings dialog for Logcat viewer."""
 
@@ -80,140 +280,134 @@ class PerformanceSettingsDialog(QDialog):
     def init_ui(self):
         """Initialize the performance settings dialog UI."""
         self.setWindowTitle('Performance Settings')
-        self.setFixedSize(420, 320)
+        self.setMinimumSize(520, 360)
         self.setModal(True)
 
-        # Main layout
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(15)
+        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(18, 18, 18, 16)
 
-        # Title
-        title = QLabel('Performance Settings')
-        title.setStyleSheet('font-size: 14px; font-weight: bold; color: #2E86C1;')
+        title = QLabel('Tune Logcat Performance')
+        title.setStyleSheet('font-size: 16px; font-weight: 600; color: #1b4f72;')
         main_layout.addWidget(title)
 
-        # Preset selection
-        preset_layout = QHBoxLayout()
-        preset_label = QLabel('Preset:')
-        preset_label.setFixedWidth(120)
-        preset_layout.addWidget(preset_label)
+        subtitle = QLabel('Balance retained history with UI responsiveness. Adjust these knobs to fit your device throughput.')
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet('color: #5f6a6a;')
+        main_layout.addWidget(subtitle)
+
+        preset_row = QHBoxLayout()
+        preset_label = QLabel('Preset')
+        preset_label.setStyleSheet('font-weight: bold;')
+        preset_row.addWidget(preset_label)
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItem('Custom')
         for preset_name in PERFORMANCE_PRESETS.keys():
             self.preset_combo.addItem(preset_name)
-        preset_layout.addWidget(self.preset_combo)
-        preset_layout.addStretch()
-        main_layout.addLayout(preset_layout)
+        preset_row.addWidget(self.preset_combo, stretch=1)
+        preset_row.addStretch()
+        main_layout.addLayout(preset_row)
 
-        # Settings section
-        settings_layout = QVBoxLayout()
-        settings_layout.setSpacing(10)
+        content_grid = QGridLayout()
+        content_grid.setHorizontalSpacing(18)
+        content_grid.setVerticalSpacing(12)
 
-        # Max Lines
-        max_lines_layout = QHBoxLayout()
-        max_lines_label = QLabel('Max Lines:')
-        max_lines_label.setFixedWidth(120)
-        max_lines_layout.addWidget(max_lines_label)
+        history_group = QGroupBox('History & Retention')
+        history_form = QFormLayout(history_group)
+        history_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        history_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
         self.max_lines_spin = QSpinBox()
         self.max_lines_spin.setRange(100, 50000)
         self.max_lines_spin.setSingleStep(100)
         self.max_lines_spin.setValue(self.parent_window.max_lines if self.parent_window else 1000)
-        max_lines_layout.addWidget(self.max_lines_spin)
-        max_lines_layout.addStretch()
-        settings_layout.addLayout(max_lines_layout)
+        history_form.addRow('Visible lines', self.max_lines_spin)
 
-        # History multiplier
-        history_layout = QHBoxLayout()
-        history_label = QLabel('History Multiplier:')
-        history_label.setFixedWidth(120)
-        history_layout.addWidget(history_label)
         self.history_multiplier_spin = QSpinBox()
         self.history_multiplier_spin.setRange(1, 20)
         self.history_multiplier_spin.setSingleStep(1)
         self.history_multiplier_spin.setValue(self.parent_window.history_multiplier if self.parent_window else 5)
-        history_layout.addWidget(self.history_multiplier_spin)
-        history_layout.addStretch()
-        settings_layout.addLayout(history_layout)
+        history_form.addRow('History multiplier', self.history_multiplier_spin)
 
-        # Update Interval
-        interval_layout = QHBoxLayout()
-        interval_label = QLabel('Update Interval:')
-        interval_label.setFixedWidth(120)
-        interval_layout.addWidget(interval_label)
+        content_grid.addWidget(history_group, 0, 0)
+
+        cadence_group = QGroupBox('Streaming Cadence')
+        cadence_form = QFormLayout(cadence_group)
+        cadence_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        cadence_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
         self.update_interval_spin = QSpinBox()
         self.update_interval_spin.setRange(50, 2000)
         self.update_interval_spin.setSingleStep(10)
         self.update_interval_spin.setValue(self.parent_window.update_interval_ms if self.parent_window else 200)
+        interval_row = QWidget()
+        interval_layout = QHBoxLayout(interval_row)
+        interval_layout.setContentsMargins(0, 0, 0, 0)
+        interval_layout.setSpacing(6)
         interval_layout.addWidget(self.update_interval_spin)
-        interval_unit_label = QLabel('ms')
-        interval_layout.addWidget(interval_unit_label)
+        interval_layout.addWidget(QLabel('ms'))
         interval_layout.addStretch()
-        settings_layout.addLayout(interval_layout)
+        cadence_form.addRow('Refresh interval', interval_row)
 
-        # Lines per Update
-        lines_update_layout = QHBoxLayout()
-        lines_update_label = QLabel('Lines per Update:')
-        lines_update_label.setFixedWidth(120)
-        lines_update_layout.addWidget(lines_update_label)
         self.lines_per_update_spin = QSpinBox()
         self.lines_per_update_spin.setRange(10, 500)
         self.lines_per_update_spin.setSingleStep(5)
         self.lines_per_update_spin.setValue(self.parent_window.max_lines_per_update if self.parent_window else 50)
-        lines_update_layout.addWidget(self.lines_per_update_spin)
-        lines_update_layout.addStretch()
-        settings_layout.addLayout(lines_update_layout)
+        cadence_form.addRow('Lines per update', self.lines_per_update_spin)
 
-        # Buffer flush threshold
-        buffer_layout = QHBoxLayout()
-        buffer_label = QLabel('Flush Threshold:')
-        buffer_label.setFixedWidth(120)
-        buffer_layout.addWidget(buffer_label)
         self.buffer_size_spin = QSpinBox()
         self.buffer_size_spin.setRange(10, 1000)
         self.buffer_size_spin.setSingleStep(10)
         self.buffer_size_spin.setValue(self.parent_window.max_buffer_size if self.parent_window else 100)
+        buffer_row = QWidget()
+        buffer_layout = QHBoxLayout(buffer_row)
+        buffer_layout.setContentsMargins(0, 0, 0, 0)
+        buffer_layout.setSpacing(6)
         buffer_layout.addWidget(self.buffer_size_spin)
         buffer_layout.addWidget(QLabel('lines'))
         buffer_layout.addStretch()
-        settings_layout.addLayout(buffer_layout)
+        cadence_form.addRow('Flush threshold', buffer_row)
 
-        main_layout.addLayout(settings_layout)
+        content_grid.addWidget(cadence_group, 0, 1)
 
-        # Performance Tips
-        tips_frame = QFrame()
-        tips_frame.setStyleSheet('background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px;')
-        tips_layout = QVBoxLayout(tips_frame)
+        main_layout.addLayout(content_grid)
 
-        tips_label = QLabel('Performance Tips:')
-        tips_label.setStyleSheet('font-weight: bold; color: #495057;')
-        tips_layout.addWidget(tips_label)
+        preview_frame = QFrame()
+        preview_frame.setStyleSheet('background-color: #f4f6f6; border: 1px solid #d6dbdf; border-radius: 6px; padding: 10px;')
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setSpacing(4)
 
-        tips_text = QLabel(
-            '• Max Lines x History Multiplier defines the retained log capacity\n'
-            '• Lower Update Interval / smaller flush threshold = lower latency but higher CPU\n'
-            '• Increase Lines per Update to reduce UI refresh frequency'
-        )
-        tips_text.setStyleSheet('color: #6c757d; font-size: 11px;')
-        tips_layout.addWidget(tips_text)
+        preview_title = QLabel('Preview')
+        preview_title.setStyleSheet('font-weight: bold; color: #34495e;')
+        preview_layout.addWidget(preview_title)
 
         self.capacity_label = QLabel()
-        self.capacity_label.setStyleSheet('font-size: 11px; color: #2E86C1;')
-        tips_layout.addWidget(self.capacity_label)
+        self.capacity_label.setStyleSheet('color: #1f618d;')
+        preview_layout.addWidget(self.capacity_label)
 
-        main_layout.addWidget(tips_frame)
+        self.latency_label = QLabel()
+        self.latency_label.setStyleSheet('color: #616a6b;')
+        preview_layout.addWidget(self.latency_label)
 
-        # Buttons
+        tips_label = QLabel('Lower intervals provide lower latency but increase CPU usage. Larger flush thresholds smooth bursty logs.')
+        tips_label.setWordWrap(True)
+        tips_label.setStyleSheet('color: #7b8793; font-size: 11px;')
+        preview_layout.addWidget(tips_label)
+
+        main_layout.addWidget(preview_frame)
+
         button_layout = QHBoxLayout()
+        button_layout.addStretch()
         cancel_btn = QPushButton('Cancel')
         cancel_btn.clicked.connect(self.reject)
-        apply_btn = QPushButton('Apply')
-        apply_btn.clicked.connect(self.apply_settings)
-        apply_btn.setStyleSheet('background-color: #007bff; color: white; font-weight: bold;')
-
-        button_layout.addStretch()
         button_layout.addWidget(cancel_btn)
+
+        apply_btn = QPushButton('Apply')
+        apply_btn.setStyleSheet('background-color: #1f618d; color: white; font-weight: bold;')
+        apply_btn.clicked.connect(self.apply_settings)
         button_layout.addWidget(apply_btn)
+
         main_layout.addLayout(button_layout)
 
         self._updating_from_preset = False
@@ -301,7 +495,15 @@ class PerformanceSettingsDialog(QDialog):
         history_multiplier = self.history_multiplier_spin.value()
         capacity = max_lines * history_multiplier
         self.capacity_label.setText(
-            f'Capacity preview: {max_lines} visible lines × {history_multiplier} history = {capacity} stored lines'
+            f'History capacity: {capacity:,} lines ({max_lines:,} visible × {history_multiplier} history)'
+        )
+
+        interval = self.update_interval_spin.value()
+        lines_per_update = self.lines_per_update_spin.value()
+        flush_threshold = self.buffer_size_spin.value()
+        hz = 0.0 if interval <= 0 else 1000.0 / interval
+        self.latency_label.setText(
+            f'UI refresh ≈ every {interval} ms ({hz:.1f} Hz), {lines_per_update} lines/batch, flush at {flush_threshold} lines.'
         )
 
 
@@ -313,33 +515,36 @@ class LogcatWindow(QDialog):
         self.device = device
         self.logcat_process = None
         self.is_running = False
-        self.max_lines = 1000  # Performance optimization: limit log lines
-        self.filters = {}  # Store named filters
+        self.max_lines = 1000
+        self.filters: Dict[str, str] = {}
         self.current_filter = None
 
-        # Performance optimization: buffering and throttling
-        self.log_buffer = []  # Buffer for incoming log lines
-        self.max_buffer_size = 100  # Maximum lines to buffer before processing
-        self.update_timer = QTimer()  # Timer for throttled UI updates
+        # Data model and filtering pipeline
+        self.log_model = LogcatListModel(self)
+        self.log_proxy = LogcatFilterProxyModel(self)
+        self.log_proxy.setSourceModel(self.log_model)
+        self.log_proxy.set_visible_limit(self.max_lines)
+        self.filtered_model = LogcatListModel(self)
+        self._compiled_filter_patterns: List[re.Pattern[str]] = []
+
+        # Performance and buffering configuration
+        self.log_buffer: List[LogLine] = []
+        self.max_buffer_size = 100
+        self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.process_buffered_logs)
         self.update_timer.setSingleShot(True)
-        self.update_interval_ms = 200  # Update UI every 200ms max
-        self._partial_line = ''  # Buffer for incomplete log lines
+        self.update_interval_ms = 200
+        self._partial_line = ''
         self._suppress_logcat_errors = False
-        self._last_rendered_mode: Optional[str] = None
-        self._last_rendered_text = ''
 
-        # Additional performance settings
-        self.max_lines_per_update = 50  # Maximum lines to add to UI per update
+        self.max_lines_per_update = 50
         self.last_update_time = 0
         self.history_multiplier = 5
 
-        # Real-time filtering
+        # Filtering state
         self.log_levels_order = ['V', 'D', 'I', 'W', 'E', 'F']
-        self.live_filter_pattern = None
+        self.live_filter_pattern: Optional[str] = None
         self.active_filters: List[Dict[str, str]] = []
-        self.raw_logs: List[str] = []  # Store raw logs for unfiltered view
-        self.filtered_logs: List[str] = []  # Store filtered logs for active filters
 
         self.init_ui()
         self.load_filters()
@@ -355,38 +560,104 @@ class LogcatWindow(QDialog):
 
     def _get_buffer_stats(self):
         """Get buffer statistics."""
-        has_filters = self._has_active_filters()
+        if self._has_active_filters():
+            total_logs = self.filtered_model.rowCount()
+            filtered_count = total_logs
+        else:
+            total_logs = self.log_model.rowCount()
+            filtered_count = 0
         return {
-            'total_logs': len(self.filtered_logs) if has_filters else len(self.raw_logs),
+            'total_logs': total_logs,
             'buffer_size': len(self.log_buffer),
-            'filtered_count': len(self.filtered_logs) if has_filters else 0
+            'filtered_count': filtered_count,
         }
 
     def _manage_buffer_size(self):
         """Manage raw log buffer size based on configured history."""
         history_limit = self.max_lines * self.history_multiplier
-        if len(self.raw_logs) > history_limit:
-            self.raw_logs = self.raw_logs[-history_limit:]
-
-    def _trim_filtered_logs(self):
-        """Ensure filtered log history respects configured limits."""
-        history_limit = self.max_lines * self.history_multiplier
-        if len(self.filtered_logs) > history_limit:
-            self.filtered_logs = self.filtered_logs[-history_limit:]
+        before = self.log_model.rowCount()
+        self.log_model.trim(history_limit)
+        if self.log_model.rowCount() != before:
+            self.log_proxy.reset_limit_cache()
+            self.log_proxy.invalidateFilter()
 
     def _handle_filters_changed(self):
-        """Rebuild filtered history and refresh display after filter changes."""
-        if self._has_active_filters():
-            self.filtered_logs = self.filter_lines(self.raw_logs)
-            self._trim_filtered_logs()
-        else:
-            self.filtered_logs.clear()
+        """Rebuild filtered view when filters are updated."""
+        # Ensure the raw view remains unfiltered.
+        self.log_proxy.set_saved_patterns([])
+        self.log_proxy.set_live_pattern(None)
 
-        self.refilter_display()
+        self._compiled_filter_patterns = self._compile_filter_patterns()
+
+        if self._has_active_filters():
+            self._rebuild_filtered_model()
+            if self.log_display.model() is not self.filtered_model:
+                self.log_display.setModel(self.filtered_model)
+        else:
+            if self.log_display.model() is not self.log_proxy:
+                self.log_display.setModel(self.log_proxy)
+            self.filtered_model.clear()
+
+        self.limit_log_lines()
+        self._update_status_counts()
+        self._scroll_to_bottom()
 
     def _has_active_filters(self) -> bool:
         """Return whether any filter (live or saved) is active."""
         return bool(self.live_filter_pattern) or bool(self.active_filters)
+
+    def _compile_filter_patterns(self) -> List[re.Pattern[str]]:
+        patterns = []
+        if self.live_filter_pattern:
+            patterns.append(self.live_filter_pattern)
+
+        for filter_data in self.active_filters:
+            pattern = filter_data.get('pattern')
+            if pattern:
+                patterns.append(pattern)
+
+        compiled: List[re.Pattern[str]] = []
+        for raw_pattern in patterns:
+            try:
+                compiled.append(re.compile(raw_pattern, re.IGNORECASE))
+            except re.error:
+                continue
+        return compiled
+
+    def _line_matches_filters(self, line: LogLine) -> bool:
+        if not self._compiled_filter_patterns:
+            return False
+        return any(pattern.search(line.raw) for pattern in self._compiled_filter_patterns)
+
+    def _rebuild_filtered_model(self) -> None:
+        self.filtered_model.clear()
+        if not self._compiled_filter_patterns:
+            return
+
+        matched = [
+            line
+            for line in self.log_model.to_list()
+            if self._line_matches_filters(line)
+        ]
+
+        capacity = max(1, self.max_lines)
+        if len(matched) > capacity:
+            matched = matched[-capacity:]
+        self.filtered_model.append_lines(matched)
+
+    def _append_filtered_lines(self, lines: List[LogLine]) -> None:
+        if not lines or not self._compiled_filter_patterns:
+            return
+
+        matched = [line for line in lines if self._line_matches_filters(line)]
+        if not matched:
+            return
+
+        self.filtered_model.append_lines(matched)
+        capacity = max(1, self.max_lines)
+        overflow = self.filtered_model.rowCount() - capacity
+        if overflow > 0:
+            self.filtered_model.remove_first(overflow)
 
     def init_ui(self):
         """Initialize the logcat window UI."""
@@ -410,12 +681,16 @@ class LogcatWindow(QDialog):
         top_layout.addLayout(control_layout)
         top_layout.addWidget(filter_panel)
 
-        self.log_display = QTextEdit()
+        self.log_display = QListView()
+        self.log_display.setModel(self.log_proxy)
         self.log_display.setFont(QFont('Consolas', 10))
-        self.log_display.setReadOnly(True)
+        self.log_display.setUniformItemSizes(True)
+        self.log_display.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.log_display.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.log_display.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.log_display.setStyleSheet(
             """
-            QTextEdit {
+            QListView {
                 background-color: #1e1e1e;
                 color: #ffffff;
                 border: 1px solid #3e3e3e;
@@ -743,19 +1018,24 @@ class LogcatWindow(QDialog):
         self.update_active_filters_list()
         self._handle_filters_changed()
 
-    def _update_filtered_status(self):
-        """Update status label when filters are active."""
-        filtered_count = len(self.filtered_logs)
-        capacity = self.max_lines * self.history_multiplier
-        active_count = len(self.active_filters) + (1 if self.live_filter_pattern else 0)
-        self._update_status_label(
-            f'Filtered: {filtered_count}/{capacity} lines (active: {active_count})'
-        )
+    def _update_status_counts(self) -> None:
+        """Update the status label based on current filter state."""
+        if self._has_active_filters():
+            active_count = len(self.active_filters) + (1 if self.live_filter_pattern else 0)
+            filtered_count = self.filtered_model.rowCount()
+            capacity = self.max_lines
+            self._update_status_label(
+                f'Filtered: {filtered_count}/{capacity} lines (active: {active_count})'
+            )
+        else:
+            capacity = self.max_lines * self.history_multiplier
+            total_logs = self.log_model.rowCount()
+            self._update_status_label(f'Total: {total_logs}/{capacity} lines')
 
     def on_performance_settings_updated(self):
         """Handle updates from the performance settings dialog."""
-        self._manage_buffer_size()
-        self._handle_filters_changed()
+        self.limit_log_lines()
+        self._update_status_counts()
 
     def start_logcat(self):
         """Start the logcat streaming process."""
@@ -771,6 +1051,7 @@ class LogcatWindow(QDialog):
             return
 
         try:
+            self._clear_device_logcat_buffer()
             self._partial_line = ''
             self._suppress_logcat_errors = False
 
@@ -800,6 +1081,20 @@ class LogcatWindow(QDialog):
         """Return selected log severity levels in configured order."""
         selected = [level for level in self.log_levels_order if self.log_levels[level].isChecked()]
         return selected or ['E']
+
+    def _clear_device_logcat_buffer(self) -> None:
+        """Clear device-side logcat buffer so streaming starts from current time."""
+        try:
+            subprocess.run(
+                ['adb', '-s', self.device.device_serial_num, 'logcat', '-c'],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            logger.warning('ADB executable not found when clearing logcat buffer.')
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug('Clearing logcat buffer failed but continuing: %s', exc)
 
     def _handle_logcat_started(self):
         """Update state when the logcat process reports it has started."""
@@ -903,21 +1198,10 @@ class LogcatWindow(QDialog):
         if not new_lines:
             return
 
-        has_filters = self._has_active_filters()
-
-        # Capture matches before trimming raw history
-        if has_filters:
-            matched_lines = self.filter_lines(new_lines)
-            if matched_lines:
-                self.filtered_logs.extend(matched_lines)
-                self._trim_filtered_logs()
-
-        # Store raw logs for unfiltered view
-        self.raw_logs.extend(new_lines)
-        self._manage_buffer_size()
+        new_log_lines = [LogLine.from_string(line) for line in new_lines]
 
         # Buffer new lines for throttled updates
-        self.log_buffer.extend(new_lines)
+        self.log_buffer.extend(new_log_lines)
 
         current_time = time.time() * 1000  # Convert to milliseconds
         time_since_last_update = current_time - self.last_update_time
@@ -941,69 +1225,38 @@ class LogcatWindow(QDialog):
         current_time = time.time() * 1000
         self.last_update_time = current_time
 
-        if self._has_active_filters():
-            # For active filters, rebuild the filtered view at a throttled cadence
-            self.refilter_display()
-            self.log_buffer.clear()
-            return
-
-        # Limit the number of lines processed per update
         lines_to_process = self.log_buffer[:self.max_lines_per_update]
         self.log_buffer = self.log_buffer[self.max_lines_per_update:]
 
-        # Lines are already filtered in read_logcat_output, no need to filter again
-
-        # Append new lines to the display
         if lines_to_process:
-            cursor = self.log_display.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.log_display.setTextCursor(cursor)
+            self.log_model.append_lines(lines_to_process)
+            self.log_proxy.reset_limit_cache()
+            if self._has_active_filters():
+                self._append_filtered_lines(lines_to_process)
+            self._manage_buffer_size()
+            self.limit_log_lines()
+            self._scroll_to_bottom()
 
-            for line in lines_to_process:
-                self.log_display.append(line)
+        if self.is_running:
+            stats = self._get_buffer_stats()
+            if stats['buffer_size'] > 0:
+                self._update_status_label(f'Logcat running... (buffered: {stats["buffer_size"]} lines)')
+            else:
+                suffix = 'visible lines' if self._has_active_filters() else 'lines'
+                self._update_status_label(f'Logcat running... ({stats["total_logs"]} {suffix})')
 
-            # Maintain scroll position at bottom for new content
-            cursor = self.log_display.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.log_display.setTextCursor(cursor)
-
-        # Limit total lines in display for performance
-        self.limit_log_lines()
-
-        # Update status with buffer info (only when no live filter is active)
-        stats = self._get_buffer_stats()
-        if stats['buffer_size'] > 0:
-            self._update_status_label(f'Logcat running... (buffered: {stats["buffer_size"]} lines)')
-        else:
-            self._update_status_label(f'Logcat running... ({stats["total_logs"]} lines)')
-
-        # Continue processing if there are more lines in buffer
         if self.log_buffer and not self.update_timer.isActive():
             self.update_timer.start(self.update_interval_ms)
 
     def limit_log_lines(self):
         """Limit the number of lines in the display for performance."""
+        self.log_proxy.set_visible_limit(self.max_lines)
+        self._manage_buffer_size()
         if self._has_active_filters():
-            return
-
-        document = self.log_display.document()
-        extra_blocks = document.blockCount() - self.max_lines
-        if extra_blocks <= 0:
-            return
-
-        cursor = QTextCursor(document)
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        for _ in range(extra_blocks):
-            cursor.movePosition(QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.KeepAnchor)
-        cursor.removeSelectedText()
-
-        # Ensure no leading empty line remains
-        cleanup_cursor = QTextCursor(document)
-        cleanup_cursor.movePosition(QTextCursor.MoveOperation.Start)
-        if cleanup_cursor.block().text() == '':
-            cleanup_cursor.deleteChar()
-
-        self._scroll_to_bottom()
+            capacity = max(1, self.max_lines)
+            overflow = self.filtered_model.rowCount() - capacity
+            if overflow > 0:
+                self.filtered_model.remove_first(overflow)
 
     def stop_logcat(self):
         """Stop the logcat streaming process."""
@@ -1056,27 +1309,25 @@ class LogcatWindow(QDialog):
         self.log_buffer.clear()
         self._partial_line = ''
         self._suppress_logcat_errors = False
-        self._last_rendered_mode = None
-        self._last_rendered_text = ''
 
         self.is_running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
-        if self.raw_logs:
-            self.refilter_display()
+        if self.log_model.rowCount():
+            self.limit_log_lines()
+            self._update_status_counts()
         else:
             self._update_status_label('Logcat stopped.')
 
     def clear_logs(self):
         """Clear the log display."""
-        self.log_display.clear()
-        self.raw_logs.clear()
-        self.filtered_logs.clear()
+        self.log_model.clear()
+        self.filtered_model.clear()
+        self._compiled_filter_patterns = []
         self.log_buffer.clear()
         self._partial_line = ''
-        self._last_rendered_mode = None
-        self._last_rendered_text = ''
+        self.log_proxy.reset_limit_cache()
         self._update_status_label('Logs cleared')
 
     def apply_live_filter(self, pattern):
@@ -1086,96 +1337,23 @@ class LogcatWindow(QDialog):
 
     def refilter_display(self):
         """Re-filter all logs and update display."""
-        if self._has_active_filters():
-            self._render_filtered_logs()
-        else:
-            self._render_unfiltered_logs()
-
-    def _render_filtered_logs(self):
-        """Display filtered logs without truncating pre-filtered history."""
-        logs_to_display = self.filtered_logs[-self.max_lines:]
-        new_text = '\n'.join(logs_to_display) if logs_to_display else 'No logs match the current filter.'
-        mode_changed = self._last_rendered_mode != 'filtered'
-
-        if not mode_changed and new_text == self._last_rendered_text:
-            self._update_filtered_status()
-            return
-
-        self.log_display.setPlainText(new_text)
-        if logs_to_display:
-            self._scroll_to_bottom()
-
-        self._last_rendered_mode = 'filtered'
-        self._last_rendered_text = new_text
-        self._update_filtered_status()
-
-    def _render_unfiltered_logs(self):
-        """Display unfiltered logs from the raw buffer."""
-        logs_to_display = self.raw_logs[-self.max_lines:]
-        new_text = '\n'.join(logs_to_display) if logs_to_display else ''
-        mode_changed = self._last_rendered_mode != 'raw'
-
-        if not mode_changed and new_text == self._last_rendered_text:
-            raw_count = len(self.raw_logs)
-            capacity = self.max_lines * self.history_multiplier
-            self._update_status_label(f'Total: {raw_count}/{capacity} lines')
-            return
-
-        if new_text:
-            self.log_display.setPlainText(new_text)
-            self._scroll_to_bottom()
-        else:
-            self.log_display.clear()
-
-        self._last_rendered_mode = 'raw'
-        self._last_rendered_text = new_text
-        raw_count = len(self.raw_logs)
-        capacity = self.max_lines * self.history_multiplier
-        self._update_status_label(f'Total: {raw_count}/{capacity} lines')
+        self.log_proxy.invalidateFilter()
+        self.limit_log_lines()
+        self._update_status_counts()
 
     def _scroll_to_bottom(self):
         """Scroll log display to bottom."""
-        scrollbar = self.log_display.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        model = self.log_display.model()
+        if model is None or model.rowCount() == 0:
+            return
+        last_index = model.index(model.rowCount() - 1, 0)
+        self.log_display.scrollTo(last_index, QAbstractItemView.ScrollHint.PositionAtBottom)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         """Ensure the logcat process stops when the window closes."""
         if self.logcat_process:
             self.stop_logcat()
         super().closeEvent(event)
-
-    def filter_lines(self, lines):
-        """Filter lines based on current live filter."""
-        patterns = []
-        if self.live_filter_pattern:
-            patterns.append(self.live_filter_pattern)
-
-        if self.active_filters:
-            patterns.extend(
-                filter_data['pattern']
-                for filter_data in self.active_filters
-                if filter_data.get('pattern')
-            )
-
-        if not patterns:
-            return lines
-
-        compiled_patterns = []
-        for raw_pattern in patterns:
-            try:
-                compiled_patterns.append(re.compile(raw_pattern, re.IGNORECASE))
-            except re.error:
-                # Skip invalid regex patterns to keep UI responsive
-                continue
-
-        if not compiled_patterns:
-            return lines
-
-        filtered = []
-        for line in lines:
-            if any(pattern.search(line) for pattern in compiled_patterns):
-                filtered.append(line)
-        return filtered
 
     def load_saved_filter(self, filter_name):
         """Update preview when saved filter is selected."""

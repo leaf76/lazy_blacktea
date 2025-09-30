@@ -2,17 +2,23 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, ANY
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtWidgets import QApplication, QListView
 from PyQt6.QtCore import Qt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ui.logcat_viewer import LogcatWindow, PerformanceSettingsDialog, PERFORMANCE_PRESETS
+from ui.logcat_viewer import (
+    LogLine,
+    LogcatListModel,
+    LogcatFilterProxyModel,
+    LogcatWindow,
+    PerformanceSettingsDialog,
+    PERFORMANCE_PRESETS,
+)
 
 
 class _DummyDevice:
@@ -23,8 +29,114 @@ class _DummyDevice:
         self.device_serial_num = 'TESTSERIAL'
 
 
-class LogcatWindowLimitLinesTest(unittest.TestCase):
-    """Tests for log trimming behaviour in LogcatWindow."""
+class LogLineParsingTest(unittest.TestCase):
+    """Validate threadtime parsing and graceful fallbacks."""
+
+    def test_threadtime_line_is_parsed(self):
+        raw = '09-25 12:34:56.789  123  456 D MyTag: Something happened'
+        line = LogLine.from_string(raw)
+
+        self.assertEqual(line.timestamp, '09-25 12:34:56.789')
+        self.assertEqual(line.pid, '123')
+        self.assertEqual(line.tid, '456')
+        self.assertEqual(line.level, 'D')
+        self.assertEqual(line.tag, 'MyTag')
+        self.assertEqual(line.message, 'Something happened')
+        self.assertEqual(line.raw, raw)
+
+    def test_unstructured_line_defaults_to_info(self):
+        raw = 'completely unstructured line that should pass through'
+        line = LogLine.from_string(raw)
+
+        self.assertEqual(line.level, 'I')
+        self.assertEqual(line.tag, 'Logcat')
+        self.assertEqual(line.message, raw)
+        self.assertEqual(line.raw, raw)
+
+
+class LogcatListModelTest(unittest.TestCase):
+    """Ensure the custom list model stores and trims log lines correctly."""
+
+    def setUp(self):
+        self.model = LogcatListModel()
+        self.lines = [
+            LogLine(
+                timestamp=f'09-25 00:00:0{idx}.000',
+                pid=str(idx),
+                tid=str(idx),
+                level='I',
+                tag='Tag',
+                message=f'message {idx}',
+                raw=f'line {idx}'
+            )
+            for idx in range(5)
+        ]
+
+    def test_append_lines_exposes_raw_and_object(self):
+        self.model.append_lines(self.lines)
+
+        self.assertEqual(self.model.rowCount(), len(self.lines))
+        index = self.model.index(0)
+        self.assertEqual(self.model.data(index, Qt.ItemDataRole.DisplayRole), 'line 0')
+        stored = self.model.data(index, Qt.ItemDataRole.UserRole)
+        self.assertIsInstance(stored, LogLine)
+        self.assertEqual(stored.raw, 'line 0')
+
+    def test_trim_discards_oldest_entries_first(self):
+        self.model.append_lines(self.lines)
+        self.model.trim(2)
+
+        self.assertEqual(self.model.rowCount(), 2)
+        index = self.model.index(0)
+        self.assertEqual(self.model.data(index, Qt.ItemDataRole.DisplayRole), 'line 3')
+
+
+class LogcatFilterProxyModelTest(unittest.TestCase):
+    """Verify regex-based filtering with live and saved filters."""
+
+    def setUp(self):
+        self.model = LogcatListModel()
+        self.proxy = LogcatFilterProxyModel()
+        self.proxy.setSourceModel(self.model)
+
+        lines = [
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Alpha', message='alpha event', raw='alpha event ready'),
+            LogLine(timestamp='', pid='', tid='', level='W', tag='Beta', message='beta warning', raw='beta warning happened'),
+            LogLine(timestamp='', pid='', tid='', level='E', tag='Gamma', message='gamma failure', raw='gamma failure detected'),
+        ]
+        self.model.append_lines(lines)
+
+    def test_live_pattern_filters_case_insensitively(self):
+        self.proxy.set_live_pattern('ALPHA')
+        self.proxy.invalidateFilter()
+
+        self.assertEqual(self.proxy.rowCount(), 1)
+        index = self.proxy.index(0, 0)
+        line = self.proxy.data(index, Qt.ItemDataRole.UserRole)
+        self.assertEqual(line.tag, 'Alpha')
+
+    def test_combined_patterns_match_union(self):
+        self.proxy.set_live_pattern('warning')
+        self.proxy.set_saved_patterns(['alpha', 'does_not_match'])
+        self.proxy.invalidateFilter()
+
+        results = [
+            self.proxy.data(self.proxy.index(row, 0), Qt.ItemDataRole.DisplayRole)
+            for row in range(self.proxy.rowCount())
+        ]
+        self.assertIn('alpha event ready', results)
+        self.assertIn('beta warning happened', results)
+        self.assertEqual(len(results), 2)
+
+    def test_invalid_regex_is_ignored(self):
+        self.proxy.set_live_pattern('[')
+        self.proxy.invalidateFilter()
+
+        self.assertEqual(self.proxy.rowCount(), 3)
+
+
+class LogcatWindowBehaviourTest(unittest.TestCase):
+    """Integration-level checks for the QListView-backed window."""
 
     @classmethod
     def setUpClass(cls):
@@ -33,38 +145,112 @@ class LogcatWindowLimitLinesTest(unittest.TestCase):
 
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
         self.window.max_lines = 5
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
 
-    def test_limit_log_lines_retains_recent_entries(self):
-        """Ensure older log entries are discarded while recent ones remain."""
-        logs = [f'line {idx}' for idx in range(10)]
-        self.window.log_display.setPlainText('\n'.join(logs))
+    def test_log_display_is_list_view(self):
+        self.assertIsInstance(self.window.log_display, QListView)
 
+    def test_limit_log_lines_trims_model(self):
+        self.window.history_multiplier = 1
+        lines = [
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Tag', message=f'msg {idx}', raw=f'line {idx}')
+            for idx in range(10)
+        ]
+        self.window.log_model.append_lines(lines)
         self.window.limit_log_lines()
 
-        remaining = [line for line in self.window.log_display.toPlainText().splitlines() if line]
+        self.assertEqual(self.window.log_model.rowCount(), self.window.max_lines)
+        first_visible = self.window.log_model.data(self.window.log_model.index(0), Qt.ItemDataRole.DisplayRole)
+        self.assertEqual(first_visible, 'line 5')
 
-        self.assertEqual(len(remaining), self.window.max_lines)
-        self.assertEqual(remaining[0], 'line 5')
-        self.assertEqual(remaining[-1], 'line 9')
+    def test_live_and_saved_filters_feed_proxy(self):
+        lines = [
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Alpha', message='alpha ready', raw='alpha event ready'),
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Beta', message='beta ready', raw='beta event ready'),
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Gamma', message='gamma ready', raw='gamma event ready'),
+        ]
+        self.window.log_model.append_lines(lines)
 
-    def test_stop_logcat_resets_process_state(self):
-        """Stopping logcat should clean up process and reset UI state."""
+        self.window.add_active_filter('AlphaFilter', 'alpha')
+        self.window.apply_live_filter('beta')
+
+        results = [
+            self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
+            for row in range(self.window.filtered_model.rowCount())
+        ]
+        self.assertEqual(results, ['alpha event ready', 'beta event ready'])
+
+        # Removing the active filter should shrink the proxy results
+        self.window.active_filters_list.setCurrentRow(0)
+        self.window.remove_selected_active_filters()
+        results = [
+            self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
+            for row in range(self.window.filtered_model.rowCount())
+        ]
+        self.assertEqual(results, ['beta event ready'])
+
+    def test_filtered_history_retains_until_capacity(self):
+        self.window.max_lines = 3
+        self.window.history_multiplier = 1
+
+        matching_lines = [
+            LogLine.from_string(f'09-30 12:00:0{i}.000  123  456 I Tag: match {i}')
+            for i in range(3)
+        ]
+        self.window.log_buffer.extend(matching_lines)
+        self.window.process_buffered_logs()
+
+        self.window.apply_live_filter('match')
+        self.assertEqual(self.window.filtered_model.rowCount(), 3)
+
+        for i in range(20):
+            self.window.log_buffer.append(
+                LogLine.from_string(f'09-30 12:01:{i:02d}.000  123  456 I Tag: other {i}')
+            )
+            self.window.process_buffered_logs()
+
+        self.assertEqual(
+            [
+                self.window.filtered_model.data(
+                    self.window.filtered_model.index(row, 0),
+                    Qt.ItemDataRole.DisplayRole,
+                )
+                for row in range(self.window.filtered_model.rowCount())
+            ],
+            [line.raw for line in matching_lines],
+        )
+
+        for i in range(3):
+            self.window.log_buffer.append(
+                LogLine.from_string(f'09-30 12:02:0{i}.000  123  456 I Tag: match-new {i}')
+            )
+            self.window.process_buffered_logs()
+
+        latest = [
+            self.window.filtered_model.data(
+                self.window.filtered_model.index(row, 0),
+                Qt.ItemDataRole.DisplayRole,
+            )
+            for row in range(self.window.filtered_model.rowCount())
+        ]
+        self.assertEqual(latest, [
+            '09-30 12:02:00.000  123  456 I Tag: match-new 0',
+            '09-30 12:02:01.000  123  456 I Tag: match-new 1',
+            '09-30 12:02:02.000  123  456 I Tag: match-new 2',
+        ])
+
+    def test_stop_logcat_resets_state(self):
         fake_process = Mock()
+        fake_process.kill = Mock()
+        fake_process.waitForFinished = Mock()
         self.window.logcat_process = fake_process
         self.window.is_running = True
-        self.window.log_buffer = ['old']
-        self.window.raw_logs = ['line 1']
+        self.window.log_buffer = [LogLine.from_string('old entry')]
         self.window.update_timer = Mock()
+        self.window.update_timer.stop = Mock()
         self.window.start_btn.setEnabled(False)
         self.window.stop_btn.setEnabled(True)
 
@@ -78,6 +264,41 @@ class LogcatWindowLimitLinesTest(unittest.TestCase):
         self.assertEqual(self.window.log_buffer, [])
         self.assertTrue(self.window.start_btn.isEnabled())
         self.assertFalse(self.window.stop_btn.isEnabled())
+
+    def test_partial_line_buffering_merges_chunks(self):
+        class StubProcess:
+            def __init__(self):
+                self.chunks = [
+                    b'First line part',
+                    b' two\nSecond line\n'
+                ]
+
+            def readAllStandardOutput(self):
+                return self.chunks.pop(0)
+
+        stub = StubProcess()
+        self.window.logcat_process = stub
+
+        self.window.read_logcat_output()
+        self.assertEqual(self.window.log_model.rowCount(), 0)
+
+        self.window.read_logcat_output()
+        rows = [
+            self.window.log_model.data(self.window.log_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
+            for row in range(self.window.log_model.rowCount())
+        ]
+        self.assertEqual(rows, ['First line part two', 'Second line'])
+
+    def test_close_event_triggers_stop(self):
+        from PyQt6.QtGui import QCloseEvent
+
+        self.window.is_running = True
+        self.window.logcat_process = Mock()
+
+        with patch.object(self.window, 'stop_logcat') as mock_stop:
+            event = QCloseEvent()
+            self.window.closeEvent(event)
+            mock_stop.assert_called_once_with()
 
 
 class FakeSignal:
@@ -132,7 +353,7 @@ class FakeProcess:
 
 
 class LogcatWindowStartCommandTest(unittest.TestCase):
-    """Tests around building the logcat start command."""
+    """Ensure the logcat process is launched with proper arguments."""
 
     @classmethod
     def setUpClass(cls):
@@ -141,39 +362,39 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
 
     def setUp(self):
         self.window = LogcatWindow(_DummyDevice())
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
 
     def tearDown(self):
         self.window.close()
 
     def test_all_log_levels_selected_by_default(self):
-        """Every log level checkbox should be on initially."""
         checked_levels = [level for level, checkbox in self.window.log_levels.items() if checkbox.isChecked()]
         self.assertEqual(checked_levels, ['V', 'D', 'I', 'W', 'E', 'F'])
 
+    @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
-    def test_start_logcat_uses_all_levels(self):
-        """Starting logcat should include all level filters when none are deselected."""
+    def test_start_logcat_uses_all_levels(self, mock_run):
         self.window.start_logcat()
 
         fake_process = self.window.logcat_process
         self.assertIsNotNone(fake_process)
         self.assertEqual(fake_process.program, 'adb')
-
         self.assertEqual(
             fake_process.arguments,
             ['-s', 'TESTSERIAL', 'logcat', '-v', 'threadtime', '*:V']
         )
         self.assertFalse(fake_process.waitForStarted_called)
+        mock_run.assert_called_once_with(
+            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
+            check=False,
+            stdout=ANY,
+            stderr=ANY,
+        )
 
+    @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
-    def test_start_logcat_applies_tag_filter(self):
-        """Tag filters should translate into TAG:LEVEL specs with silence."""
+    def test_start_logcat_applies_tag_filter(self, mock_run):
         self.window.log_source_mode.setCurrentText('Tag')
         self.window.log_source_input.setText('MyTag')
-        # Exclude Verbose so we can verify the level resolution logic
         self.window.log_levels['V'].setChecked(False)
 
         self.window.start_logcat()
@@ -182,11 +403,17 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.assertIn('MyTag:D', args)
         self.assertIn('*:S', args)
         self.assertFalse(self.window.logcat_process.waitForStarted_called)
+        mock_run.assert_called_once_with(
+            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
+            check=False,
+            stdout=ANY,
+            stderr=ANY,
+        )
 
+    @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=['123', '456'])
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
-    def test_start_logcat_applies_package_filter(self, mock_get_pids):
-        """Package filters should resolve to --pid arguments plus level filters."""
+    def test_start_logcat_applies_package_filter(self, mock_get_pids, mock_run):
         self.window.log_source_mode.setCurrentText('Package')
         self.window.log_source_input.setText('com.example.app')
 
@@ -200,11 +427,17 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         )
         self.assertEqual(args[-1], '*:V')
         self.assertFalse(self.window.logcat_process.waitForStarted_called)
+        mock_run.assert_called_once_with(
+            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
+            check=False,
+            stdout=ANY,
+            stderr=ANY,
+        )
 
+    @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=[])
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
-    def test_start_logcat_package_filter_requires_running_process(self, mock_get_pids):
-        """Starting logcat with a package filter should validate pid resolution."""
+    def test_start_logcat_package_filter_requires_running_process(self, mock_get_pids, mock_run):
         self.window.log_source_mode.setCurrentText('Package')
         self.window.log_source_input.setText('missing.app')
         self.window.show_error = Mock()
@@ -214,185 +447,26 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.window.show_error.assert_called_once()
         self.assertFalse(self.window.is_running)
         self.assertIsNone(self.window.logcat_process)
+        mock_run.assert_not_called()
+        # Buffer clearing should not occur when start aborts early
+        # (using getattr to avoid import just for test)
+        from ui import logcat_viewer
+        self.assertFalse(logcat_viewer.subprocess.run.called)
 
+    @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
-    def test_start_logcat_does_not_block_wait(self):
-        """Logcat start should rely on signals instead of blocking wait."""
+    def test_start_logcat_does_not_block_wait(self, mock_run):
         self.window.start_logcat()
 
         process = self.window.logcat_process
         self.assertIsNotNone(process)
         self.assertFalse(process.waitForStarted_called)
-
-    def test_saved_filters_combo_displays_name_and_pattern(self):
-        """Saved filters combo should show filter name with its pattern."""
-        self.window.filters = {'ErrorsOnly': 'E'}
-        self.window.update_saved_filters_combo()
-
-        combo = self.window.saved_filters_combo
-        self.assertEqual(combo.count(), 1)
-        self.assertEqual(combo.itemText(0), 'ErrorsOnly: E')
-        self.assertEqual(
-            combo.itemData(0, Qt.ItemDataRole.UserRole),
-            'ErrorsOnly'
+        mock_run.assert_called_once_with(
+            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
+            check=False,
+            stdout=ANY,
+            stderr=ANY,
         )
-
-    def test_selecting_saved_filter_does_not_touch_input(self):
-        """Selecting a saved filter should not override manual input."""
-        initial_pattern = 'custom manual'
-        self.window.filter_input.setText(initial_pattern)
-        self.assertEqual(self.window.live_filter_pattern, initial_pattern)
-
-        self.window.filters = {'TagAlpha': 'alpha'}
-        self.window.update_saved_filters_combo()
-
-        self.window.saved_filters_combo.setCurrentIndex(0)
-
-        self.assertEqual(self.window.filter_input.text(), initial_pattern)
-        self.assertEqual(self.window.live_filter_pattern, initial_pattern)
-
-    def test_live_and_saved_filters_combine(self):
-        """Live filter input should combine with active saved filters."""
-        self.window.raw_logs = [
-            'alpha event ready',
-            'beta event ready',
-            'alpha beta combined'
-        ]
-
-        self.window.add_active_filter('AlphaFilter', 'alpha')
-        self.window.apply_live_filter('beta')
-
-        self.assertEqual(
-            self.window.filtered_logs,
-            [
-                'alpha event ready',
-                'beta event ready',
-                'alpha beta combined'
-            ]
-        )
-
-        # Removing the active filter should update list and results
-        self.window.active_filters_list.setCurrentRow(0)
-        self.window.remove_selected_active_filters()
-        self.assertFalse(self.window.active_filters)
-
-        self.assertEqual(
-            self.window.filtered_logs,
-            ['beta event ready', 'alpha beta combined']
-        )
-
-
-class LogcatWindowStreamingTest(unittest.TestCase):
-    """Streaming behaviour validation for logcat output handling."""
-
-    @classmethod
-    def setUpClass(cls):
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        cls._app = QApplication.instance() or QApplication([])
-
-    def setUp(self):
-        self.window = LogcatWindow(_DummyDevice())
-        timer = Mock()
-        timer.isActive.return_value = False
-        timer.start = Mock()
-        timer.stop = Mock()
-        self.window.update_timer = timer
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
-
-    def tearDown(self):
-        self.window.close()
-
-    def test_partial_line_buffering_merges_chunks(self):
-        """Incoming partial lines should buffer until a newline arrives."""
-
-        class StubProcess:
-            def __init__(self):
-                self.chunks = [
-                    b'First line part',
-                    b' two\nSecond line\n'
-                ]
-
-            def readAllStandardOutput(self):
-                return self.chunks.pop(0)
-
-        stub = StubProcess()
-        self.window.logcat_process = stub
-
-        self.window.read_logcat_output()
-        self.assertEqual(self.window.raw_logs, [])
-
-        self.window.read_logcat_output()
-
-        self.assertEqual(
-            self.window.raw_logs,
-            ['First line part two', 'Second line']
-        )
-
-
-class LogcatWindowLifecycleTest(unittest.TestCase):
-    """Lifecycle handling tests for logcat window."""
-
-    @classmethod
-    def setUpClass(cls):
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        cls._app = QApplication.instance() or QApplication([])
-
-    def setUp(self):
-        self.window = LogcatWindow(_DummyDevice())
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
-
-    def tearDown(self):
-        self.window.close()
-
-    def test_close_event_triggers_stop(self):
-        """Closing the window should stop logcat streaming and clean up."""
-        self.window.is_running = True
-        self.window.logcat_process = FakeProcess()
-
-        with patch.object(self.window, 'stop_logcat') as mock_stop:
-            event = QCloseEvent()
-            self.window.closeEvent(event)
-            mock_stop.assert_called_once_with()
-
-
-class LogcatWindowRenderingStabilityTest(unittest.TestCase):
-    """Ensure UI avoids redundant redraws that could cause flicker."""
-
-    @classmethod
-    def setUpClass(cls):
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        cls._app = QApplication.instance() or QApplication([])
-
-    def setUp(self):
-        self.window = LogcatWindow(_DummyDevice())
-        self.window.apply_live_filter('')
-        self.window.active_filters.clear()
-        self.window.update_active_filters_list()
-
-    def tearDown(self):
-        self.window.close()
-
-    def test_filtered_refilter_display_skips_duplicate_plaintext(self):
-        """Repeated filtered refresh should not rewrite identical content."""
-        self.window.live_filter_pattern = 'alpha'
-        self.window.filtered_logs = ['alpha first']
-        self.window.raw_logs = ['alpha first']
-
-        with patch.object(self.window.log_display, 'setPlainText', wraps=self.window.log_display.setPlainText) as mock_set_text:
-            self.window.refilter_display()
-            self.assertEqual(mock_set_text.call_count, 1)
-
-            self.window.refilter_display()
-            self.assertEqual(mock_set_text.call_count, 1)
-
-            self.window.filtered_logs.append('alpha second')
-            self.window.raw_logs.append('alpha second')
-            self.window.refilter_display()
-            self.assertEqual(mock_set_text.call_count, 2)
 
 
 class PerformanceSettingsDialogTest(unittest.TestCase):
@@ -410,13 +484,15 @@ class PerformanceSettingsDialogTest(unittest.TestCase):
         self.window.close()
 
     def test_apply_custom_settings_updates_window(self):
-        """Applying settings should update window attributes and trim buffers."""
-        self.window.raw_logs = [f'line {idx}' for idx in range(5000)]
-        self.window.add_active_filter('contains-1', '1')
+        lines = [
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Tag', message=f'msg {idx}', raw=f'line {idx}')
+            for idx in range(500)
+        ]
+        self.window.log_model.append_lines(lines)
 
         dialog = PerformanceSettingsDialog(self.window)
         dialog.max_lines_spin.setValue(400)
-        dialog.history_multiplier_spin.setValue(6)
+        dialog.history_multiplier_spin.setValue(3)
         dialog.update_interval_spin.setValue(180)
         dialog.lines_per_update_spin.setValue(40)
         dialog.buffer_size_spin.setValue(90)
@@ -424,17 +500,14 @@ class PerformanceSettingsDialogTest(unittest.TestCase):
         dialog.apply_settings()
 
         self.assertEqual(self.window.max_lines, 400)
-        self.assertEqual(self.window.history_multiplier, 6)
+        self.assertEqual(self.window.history_multiplier, 3)
         self.assertEqual(self.window.update_interval_ms, 180)
         self.assertEqual(self.window.max_lines_per_update, 40)
         self.assertEqual(self.window.max_buffer_size, 90)
 
-        capacity = self.window.max_lines * self.window.history_multiplier
-        self.assertLessEqual(len(self.window.raw_logs), capacity)
-        self.assertLessEqual(len(self.window.filtered_logs), capacity)
+        self.assertLessEqual(self.window.log_model.rowCount(), 1200)
 
     def test_selecting_preset_updates_controls(self):
-        """Preset selection should populate spin boxes with preset values."""
         dialog = PerformanceSettingsDialog(self.window)
         dialog.preset_combo.setCurrentText('Extended history')
 
