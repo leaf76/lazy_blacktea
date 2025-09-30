@@ -218,6 +218,11 @@ class ToolsPanelController:
         self._style_button(run_batch_btn, ButtonStyle.SECONDARY, height=36, min_width=220)
         exec_buttons_layout.addWidget(run_batch_btn)
 
+        cancel_all_btn = QPushButton('❌ Cancel All')
+        cancel_all_btn.clicked.connect(lambda: self.window.command_execution_manager.cancel_all_commands())
+        self._style_button(cancel_all_btn, ButtonStyle.DANGER, height=36)
+        exec_buttons_layout.addWidget(cancel_all_btn)
+
         batch_layout.addLayout(exec_buttons_layout)
 
         self.window.shell_cmd_edit = QLineEdit()

@@ -295,3 +295,34 @@ def mp_run_command(cmd: str, ignore_index=0) -> list[str]:
     _logger.warning('Command process error: %s', str(e))
   _logger.debug('Command result: %s', listing_result)
   return listing_result
+
+def create_cancellable_process(cmd: str) -> Optional[subprocess.Popen]:
+    """Creates and returns a subprocess.Popen object for a command that can be cancelled.
+
+    This function does not wait for the command to complete.
+
+    Args:
+        cmd: The command to execute.
+
+    Returns:
+        A subprocess.Popen object if successful, otherwise None.
+    """
+    _logger.debug('Creating cancellable process for command: %s', cmd)
+    try:
+        if isinstance(cmd, str):
+            command_list = shlex.split(cmd)
+        else:
+            command_list = cmd
+
+        process = subprocess.Popen(
+            command_list,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8'
+        )
+        return process
+    except Exception as e:
+        _logger.error('Failed to create cancellable process: %s', str(e))
+        return None

@@ -26,9 +26,67 @@ class CommandExecutionManager(QObject):
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
+        self.active_processes = []
+        self.process_lock = threading.Lock()
         # 連接信號到父視窗的處理方法
         if hasattr(parent_window, '_write_to_console_safe'):
             self.console_output_signal.connect(parent_window._write_to_console_safe)
+
+    def cancel_all_commands(self):
+        """Cancel all currently running commands."""
+        with self.process_lock:
+            if not self.active_processes:
+                self.write_to_console("No active commands to cancel.")
+                return
+
+            self.write_to_console(f"Attempting to cancel {len(self.active_processes)} running command(s)...")
+            for process in self.active_processes:
+                try:
+                    process.terminate()  # Send SIGTERM
+                    self.write_to_console(f"Sent cancel signal to process {process.pid}.")
+                except Exception as e:
+                    self.write_to_console(f"Error cancelling process {process.pid}: {e}")
+            self.active_processes.clear()
+
+    def _monitor_processes(self, processes: list, command: str, serials: list):
+        """Monitor running processes, collect output, and log results."""
+        try:
+            for i, process in enumerate(processes):
+                serial = serials[i]
+                # The communicate() method will block until the process finishes.
+                stdout, stderr = process.communicate()
+
+                # After communicate(), the process is done. Check if it was cancelled.
+                with self.process_lock:
+                    # Check if the process is still in the list. If not, it was cancelled.
+                    if process in self.active_processes:
+                        self.active_processes.remove(process)
+                    else:
+                        # If it's not in the list, it means cancel_all_commands was called.
+                        self.write_to_console(f"Process {process.pid} for device {serial} was cancelled. Output might be incomplete.")
+                        # Continue to the next process
+                        continue
+                
+                # Combine stdout and stderr for logging
+                full_output = []
+                if stdout:
+                    full_output.extend(stdout.splitlines())
+                if stderr:
+                    full_output.extend(stderr.splitlines())
+
+                # Package results for the main thread
+                results_for_device = {
+                    'serial': serial,
+                    'output': full_output
+                }
+                
+                # Use QTimer to safely call the logging function on the main thread
+                QTimer.singleShot(0, lambda r=results_for_device, c=command: self.log_command_results(c, [r['serial']], [r['output']]))
+
+            QTimer.singleShot(0, lambda: self._log_completion(f'All monitored processes for command "{command}" have completed.'))
+        except Exception as e:
+            QTimer.singleShot(0, lambda: self._log_error(f"Error in process monitor thread: {e}"))
+
 
     def run_shell_command(self, command: str, devices: List[adb_models.DeviceInfo]):
         """執行shell命令"""
@@ -51,18 +109,19 @@ class CommandExecutionManager(QObject):
             f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.'
         )
 
+        # This function remains non-cancellable for now to maintain original behavior
         def shell_wrapper():
             """Shell命令執行包裝器"""
             try:
-                adb_tools.run_adb_shell_command(serials, command)
+                adb_tools.run_adb_shell_command(serials, command, callback=lambda results: self.log_command_results(command, serials, results))
                 QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
             except Exception as e:
-                raise e  # 重新拋出異常由run_in_thread處理
+                self._log_error(f"Error executing shell command: {e}")
 
         self._run_in_thread(shell_wrapper)
 
     def execute_single_command(self, command: str, devices: List[adb_models.DeviceInfo]):
-        """執行單個命令並添加到歷史記錄"""
+        """執行單個命令並添加到歷史記錄 (Cancellable)"""
         if not devices:
             self.parent_window.show_error('Error', 'No devices selected.')
             return
@@ -71,39 +130,34 @@ class CommandExecutionManager(QObject):
         device_count = len(devices)
 
         if hasattr(self.parent_window, 'logger'):
-            self.parent_window.logger.info(f'🚀 Starting command execution: "{command}" on {device_count} device(s)')
+            self.parent_window.logger.info(f'🚀 Starting cancellable command: "{command}" on {device_count} device(s)')
 
         self.parent_window.show_info(
             'Single Command',
             f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.'
         )
 
-        # 添加到歷史記錄
         if hasattr(self.parent_window, 'command_history_manager'):
             self.parent_window.command_history_manager.add_to_history(command)
 
-        def shell_wrapper():
-            """單個命令執行包裝器"""
-            try:
-                def log_results(results):
-                    """結果記錄回調"""
-                    self.write_to_console('📨 Callback received, processing results...')
-                    self.log_command_results(command, serials, results)
+        def cancellable_shell_wrapper():
+            processes = adb_tools.run_cancellable_adb_shell_command(serials, command)
+            if not processes:
+                self._log_error(f"Failed to start command '{command}'.")
+                return
 
-                if hasattr(self.parent_window, 'logger'):
-                    self.parent_window.logger.info(f'📞 Calling adb_tools.run_adb_shell_command with callback')
+            with self.process_lock:
+                self.active_processes.extend(processes)
 
-                adb_tools.run_adb_shell_command(serials, command, callback=log_results)
-                QTimer.singleShot(0, lambda: self._log_completion(f'✅ Single command "{command}" execution completed'))
-            except Exception as e:
-                if hasattr(self.parent_window, 'logger'):
-                    self.parent_window.logger.error(f'❌ Command execution failed: {e}')
-                raise e
+            monitor_thread = threading.Thread(target=self._monitor_processes, args=(processes, command, serials))
+            monitor_thread.daemon = True
+            monitor_thread.start()
 
-        self._run_in_thread(shell_wrapper)
+        self._run_in_thread(cancellable_shell_wrapper)
+
 
     def execute_batch_commands(self, commands: List[str], devices: List[adb_models.DeviceInfo]):
-        """執行批次命令"""
+        """執行批次命令 (Cancellable)"""
         if not commands:
             self.parent_window.show_error('Error', 'No valid commands found.')
             return
@@ -122,25 +176,24 @@ class CommandExecutionManager(QObject):
             (f'\n... and {len(commands)-5} more' if len(commands) > 5 else '')
         )
 
-        # 同時執行所有命令
         for command in commands:
-            # 添加到歷史記錄
             if hasattr(self.parent_window, 'command_history_manager'):
                 self.parent_window.command_history_manager.add_to_history(command)
 
-            def shell_wrapper(cmd=command):
-                """批次命令執行包裝器"""
-                try:
-                    def log_results(results):
-                        """批次結果記錄回調"""
-                        self.write_to_console(f'🚀 Executing: {cmd}')
-                        self.log_command_results(cmd, serials, results)
+            def cancellable_batch_wrapper(cmd=command):
+                processes = adb_tools.run_cancellable_adb_shell_command(serials, cmd)
+                if not processes:
+                    self._log_error(f"Failed to start batch command '{cmd}'.")
+                    return
 
-                    adb_tools.run_adb_shell_command(serials, cmd, callback=log_results)
-                except Exception as e:
-                    QTimer.singleShot(0, lambda c=cmd: self._log_warning(f'Command failed: {c} - {e}'))
+                with self.process_lock:
+                    self.active_processes.extend(processes)
 
-            self._run_in_thread(shell_wrapper)
+                monitor_thread = threading.Thread(target=self._monitor_processes, args=(processes, cmd, serials))
+                monitor_thread.daemon = True
+                monitor_thread.start()
+
+            self._run_in_thread(cancellable_batch_wrapper)
 
     def log_command_results(self, command: str, serials: List[str], results):
         """記錄命令結果到控制台"""
@@ -153,13 +206,11 @@ class CommandExecutionManager(QObject):
             self.write_to_console(f'❌ No results: {command}')
             return
 
-        # 將結果轉換為列表
         results_list = list(results) if not isinstance(results, list) else results
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.info(f'🔍 Found {len(results_list)} result set(s)')
 
         for serial, result in zip(serials, results_list):
-            # 獲取設備名稱以便更好的顯示
             device_name = serial
             if (hasattr(self.parent_window, 'device_dict') and
                 serial in self.parent_window.device_dict):
@@ -169,47 +220,31 @@ class CommandExecutionManager(QObject):
                 self.parent_window.logger.info(f'📱 [{device_name}] Command: {command}')
             self.write_to_console(f'📱 [{device_name}] {command}')
 
-            if result and len(result) > 0:
-                # 顯示前幾行輸出
-                max_lines = 10  # 減少顯示行數以保持清潔
-                output_lines = result[:max_lines] if len(result) > max_lines else result
+            # The result from _monitor_processes is already a list of lines
+            output_lines = result if isinstance(result, list) else []
 
-                if hasattr(self.parent_window, 'logger'):
-                    self.parent_window.logger.info(f'📱 [{device_name}] 📋 Output ({len(result)} lines total):')
-                self.write_to_console(f'📋 {len(result)} lines output:')
+            if output_lines:
+                max_lines = 10
+                display_lines = output_lines[:max_lines]
 
-                for line_num, line in enumerate(output_lines):
-                    if line and line.strip():  # 跳過空行
-                        output_line = f'  {line.strip()}'  # 簡化格式
-                        if hasattr(self.parent_window, 'logger'):
-                            self.parent_window.logger.info(f'📱 [{device_name}] {line_num+1:2d}▶️ {line.strip()}')
-                        self.write_to_console(output_line)
+                self.write_to_console(f'📋 {len(output_lines)} lines output:')
 
-                if len(result) > max_lines:
-                    truncated_msg = f'  ... {len(result) - max_lines} more lines'
-                    if hasattr(self.parent_window, 'logger'):
-                        self.parent_window.logger.info(f'📱 [{device_name}] ... and {len(result) - max_lines} more lines (truncated)')
-                    self.write_to_console(truncated_msg)
+                for line in display_lines:
+                    if line and line.strip():
+                        self.write_to_console(f'  {line.strip()}')
 
-                success_msg = f'✅ [{device_name}] Completed'
-                if hasattr(self.parent_window, 'logger'):
-                    self.parent_window.logger.info(f'📱 [{device_name}] ✅ Command completed successfully')
-                self.write_to_console(success_msg)
+                if len(output_lines) > max_lines:
+                    self.write_to_console(f'  ... {len(output_lines) - max_lines} more lines')
+
+                self.write_to_console(f'✅ [{device_name}] Completed')
             else:
-                error_msg = f'❌ [{device_name}] No output'
-                if hasattr(self.parent_window, 'logger'):
-                    self.parent_window.logger.warning(f'📱 [{device_name}] ❌ No output or command failed')
-                self.write_to_console(error_msg)
+                self.write_to_console(f'❌ [{device_name}] No output')
 
-        if hasattr(self.parent_window, 'logger'):
-            self.parent_window.logger.info(f'🏁 Results display completed for command: {command}')
-            self.parent_window.logger.info('─' * 50)  # 分隔線
-        self.write_to_console('─' * 30)  # 較短的分隔線
+        self.write_to_console('─' * 30)
 
     def write_to_console(self, message: str):
         """將消息寫入控制台"""
         try:
-            # 使用信號進行線程安全的控制台輸出
             self.console_output_signal.emit(message)
         except Exception as e:
             print(f'Error emitting console signal: {e}')
@@ -224,7 +259,6 @@ class CommandExecutionManager(QObject):
 
         for line in lines:
             line = line.strip()
-            # 跳過空行和註釋
             if line and not line.startswith('#'):
                 commands.append(line)
 
@@ -245,7 +279,6 @@ class CommandExecutionManager(QObject):
         if hasattr(self.parent_window, 'run_in_thread'):
             self.parent_window.run_in_thread(func)
         else:
-            # 備用線程運行方式
             threading.Thread(target=func, daemon=True).start()
 
     def _log_completion(self, message: str):
@@ -257,3 +290,8 @@ class CommandExecutionManager(QObject):
         """記錄警告消息"""
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.warning(message)
+
+    def _log_error(self, message: str):
+        """記錄錯誤消息"""
+        if hasattr(self.parent_window, 'logger'):
+            self.parent_window.logger.error(message)

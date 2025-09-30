@@ -809,6 +809,20 @@ def run_adb_shell_command(
     callback(results)
 
 
+def run_cancellable_adb_shell_command(
+    serial_nums: list[str],
+    command_str: str,
+) -> list[subprocess.Popen]:
+    """Run adb shell command on multiple devices and return the process objects."""
+    processes = []
+    for s in serial_nums:
+        cmd = adb_commands.cmd_adb_shell(s, command_str)
+        process = common.create_cancellable_process(cmd)
+        if process:
+            processes.append(process)
+    return processes
+
+
 def extract_all_discovery_service_info(
     root_folder: str,
     serial_nums: list[str],
