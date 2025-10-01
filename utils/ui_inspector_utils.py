@@ -1,6 +1,7 @@
 """UI Inspector utility functions for performance optimization and code reuse."""
 
 import os
+import platform
 import shlex
 import subprocess
 import tempfile
@@ -8,6 +9,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils import adb_commands
+from utils import adb_tools
 from utils import common
 
 logger = common.get_logger('ui_inspector_utils')
@@ -15,6 +17,32 @@ logger = common.get_logger('ui_inspector_utils')
 # Cache for parsed UI elements to avoid re-parsing
 _ui_cache: Dict[str, Tuple[List[Dict], float]] = {}
 _cache_timeout = 5.0  # Cache timeout in seconds
+
+
+def check_ui_inspector_prerequisites() -> Tuple[bool, Optional[str]]:
+    """Validate whether the UI Inspector can run safely on the current host."""
+    issues: List[str] = []
+
+    try:
+        adb_ok = adb_tools.is_adb_installed()
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning('Failed to verify adb availability: %s', exc)
+        adb_ok = False
+
+    if not adb_ok:
+        issues.append('• ADB executable not found. Install Android platform-tools and ensure adb is on PATH.')
+
+    system = platform.system().lower()
+    if system == 'linux':
+        display = os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')
+        qt_platform = os.environ.get('QT_QPA_PLATFORM', '').lower()
+        allowed_headless = {'offscreen', 'minimal'}
+        if not display and qt_platform not in allowed_headless:
+            issues.append('• DISPLAY/WAYLAND_DISPLAY is not set. Launch from a graphical session or set QT_QPA_PLATFORM=offscreen.')
+
+    if issues:
+        return False, '\n'.join(issues)
+    return True, None
 
 
 def clear_ui_cache():

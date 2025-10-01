@@ -412,6 +412,7 @@ class DeviceListController:
             f"{self._format_detail('Android', android_ver)} "
             f"(API {android_api})\n"
             f"{self._format_detail('GMS Version', gms_display)}\n"
+            f"{self._format_detail('Build Fingerprint', device.build_fingerprint)}\n"
             f"{self._format_detail('Product', device.device_prod)}\n"
             f"{self._format_detail('USB', device.device_usb)}\n"
             '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'

@@ -67,6 +67,7 @@ from ui.device_selection_manager import DeviceSelectionManager
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
 from utils.recording_utils import RecordingManager, validate_recording_path
+from utils.ui_inspector_utils import check_ui_inspector_prerequisites
 # File generation utilities are now handled by FileOperationsManager
 from utils.debounced_refresh import (
     DeviceListDebouncedRefresh, BatchedUIUpdater, PerformanceOptimizedRefresh
@@ -1995,6 +1996,13 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         """Launch the interactive UI Inspector for selected devices."""
         device = self.require_single_device_selection('UI Inspector')
         if device is None:
+            return
+
+        ready, issue_message = check_ui_inspector_prerequisites()
+        if not ready:
+            sanitized = ' | '.join(issue_message.splitlines())
+            logger.warning('UI Inspector prerequisites failed: %s', sanitized)
+            self.show_error('UI Inspector Unavailable', issue_message)
             return
 
         serial = device.device_serial_num

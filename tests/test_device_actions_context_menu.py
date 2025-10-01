@@ -144,6 +144,7 @@ class DeviceDetailTextTests(unittest.TestCase):
 
         self.assertIn('Audio: mode=NORMAL | music_active=false', detail_text)
         self.assertIn('BT Manager: ON', detail_text)
+        self.assertIn('Build Fingerprint: fp', detail_text)
 
 
 class DeviceDetailDialogTests(unittest.TestCase):
