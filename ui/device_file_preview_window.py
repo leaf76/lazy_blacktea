@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QRectF
 from PyQt6.QtGui import QDesktopServices, QPixmap, QPainter
 from PyQt6.QtWidgets import (
     QDialog,
@@ -34,7 +34,7 @@ class _GraphicsImageAdapter:
 
     def setPixmap(self, pixmap: QPixmap) -> None:
         self._item.setPixmap(pixmap)
-        self._view.scene().setSceneRect(pixmap.rect())
+        self._view.scene().setSceneRect(QRectF(pixmap.rect()))
         self._view.resetTransform()
         self._view.centerOn(self._item)
 
