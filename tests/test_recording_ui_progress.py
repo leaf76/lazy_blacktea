@@ -1,9 +1,98 @@
 #!/usr/bin/env python3
 """Unit tests for recording progress integration in WindowMain."""
 
+import datetime
+import sys
+import types
 from types import SimpleNamespace
 import unittest
-import datetime
+
+
+if 'PyQt6' not in sys.modules:
+    class _DummySignal:
+        def connect(self, *args, **kwargs):
+            return None
+
+        def emit(self, *args, **kwargs):
+            return None
+
+    def _dummy_pyqt_signal(*_args, **_kwargs):
+        return _DummySignal()
+
+    def _dummy_pyqt_slot(*_args, **_kwargs):
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+    class _DummyQTimer:
+        def __init__(self, *args, **kwargs):
+            self.timeout = _DummySignal()
+
+        def start(self, *args, **kwargs):
+            return None
+
+        def stop(self):
+            return None
+
+        @staticmethod
+        def singleShot(_milliseconds, callback):
+            callback()
+
+    def _make_dummy_class(name):
+        def _init(self, *args, **kwargs):
+            return None
+
+        return type(name, (), {"__init__": _init})
+
+    class _LazyWidgetModule(types.ModuleType):
+        def __getattr__(self, name):
+            value = _make_dummy_class(name)
+            setattr(self, name, value)
+            return value
+
+    dummy_qtwidgets = _LazyWidgetModule('PyQt6.QtWidgets')
+
+    class _LazyCoreModule(types.ModuleType):
+        def __init__(self, name):
+            super().__init__(name)
+            self.Qt = types.SimpleNamespace(
+                Orientation=types.SimpleNamespace(Horizontal=1, Vertical=2),
+                ItemDataRole=types.SimpleNamespace(UserRole=32, DisplayRole=0, DecorationRole=1),
+                AlignmentFlag=types.SimpleNamespace(AlignLeft=1, AlignVCenter=2),
+                CheckState=types.SimpleNamespace(Checked=2, PartiallyChecked=1, Unchecked=0),
+                SortOrder=types.SimpleNamespace(AscendingOrder=0, DescendingOrder=1),
+            )
+            self.QTimer = _DummyQTimer
+            self.pyqtSignal = _dummy_pyqt_signal
+            self.pyqtSlot = _dummy_pyqt_slot
+            self.QObject = _make_dummy_class('QObject')
+
+        def __getattr__(self, name):
+            value = _make_dummy_class(name)
+            setattr(self, name, value)
+            return value
+
+    dummy_qtcore = _LazyCoreModule('PyQt6.QtCore')
+
+    class _LazyGuiModule(types.ModuleType):
+        def __getattr__(self, name):
+            value = _make_dummy_class(name)
+            setattr(self, name, value)
+            return value
+
+    dummy_qtgui = _LazyGuiModule('PyQt6.QtGui')
+
+    dummy_pyqt6 = types.ModuleType('PyQt6')
+    dummy_pyqt6.QtWidgets = dummy_qtwidgets
+    dummy_pyqt6.QtCore = dummy_qtcore
+    dummy_pyqt6.QtGui = dummy_qtgui
+
+    sys.modules.setdefault('PyQt6', dummy_pyqt6)
+    sys.modules.setdefault('PyQt6.QtWidgets', dummy_qtwidgets)
+    sys.modules.setdefault('PyQt6.QtCore', dummy_qtcore)
+    sys.modules.setdefault('PyQt6.QtGui', dummy_qtgui)
+
 
 from lazy_blacktea_pyqt import WindowMain
 

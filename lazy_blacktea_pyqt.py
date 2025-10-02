@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
-from typing import Dict, List, Iterable, Optional, Set
+from typing import Dict, List, Iterable, Optional, Set, Callable, Any
 
 from utils.qt_plugin_loader import configure_qt_plugin_path
 
@@ -72,7 +72,15 @@ from ui.device_selection_manager import DeviceSelectionManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
-from utils.recording_utils import RecordingManager, validate_recording_path
+from utils.recording_utils import (
+    RecordingManager,
+    RecordingOperationInProgressError,
+    get_active_start_recording_serials,
+    get_active_stop_recording_serials,
+    is_start_recording_operation_active,
+    is_stop_recording_operation_active,
+    validate_recording_path,
+)
 from utils.ui_inspector_utils import check_ui_inspector_prerequisites
 # File generation utilities are now handled by FileOperationsManager
 from utils.debounced_refresh import (
@@ -428,6 +436,58 @@ class WindowMain(QMainWindow):
         """Show error message box."""
         self.dialog_manager.show_error(title, message)
 
+    # ------------------------------------------------------------------
+    # Operation logging helpers
+    # ------------------------------------------------------------------
+    def _log_operation_start(self, operation: str, details: str | None = None) -> None:
+        if getattr(self, 'logging_manager', None):
+            if details:
+                self.logging_manager.log_operation_start(operation, details)
+            else:
+                self.logging_manager.log_operation_start(operation)
+
+    def _log_operation_complete(self, operation: str, details: str | None = None) -> None:
+        if getattr(self, 'logging_manager', None):
+            if details:
+                self.logging_manager.log_operation_complete(operation, details)
+            else:
+                self.logging_manager.log_operation_complete(operation)
+
+    def _log_operation_failure(self, operation: str, error: str) -> None:
+        if getattr(self, 'logging_manager', None):
+            self.logging_manager.log_operation_failure(operation, error)
+
+    def _execute_with_operation_logging(
+        self,
+        operation: str,
+        action: Callable[[], Any],
+        *,
+        success_details: str | None = None,
+    ) -> Any:
+        self._log_operation_start(operation)
+        try:
+            result = action()
+        except Exception as exc:
+            self._log_operation_failure(operation, str(exc))
+            raise
+        else:
+            self._log_operation_complete(operation, success_details)
+            return result
+
+    def _format_device_label(self, serial: str) -> str:
+        device = self.device_dict.get(serial) if hasattr(self, 'device_dict') else None
+        name = getattr(device, 'device_model', serial)
+        short_serial = f"{serial[:8]}..." if len(serial) > 8 else serial
+        return f"{name} ({short_serial})"
+
+    def _show_recording_operation_warning(self, title: str, body_intro: str, serials: list[str]) -> None:
+        if serials:
+            devices_text = '\n'.join(f"• {self._format_device_label(serial)}" for serial in serials)
+        else:
+            devices_text = '• Unknown device(s)'
+        message = f"{body_intro}\n\nActive devices:\n{devices_text}"
+        self.error_handler.show_warning(title, message)
+
     def register_ui_scale_actions(self, actions: Dict[float, QAction]):
         """Register UI scale actions so menu state stays in sync."""
         self.ui_scale_actions = actions or {}
@@ -528,6 +588,8 @@ class WindowMain(QMainWindow):
 
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""
+        operation = 'Refresh Device List'
+        self._log_operation_start(operation)
         try:
             logger.info('🔄 Manual device refresh requested (using DeviceManager)')
 
@@ -536,9 +598,11 @@ class WindowMain(QMainWindow):
 
             # Update status to show loading
             self.status_bar_manager.show_message('🔄 Discovering devices...', 5000)
+            self._log_operation_complete(operation, 'Async refresh scheduled')
 
         except Exception as e:
             logger.error(f'Error starting device refresh: {e}')
+            self._log_operation_failure(operation, str(e))
             self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'Failed to start refresh: {e}')
 
             # Fallback to original synchronous method if needed
@@ -548,36 +612,62 @@ class WindowMain(QMainWindow):
                 device_dict = {device.device_serial_num: device for device in devices}
                 self.update_device_list(device_dict)
                 logger.info('Device list refreshed (fallback mode)')
+                self._log_operation_complete(operation, 'Fallback succeeded')
             except Exception as fallback_error:
                 logger.error(f'Fallback refresh also failed: {fallback_error}')
                 self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'All refresh methods failed: {fallback_error}')
+                self._log_operation_failure(operation, str(fallback_error))
 
     def select_all_devices(self):
         """Select all connected devices."""
-        self.device_list_controller.select_all_devices()
+        self._execute_with_operation_logging(
+            'Select All Devices',
+            self.device_list_controller.select_all_devices,
+        )
 
     def select_no_devices(self):
         """Deselect all devices."""
-        self.device_list_controller.select_no_devices()
+        self._execute_with_operation_logging(
+            'Deselect All Devices',
+            self.device_list_controller.select_no_devices,
+        )
 
     # Device Groups functionality
     def save_group(self):
-        self.device_group_manager.save_group()
+        self._execute_with_operation_logging(
+            'Save Device Group',
+            self.device_group_manager.save_group,
+        )
 
     def delete_group(self):
-        self.device_group_manager.delete_group()
+        self._execute_with_operation_logging(
+            'Delete Device Group',
+            self.device_group_manager.delete_group,
+        )
 
     def select_devices_in_group(self):
-        self.device_group_manager.select_devices_in_group()
+        self._execute_with_operation_logging(
+            'Select Devices In Group',
+            self.device_group_manager.select_devices_in_group,
+        )
 
     def select_devices_in_group_by_name(self, group_name: str):
-        self.device_group_manager.select_devices_in_group_by_name(group_name)
+        self._execute_with_operation_logging(
+            f'Select Group: {group_name}',
+            lambda: self.device_group_manager.select_devices_in_group_by_name(group_name),
+        )
 
     def update_groups_listbox(self):
-        self.device_group_manager.update_groups_listbox()
+        self._execute_with_operation_logging(
+            'Update Group List',
+            self.device_group_manager.update_groups_listbox,
+        )
 
     def on_group_select(self):
-        self.device_group_manager.on_group_select()
+        self._execute_with_operation_logging(
+            'Handle Group Selection',
+            self.device_group_manager.on_group_select,
+        )
 
     # Context Menu functionality
     def show_device_list_context_menu(self, position):
@@ -585,7 +675,10 @@ class WindowMain(QMainWindow):
         self.device_list_context_menu_manager.show_context_menu(position)
 
     def copy_selected_device_info(self):
-        self.device_actions_controller.copy_selected_device_info()
+        self._execute_with_operation_logging(
+            'Copy Selected Device Info',
+            self.device_actions_controller.copy_selected_device_info,
+        )
 
     def show_console_context_menu(self, position):
         """Show context menu for console."""
@@ -593,11 +686,17 @@ class WindowMain(QMainWindow):
 
     def copy_console_text(self):
         """Copy selected console text to clipboard."""
-        self.console_manager.copy_console_text()
+        self._execute_with_operation_logging(
+            'Copy Console Text',
+            self.console_manager.copy_console_text,
+        )
 
     def clear_console(self):
         """Clear the console output."""
-        self.console_manager.clear_console()
+        self._execute_with_operation_logging(
+            'Clear Console',
+            self.console_manager.clear_console,
+        )
 
     def _check_scrcpy_available(self):
         """Check if scrcpy is available (deprecated - use app_management_manager)."""
@@ -613,23 +712,41 @@ class WindowMain(QMainWindow):
 
     def select_only_device(self, target_serial):
         """Expose device selection through the controller."""
-        self.device_actions_controller.select_only_device(target_serial)
+        self._execute_with_operation_logging(
+            f'Select Only Device {target_serial}',
+            lambda: self.device_actions_controller.select_only_device(target_serial),
+        )
 
     def deselect_device(self, target_serial):
         """Expose deselection through the controller."""
-        self.device_actions_controller.deselect_device(target_serial)
+        self._execute_with_operation_logging(
+            f'Deselect Device {target_serial}',
+            lambda: self.device_actions_controller.deselect_device(target_serial),
+        )
 
     def launch_ui_inspector_for_device(self, device_serial):
-        self.device_actions_controller.launch_ui_inspector_for_device(device_serial)
+        self._execute_with_operation_logging(
+            f'Launch UI Inspector ({device_serial})',
+            lambda: self.device_actions_controller.launch_ui_inspector_for_device(device_serial),
+        )
 
     def reboot_single_device(self, device_serial):
-        self.device_actions_controller.reboot_single_device(device_serial)
+        self._execute_with_operation_logging(
+            f'Reboot Device ({device_serial})',
+            lambda: self.device_actions_controller.reboot_single_device(device_serial),
+        )
 
     def take_screenshot_single_device(self, device_serial):
-        self.device_actions_controller.take_screenshot_single_device(device_serial)
+        self._execute_with_operation_logging(
+            f'Take Screenshot ({device_serial})',
+            lambda: self.device_actions_controller.take_screenshot_single_device(device_serial),
+        )
 
     def launch_scrcpy_single_device(self, device_serial):
-        self.device_actions_controller.launch_scrcpy_single_device(device_serial)
+        self._execute_with_operation_logging(
+            f'Launch scrcpy ({device_serial})',
+            lambda: self.device_actions_controller.launch_scrcpy_single_device(device_serial),
+        )
 
     def filter_and_sort_devices(self):
         """Delegate filtering to the device list controller."""
@@ -1039,6 +1156,15 @@ class WindowMain(QMainWindow):
 
         devices = self.get_checked_devices()
 
+        if is_start_recording_operation_active():
+            active_serials = get_active_start_recording_serials()
+            self._show_recording_operation_warning(
+                'Screen Recording In Progress',
+                'Another screen recording start request is already running.\nPlease wait for it to finish before starting a new one.',
+                active_serials,
+            )
+            return
+
         # Check if any devices are already recording
         already_recording = []
         for device in devices:
@@ -1075,12 +1201,20 @@ class WindowMain(QMainWindow):
         def recording_progress(event_payload: dict):
             self.recording_progress_signal.emit(event_payload)
 
-        success = self.recording_manager.start_recording(
-            devices,
-            validated_path,
-            completion_callback=recording_callback,
-            progress_callback=recording_progress,
-        )
+        try:
+            success = self.recording_manager.start_recording(
+                devices,
+                validated_path,
+                completion_callback=recording_callback,
+                progress_callback=recording_progress,
+            )
+        except RecordingOperationInProgressError:
+            self._show_recording_operation_warning(
+                'Screen Recording In Progress',
+                'Another screen recording start request is already running.\nPlease wait for it to finish before starting a new one.',
+                get_active_start_recording_serials(),
+            )
+            return
         if not success:
             self.error_handler.handle_error(ErrorCode.COMMAND_FAILED, 'Failed to start recording')
             return
@@ -1441,6 +1575,15 @@ class WindowMain(QMainWindow):
         # Get selected devices to determine which recordings to stop
         selected_devices = self.get_checked_devices()
 
+        if is_stop_recording_operation_active():
+            active_serials = get_active_stop_recording_serials()
+            self._show_recording_operation_warning(
+                'Stop Recording In Progress',
+                'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
+                active_serials,
+            )
+            return
+
         if selected_devices:
             # Stop recording only on selected devices
             devices_to_stop = []
@@ -1467,11 +1610,27 @@ class WindowMain(QMainWindow):
 
             # Stop recording on specific devices
             for serial in devices_to_stop:
-                self.recording_manager.stop_recording(serial)
+                try:
+                    self.recording_manager.stop_recording(serial)
+                except RecordingOperationInProgressError:
+                    self._show_recording_operation_warning(
+                        'Stop Recording In Progress',
+                        'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
+                        get_active_stop_recording_serials(),
+                    )
+                    return
                 logger.info(f'Stopped recording for device: {serial}')
         else:
             # Stop all recordings if no devices are selected
-            stopped_devices = self.recording_manager.stop_recording()
+            try:
+                stopped_devices = self.recording_manager.stop_recording()
+            except RecordingOperationInProgressError:
+                self._show_recording_operation_warning(
+                    'Stop Recording In Progress',
+                    'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
+                    get_active_stop_recording_serials(),
+                )
+                return
             logger.info(f'Stopped all recordings on {len(stopped_devices)} devices')
 
     @ensure_devices_selected
@@ -1625,7 +1784,6 @@ class WindowMain(QMainWindow):
 
         if not results:
             logger.warning(f'❌ No results for command: {command}')
-            self.write_to_console(f'❌ No results: {command}')
             return
 
         # Convert results to list if it's not already
@@ -1639,38 +1797,23 @@ class WindowMain(QMainWindow):
                 device_name = f"{self.device_dict[serial].device_model} ({serial[:8]}...)"
 
             logger.info(f'📱 [{device_name}] Command: {command}')
-            self.write_to_console(f'📱 [{device_name}] {command}')
 
             if result and len(result) > 0:
-                # Show first few lines of output
-                max_lines = 10  # Reduced for cleaner display
-                output_lines = result[:max_lines] if len(result) > max_lines else result
-
                 logger.info(f'📱 [{device_name}] 📋 Output ({len(result)} lines total):')
-                self.write_to_console(f'📋 {len(result)} lines output:')
 
-                for line_num, line in enumerate(output_lines):
+                for line_num, line in enumerate(result):
                     if line and line.strip():  # Skip empty lines
-                        output_line = f'  {line.strip()}'  # Simplified format
+                        output_line = f'  {line.strip()}'
                         logger.info(f'📱 [{device_name}] {line_num+1:2d}▶️ {line.strip()}')
-                        self.write_to_console(output_line)
-
-                if len(result) > max_lines:
-                    truncated_msg = f'  ... {len(result) - max_lines} more lines'
-                    logger.info(f'📱 [{device_name}] ... and {len(result) - max_lines} more lines (truncated)')
-                    self.write_to_console(truncated_msg)
 
                 success_msg = f'✅ [{device_name}] Completed'
                 logger.info(f'📱 [{device_name}] ✅ Command completed successfully')
-                self.write_to_console(success_msg)
             else:
                 error_msg = f'❌ [{device_name}] No output'
                 logger.warning(f'📱 [{device_name}] ❌ No output or command failed')
-                self.write_to_console(error_msg)
 
         logger.info(f'🏁 Results display completed for command: {command}')
         logger.info('─' * 50)  # Separator line
-        self.write_to_console('─' * 30)  # Shorter separator line
 
     def write_to_console(self, message):
         """Write message to console widget using signal."""
@@ -2032,27 +2175,70 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         """Generate Android bug report using file operations manager."""
         devices = self.get_checked_devices()
         output_path = self._get_file_generation_output_path()
-        self.file_operations_manager.generate_android_bug_report(devices, output_path)
+        if not output_path:
+            return
+
+        operation = 'Generate Android Bug Report'
+
+        def handle_complete(summary: str | None = None) -> None:
+            self._log_operation_complete(operation, summary or '')
+
+        def handle_failure(message: str | None = None) -> None:
+            self._log_operation_failure(operation, message or 'Generation failed')
+
+        active_serials = set(self.file_operations_manager.get_active_bug_report_devices())
+        current_serials = {device.device_serial_num for device in devices}
+        if self.file_operations_manager.is_bug_report_in_progress() and active_serials & current_serials:
+            overlapping = ', '.join(sorted(active_serials & current_serials)) or 'Unknown'
+            self.show_warning(
+                'Bug Report In Progress',
+                'Bug report generation is already running for the following devices.\n\n'
+                f'{overlapping}\n\nPlease wait for the existing run to finish or deselect these devices.'
+            )
+            handle_failure('Devices already generating bug report')
+            return
+
+        self._log_operation_start(operation)
+
+        started = self.file_operations_manager.generate_android_bug_report(
+            devices,
+            output_path,
+            on_complete=handle_complete,
+            on_failure=handle_failure,
+        )
+
+        if not started:
+            # Failure callback will be scheduled by file operations manager; no further action.
+            return
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):
         """Generate device discovery file using file operations manager."""
-        devices = self.get_checked_devices()
-        output_path = self._get_file_generation_output_path()
-        self.file_operations_manager.generate_device_discovery_file(devices, output_path)
+        def action():
+            devices = self.get_checked_devices()
+            output_path = self._get_file_generation_output_path()
+            self.file_operations_manager.generate_device_discovery_file(devices, output_path)
+
+        self._execute_with_operation_logging('Generate Device Discovery File', action)
 
     @ensure_devices_selected
     def pull_device_dcim_with_folder(self):
         """Pull DCIM folder from devices using file operations manager."""
-        devices = self.get_checked_devices()
-        output_path = self._get_file_generation_output_path()
-        self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
+        def action():
+            devices = self.get_checked_devices()
+            output_path = self._get_file_generation_output_path()
+            self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
+
+        self._execute_with_operation_logging('Pull Device DCIM Folder', action)
 
     @ensure_devices_selected
     def dump_device_hsv(self):
         """Dump device UI hierarchy using UI hierarchy manager."""
-        output_path = self._get_file_generation_output_path()
-        self.ui_hierarchy_manager.export_hierarchy(output_path)
+        def action():
+            output_path = self._get_file_generation_output_path()
+            self.ui_hierarchy_manager.export_hierarchy(output_path)
+
+        self._execute_with_operation_logging('Export Device UI Hierarchy', action)
 
     def launch_ui_inspector(self):
         """Launch the interactive UI Inspector for selected devices."""
@@ -2060,11 +2246,14 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         if device is None:
             return
 
+        operation = f'Launch UI Inspector ({device.device_serial_num})'
+        self._log_operation_start(operation, device.device_model)
         ready, issue_message = check_ui_inspector_prerequisites()
         if not ready:
             sanitized = ' | '.join(issue_message.splitlines())
             logger.warning('UI Inspector prerequisites failed: %s', sanitized)
             self.show_error('UI Inspector Unavailable', issue_message)
+            self._log_operation_failure(operation, issue_message)
             return
 
         serial = device.device_serial_num
@@ -2073,8 +2262,14 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         logger.info(f'Launching UI Inspector for device: {model} ({serial})')
 
         # Create and show UI Inspector dialog
-        ui_inspector = UIInspectorDialog(self, serial, model)
-        ui_inspector.exec()
+        try:
+            ui_inspector = UIInspectorDialog(self, serial, model)
+            ui_inspector.exec()
+        except Exception as exc:
+            self._log_operation_failure(operation, str(exc))
+            raise
+        else:
+            self._log_operation_complete(operation, model)
 
     def show_about_dialog(self):
         """Show about dialog."""

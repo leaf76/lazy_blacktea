@@ -9,6 +9,53 @@ from typing import List, Callable, Optional, Dict, Any
 from utils import adb_models, adb_tools, common
 
 
+class BugReportInProgressError(RuntimeError):
+    """Raised when a bug report generation request overlaps an active run."""
+
+
+_bug_report_state_lock = threading.Lock()
+_bug_report_in_progress = False
+_active_bug_report_serials: set[str] = set()
+
+
+def is_bug_report_generation_active() -> bool:
+    """Return True when a bug report batch run is currently active."""
+    with _bug_report_state_lock:
+        return _bug_report_in_progress
+
+
+def get_active_bug_report_serials() -> list[str]:
+    """Return the serial numbers participating in the active bug report run."""
+    with _bug_report_state_lock:
+        return list(_active_bug_report_serials)
+
+
+def _claim_bug_report_run(serials: list[str]) -> None:
+    """Atomically mark bug report generation as active or raise if already busy."""
+    with _bug_report_state_lock:
+        global _bug_report_in_progress
+        if _bug_report_in_progress:
+            overlapping = sorted(set(serials) & _active_bug_report_serials)
+            if overlapping:
+                devices_text = ', '.join(overlapping)
+                raise BugReportInProgressError(
+                    f'Bug report generation already running for: {devices_text}'
+                )
+            raise BugReportInProgressError('Bug report generation already in progress')
+
+        _bug_report_in_progress = True
+        _active_bug_report_serials.clear()
+        _active_bug_report_serials.update(serials)
+
+
+def _release_bug_report_run() -> None:
+    """Clear the active bug report generation marker."""
+    with _bug_report_state_lock:
+        global _bug_report_in_progress
+        _bug_report_in_progress = False
+        _active_bug_report_serials.clear()
+
+
 def _sanitize_fragment(value: str) -> str:
     """Sanitize a string for safe filesystem usage."""
     if not value:
@@ -55,12 +102,20 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
         callback: Optional callback function called when complete
     """
 
+    serials = [device.device_serial_num for device in devices]
+    logger = common.get_logger('file_generation')
+
+    try:
+        _claim_bug_report_run(serials)
+    except BugReportInProgressError as exc:
+        logger.warning(f'Bug report generation request rejected: {exc}')
+        raise
+
     def report_worker():
         try:
             timestamp = common.current_format_time_utc()
             device_count = len(devices)
 
-            logger = common.get_logger('file_generation')
             logger.info(f'Starting bug report generation for {device_count} devices')
 
             os.makedirs(output_path, exist_ok=True)
@@ -226,11 +281,17 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                     logger.warning(f'Completion callback failed: {callback_error}')
 
         except Exception as e:
-            common.get_logger('file_generation').error(f'Bug report batch operation failed: {e}')
+            logger.error(f'Bug report batch operation failed: {e}')
+        finally:
+            _release_bug_report_run()
 
     # Run in background thread
-    thread = threading.Thread(target=report_worker, daemon=True)
-    thread.start()
+    try:
+        thread = threading.Thread(target=report_worker, daemon=True)
+        thread.start()
+    except Exception:
+        _release_bug_report_run()
+        raise
 
 
 def generate_device_discovery_file(devices: List[adb_models.DeviceInfo],

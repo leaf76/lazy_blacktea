@@ -15,7 +15,7 @@ os.environ["HOME"] = _TEST_HOME
 os.makedirs(os.path.join(_TEST_HOME, ".lazy_blacktea_logs"), exist_ok=True)
 
 from config.constants import RecordingConstants
-from utils import adb_models
+from utils import adb_models, recording_utils
 from utils.recording_utils import RecordingManager
 
 
@@ -121,6 +121,124 @@ class RecordingManagerRefactorTest(unittest.TestCase):
 
         error_events = [e for e in progress_events if e.get("type") == "error"]
         self.assertGreaterEqual(len(error_events), 1)
+
+    def test_start_recording_rejects_parallel_invocation(self):
+        """Concurrent start requests should raise while a start is active."""
+
+        start_gate = threading.Event()
+        release_gate = threading.Event()
+        self.addCleanup(release_gate.set)
+
+        def blocking_loop(self_obj, device, info, completion_cb, progress_cb, stop_event, start_signal):
+            start_gate.set()
+            if not release_gate.wait(timeout=5.0):
+                start_signal['success'] = False
+                start_signal['event'].set()
+                return
+            start_signal['success'] = True
+            start_signal['event'].set()
+            self_obj._cleanup_device_state(device.device_serial_num, info)
+
+        with patch.object(RecordingManager, "_run_recording_loop", new=blocking_loop):
+            first_call_done = threading.Event()
+
+            def first_call():
+                try:
+                    self.manager.start_recording([self.device], "/tmp")
+                finally:
+                    first_call_done.set()
+
+            thread = threading.Thread(target=first_call, daemon=True)
+            thread.start()
+
+            self.assertTrue(start_gate.wait(timeout=1.0), "Recording loop did not start in time")
+
+            second_done = threading.Event()
+            second_result = {}
+
+            def second_call():
+                try:
+                    self.manager.start_recording([self.device], "/tmp")
+                except Exception as exc:
+                    second_result['exception'] = exc
+                else:
+                    second_result['result'] = 'completed'
+                finally:
+                    second_done.set()
+
+            second_thread = threading.Thread(target=second_call, daemon=True)
+            second_thread.start()
+
+            if not second_done.wait(timeout=0.5):
+                release_gate.set()
+                thread.join(timeout=1.0)
+                self.fail('Second start call did not finish — guard missing?')
+
+            self.assertIn('exception', second_result, 'Second start call did not raise exception')
+            self.assertIsInstance(second_result['exception'], recording_utils.RecordingOperationInProgressError)
+
+            release_gate.set()
+            self.assertTrue(first_call_done.wait(timeout=1.0), "First recording call did not finish")
+
+    def test_stop_recording_rejects_parallel_invocation(self):
+        """Concurrent stop requests should raise while a stop is active."""
+
+        serial = self.device.device_serial_num
+        join_invoked = threading.Event()
+        release_gate = threading.Event()
+        self.addCleanup(release_gate.set)
+
+        class _BlockingThread:
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                join_invoked.set()
+                release_gate.wait(timeout or 5.0)
+
+        with self.manager._lock:
+            self.manager._threads[serial] = _BlockingThread()
+            self.manager._stop_events[serial] = threading.Event()
+
+        first_call_done = threading.Event()
+
+        def first_stop_call():
+            try:
+                self.manager.stop_recording()
+            finally:
+                first_call_done.set()
+
+        thread = threading.Thread(target=first_stop_call, daemon=True)
+        thread.start()
+
+        self.assertTrue(join_invoked.wait(timeout=1.0), "Stop join was not invoked in time")
+
+        second_done = threading.Event()
+        second_result = {}
+
+        def second_stop():
+            try:
+                self.manager.stop_recording()
+            except Exception as exc:
+                second_result['exception'] = exc
+            else:
+                second_result['result'] = 'completed'
+            finally:
+                second_done.set()
+
+        second_thread = threading.Thread(target=second_stop, daemon=True)
+        second_thread.start()
+
+        if not second_done.wait(timeout=0.5):
+            release_gate.set()
+            thread.join(timeout=1.0)
+            self.fail('Second stop call did not finish — guard missing?')
+
+        self.assertIn('exception', second_result, 'Second stop call did not raise exception')
+        self.assertIsInstance(second_result['exception'], recording_utils.RecordingOperationInProgressError)
+
+        release_gate.set()
+        self.assertTrue(first_call_done.wait(timeout=1.0), "First stop call did not finish")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,91 @@ from config.constants import RecordingConstants
 from utils import adb_models, adb_tools, common
 
 
+class RecordingOperationInProgressError(RuntimeError):
+    """Raised when a recording start/stop request overlaps an active run."""
+
+
+_start_operation_lock = threading.Lock()
+_start_operation_active = False
+_active_start_serials: set[str] = set()
+
+_stop_operation_lock = threading.Lock()
+_stop_operation_active = False
+_active_stop_serials: set[str] = set()
+
+
+def is_start_recording_operation_active() -> bool:
+    """Return True if a start recording request is currently being processed."""
+    with _start_operation_lock:
+        return _start_operation_active
+
+
+def get_active_start_recording_serials() -> list[str]:
+    """Return the serial numbers involved in the active start recording request."""
+    with _start_operation_lock:
+        return list(_active_start_serials)
+
+
+def is_stop_recording_operation_active() -> bool:
+    """Return True if a stop recording request is currently being processed."""
+    with _stop_operation_lock:
+        return _stop_operation_active
+
+
+def get_active_stop_recording_serials() -> list[str]:
+    """Return the serial numbers involved in the active stop recording request."""
+    with _stop_operation_lock:
+        return list(_active_stop_serials)
+
+
+def _claim_start_operation(serials: list[str]) -> None:
+    with _start_operation_lock:
+        global _start_operation_active
+        if _start_operation_active:
+            overlapping = sorted(set(serials) & _active_start_serials)
+            if overlapping:
+                devices_text = ', '.join(overlapping)
+                raise RecordingOperationInProgressError(
+                    f'Screen recording start already running for: {devices_text}'
+                )
+            raise RecordingOperationInProgressError('Screen recording start already in progress')
+
+        _start_operation_active = True
+        _active_start_serials.clear()
+        _active_start_serials.update(serials)
+
+
+def _release_start_operation() -> None:
+    with _start_operation_lock:
+        global _start_operation_active
+        _start_operation_active = False
+        _active_start_serials.clear()
+
+
+def _claim_stop_operation(serials: list[str]) -> None:
+    with _stop_operation_lock:
+        global _stop_operation_active
+        if _stop_operation_active:
+            overlapping = sorted(set(serials) & _active_stop_serials)
+            if overlapping:
+                devices_text = ', '.join(overlapping)
+                raise RecordingOperationInProgressError(
+                    f'Screen recording stop already running for: {devices_text}'
+                )
+            raise RecordingOperationInProgressError('Screen recording stop already in progress')
+
+        _stop_operation_active = True
+        _active_stop_serials.clear()
+        _active_stop_serials.update(serials)
+
+
+def _release_stop_operation() -> None:
+    with _stop_operation_lock:
+        global _stop_operation_active
+        _stop_operation_active = False
+        _active_stop_serials.clear()
+
+
 @dataclass
 class RecordingSegment:
     """Metadata for an individual recording segment."""
@@ -73,55 +158,68 @@ class RecordingManager:
         Returns:
             True if at least one device started recording successfully
         """
-        start_signals: List[dict] = []
-        for device in devices:
-            serial = device.device_serial_num
-            with self._lock:
-                if serial in self.active_recordings:
-                    self.logger.warning('Device %s is already recording', serial)
-                    continue
+        serials = [device.device_serial_num for device in devices]
+        claimed = False
+        try:
+            _claim_start_operation(serials)
+            claimed = True
+        except RecordingOperationInProgressError as exc:
+            self.logger.warning('Recording start request rejected: %s', exc)
+            raise
 
-                base_filename = self._build_base_filename(device)
-                info = RecordingInfo(
-                    device_serial=serial,
-                    device_name=device.device_model,
-                    start_time=datetime.now(),
-                    output_path=output_path,
-                    base_filename=base_filename,
-                )
-                self.active_recordings[serial] = info
+        try:
+            start_signals: List[dict] = []
+            for device in devices:
+                serial = device.device_serial_num
+                with self._lock:
+                    if serial in self.active_recordings:
+                        self.logger.warning('Device %s is already recording', serial)
+                        continue
 
-                stop_event = threading.Event()
-                self._stop_events[serial] = stop_event
+                    base_filename = self._build_base_filename(device)
+                    info = RecordingInfo(
+                        device_serial=serial,
+                        device_name=device.device_model,
+                        start_time=datetime.now(),
+                        output_path=output_path,
+                        base_filename=base_filename,
+                    )
+                    self.active_recordings[serial] = info
 
-                start_signal = {'event': threading.Event(), 'success': None}
-                start_signals.append(start_signal)
+                    stop_event = threading.Event()
+                    self._stop_events[serial] = stop_event
 
-                thread = threading.Thread(
-                    target=self._run_recording_loop,
-                    args=(
-                        device,
-                        info,
-                        completion_callback,
-                        progress_callback,
-                        stop_event,
-                        start_signal,
-                    ),
-                    daemon=True,
-                )
-                self._threads[serial] = thread
-                thread.start()
+                    start_signal = {'event': threading.Event(), 'success': None}
+                    start_signals.append(start_signal)
 
-        started_any = False
-        for signal in start_signals:
-            signal['event'].wait(timeout=self._initial_start_timeout())
-            if signal['success']:
-                started_any = True
+                    thread = threading.Thread(
+                        target=self._run_recording_loop,
+                        args=(
+                            device,
+                            info,
+                            completion_callback,
+                            progress_callback,
+                            stop_event,
+                            start_signal,
+                        ),
+                        daemon=True,
+                    )
+                    self._threads[serial] = thread
+                    thread.start()
 
-        if not started_any:
-            self.logger.warning('No recordings started successfully')
+            started_any = False
+            for signal in start_signals:
+                signal['event'].wait(timeout=self._initial_start_timeout())
+                if signal['success']:
+                    started_any = True
 
-        return started_any
+            if not started_any:
+                self.logger.warning('No recordings started successfully')
+
+            return started_any
+        finally:
+            if claimed:
+                _release_start_operation()
 
     def stop_recording(self, device_serial: Optional[str] = None) -> List[str]:
         """Stop screen recording for specified device or all devices."""
@@ -131,19 +229,34 @@ class RecordingManager:
             else:
                 target_serials = list(self._threads.keys())
 
-        stopped_devices: List[str] = []
-        for serial in target_serials:
-            stop_event = self._stop_events.get(serial)
-            if stop_event:
-                stop_event.set()
+        if not target_serials:
+            return []
 
-            thread = self._threads.get(serial)
-            if thread and thread.is_alive():
-                thread.join(timeout=self._join_timeout())
+        claimed = False
+        try:
+            _claim_stop_operation(target_serials)
+            claimed = True
+        except RecordingOperationInProgressError as exc:
+            self.logger.warning('Recording stop request rejected: %s', exc)
+            raise
 
-            stopped_devices.append(serial)
+        try:
+            stopped_devices: List[str] = []
+            for serial in target_serials:
+                stop_event = self._stop_events.get(serial)
+                if stop_event:
+                    stop_event.set()
 
-        return stopped_devices
+                thread = self._threads.get(serial)
+                if thread and thread.is_alive():
+                    thread.join(timeout=self._join_timeout())
+
+                stopped_devices.append(serial)
+
+            return stopped_devices
+        finally:
+            if claimed:
+                _release_stop_operation()
 
     def get_recording_status(self, device_serial: str) -> str:
         """Get recording status for a device."""

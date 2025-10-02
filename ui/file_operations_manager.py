@@ -19,8 +19,11 @@ from PyQt6.QtWidgets import QFileDialog
 
 from utils import adb_models, common, json_utils
 from utils.file_generation_utils import (
+    BugReportInProgressError,
     generate_bug_report_batch,
     generate_device_discovery_file,
+    get_active_bug_report_serials,
+    is_bug_report_generation_active,
     validate_file_output_path
 )
 
@@ -37,6 +40,37 @@ class FileOperationsManager(QObject):
         self.parent_window = parent_window
         self.last_generation_output_path: str = ''
         self.last_generation_summary: str = ''
+        self._bug_report_in_progress: bool = False
+        self._active_bug_report_devices: list[str] = []
+
+    def _notify_bug_report_in_progress(
+        self,
+        requested_serials: list[str],
+        *,
+        active_serials: Optional[list[str]] = None,
+        on_failure: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Display a consistent warning for duplicate bug report requests."""
+        active = active_serials if active_serials is not None else get_active_bug_report_serials()
+        active = list(dict.fromkeys(active))  # preserve order while deduplicating
+        overlap = sorted(set(requested_serials) & set(active))
+
+        if overlap:
+            devices_text = ', '.join(overlap)
+            message = (
+                'Bug report generation is already running for the following devices.\n\n'
+                f'{devices_text}\n\nPlease wait for the current run to finish or deselect these devices.'
+            )
+        else:
+            active_text = ', '.join(active) if active else 'Unknown'
+            message = (
+                'Another bug report generation is already running.\n\n'
+                f'Active devices: {active_text}\n\nPlease wait for it to finish before starting a new one.'
+            )
+
+        self.parent_window.show_warning('Bug Report In Progress', message)
+        if on_failure:
+            on_failure('Bug report already in progress')
 
     def get_validated_output_path(self, path_text: str) -> Optional[str]:
         """驗證並獲取輸出路徑"""
@@ -48,15 +82,58 @@ class FileOperationsManager(QObject):
             )
         return validated_path
 
-    def generate_android_bug_report(self, devices: List[adb_models.DeviceInfo], output_path: str):
+    def generate_android_bug_report(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        output_path: str,
+        *,
+        on_complete: Optional[Callable[[str], None]] = None,
+        on_failure: Optional[Callable[[str], None]] = None,
+    ) -> bool:
         """生成Android Bug Report"""
+        if self._bug_report_in_progress:
+            self._notify_bug_report_in_progress(
+                [device.device_serial_num for device in devices],
+                active_serials=self._active_bug_report_devices,
+                on_failure=on_failure,
+            )
+            return False
+
         validated_path = self.get_validated_output_path(output_path)
         if not validated_path:
-            return
+            if on_failure:
+                on_failure('Invalid output path')
+            return False
+
+        serials = [device.device_serial_num for device in devices]
+        if not serials:
+            self.parent_window.show_warning('Bug Report', 'No devices selected.')
+            if on_failure:
+                on_failure('No devices selected')
+            return False
+
+        if not self._bug_report_in_progress and is_bug_report_generation_active():
+            self._notify_bug_report_in_progress(
+                serials,
+                on_failure=on_failure,
+            )
+            return False
+
+        if self._active_bug_report_devices:
+            overlapping = set(serials) & set(self._active_bug_report_devices)
+            if overlapping:
+                self._notify_bug_report_in_progress(
+                    serials,
+                    active_serials=self._active_bug_report_devices,
+                    on_failure=on_failure,
+                )
+                return False
 
         device_count = len(devices)
         self.last_generation_output_path = validated_path
         self.last_generation_summary = ''
+        self._bug_report_in_progress = True
+        self._active_bug_report_devices = serials
 
         # 顯示進度通知（避免阻塞，改用狀態列與信號）
         initial_message = (
@@ -64,6 +141,8 @@ class FileOperationsManager(QObject):
             f'(Saving to: {validated_path})'
         )
         QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(0, device_count, initial_message))
+
+        completion_dispatched = {'done': False}
 
         def bug_report_callback(operation_name, payload, success_count, icon):
             """Bug report生成完成的回調"""
@@ -78,7 +157,11 @@ class FileOperationsManager(QObject):
 
             self.last_generation_summary = summary_text
             self.last_generation_output_path = output_directory
-            self.file_generation_completed_signal.emit(operation_name, summary_text, success_count, icon)
+            if not completion_dispatched['done']:
+                completion_dispatched['done'] = True
+                self.file_generation_completed_signal.emit(operation_name, summary_text, success_count, icon)
+                if on_complete:
+                    QTimer.singleShot(0, lambda: on_complete(summary_text))
 
         def progress_callback(payload: dict):
             """Bug report 進度更新回調"""
@@ -106,6 +189,11 @@ class FileOperationsManager(QObject):
                     bug_report_callback,
                     progress_callback=progress_callback
                 )
+            except BugReportInProgressError:
+                QTimer.singleShot(0, lambda: self._notify_bug_report_in_progress(
+                    serials,
+                    on_failure=on_failure,
+                ))
             except Exception as e:
                 QTimer.singleShot(0, lambda: self.parent_window.show_error(
                     '🐛 Bug Report Generation Failed',
@@ -125,13 +213,26 @@ class FileOperationsManager(QObject):
                     f'5. Try generating reports one device at a time\n\n'
                     f'💡 Note: Modern bug reports are saved as .zip files'
                 ))
+                if on_failure:
+                    QTimer.singleShot(0, lambda: on_failure(str(e)))
             finally:
                 QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(
                     device_count, device_count,
                     '🐛 Bug report generation finished'
                 ))
+                self._bug_report_in_progress = False
+                self._active_bug_report_devices = []
 
         threading.Thread(target=generation_wrapper, daemon=True).start()
+        return True
+
+    def is_bug_report_in_progress(self) -> bool:
+        """Return whether a bug report generation is currently running."""
+        return self._bug_report_in_progress
+
+    def get_active_bug_report_devices(self) -> list[str]:
+        """Return the serial numbers involved in the active bug report run."""
+        return list(self._active_bug_report_devices)
 
     def generate_device_discovery_file(self, devices: List[adb_models.DeviceInfo], output_path: str):
         """生成設備發現文件"""
