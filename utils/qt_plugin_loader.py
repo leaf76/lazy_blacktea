@@ -33,17 +33,35 @@ def _resolve_plugin_directory() -> Path | None:
     return None
 
 
+def _prepend_environment_path(variable: str, path: Path) -> None:
+    """Ensure `path` is the first entry of the environment variable."""
+    str_path = str(path)
+    existing = os.environ.get(variable)
+
+    if not existing:
+        os.environ[variable] = str_path
+        return
+
+    parts = [entry for entry in existing.split(os.pathsep) if entry]
+
+    if str_path in parts:
+        parts.remove(str_path)
+
+    parts.insert(0, str_path)
+    os.environ[variable] = os.pathsep.join(parts)
+
+
 def configure_qt_plugin_path() -> None:
     """Ensure Qt loads plugins from the bundled runtime when available."""
     plugin_dir = _resolve_plugin_directory()
     if plugin_dir is None:
         return
 
-    os.environ.setdefault('QT_PLUGIN_PATH', str(plugin_dir))
+    _prepend_environment_path('QT_PLUGIN_PATH', plugin_dir)
 
     platforms_dir = plugin_dir / 'platforms'
     if platforms_dir.exists():
-        os.environ.setdefault('QT_QPA_PLATFORM_PLUGIN_PATH', str(platforms_dir))
+        _prepend_environment_path('QT_QPA_PLATFORM_PLUGIN_PATH', platforms_dir)
 
 
 __all__ = ['configure_qt_plugin_path']

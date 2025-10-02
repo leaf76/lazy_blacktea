@@ -14,12 +14,22 @@
 - 改善代碼組織結構
 """
 
+import concurrent.futures
 import os
 import subprocess
 import threading
 import time
 from typing import Dict, List, Any, Optional, Callable
-from PyQt6.QtCore import QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import (
+    QTimer,
+    pyqtSignal,
+    QObject,
+    QMetaObject,
+    Qt,
+    Q_ARG,
+    Q_RETURN_ARG,
+    pyqtSlot,
+)
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from utils import adb_models, adb_tools, common
@@ -71,7 +81,10 @@ class DeviceOperationsManager(QObject):
             return False
 
         success_count = 0
-        for serial in device_serials:
+        success_lock = threading.Lock()
+
+        def _execute_reboot(serial: str) -> None:
+            nonlocal success_count
             try:
                 self._log_console(f"Rebooting device {serial} to {reboot_mode}...")
 
@@ -83,7 +96,8 @@ class DeviceOperationsManager(QObject):
                     result = adb_tools.run_adb_command(f"-s {serial} reboot")
 
                 if result.returncode == 0:
-                    success_count += 1
+                    with success_lock:
+                        success_count += 1
                     self._log_console(f"✅ Device {serial} reboot command sent successfully")
                     self.operation_completed_signal.emit("reboot", serial, True, f"Reboot command sent to {reboot_mode}")
                 else:
@@ -93,6 +107,12 @@ class DeviceOperationsManager(QObject):
             except Exception as e:
                 self._log_console(f"❌ Error rebooting device {serial}: {str(e)}")
                 self.operation_completed_signal.emit("reboot", serial, False, str(e))
+
+        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_execute_reboot, serial) for serial in device_serials]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
         if success_count > 0:
             self._show_info("Reboot Initiated", f"Reboot command sent to {success_count} device(s).")
@@ -126,25 +146,36 @@ class DeviceOperationsManager(QObject):
         action_text = "enabling" if enable else "disabling"
         command = "enable" if enable else "disable"
         success_count = 0
+        success_lock = threading.Lock()
 
-        for serial in device_serials:
+        def _execute_toggle(serial: str) -> None:
+            nonlocal success_count
             try:
                 self._log_console(f"{action_text.capitalize()} Bluetooth on device {serial}...")
 
                 result = adb_tools.run_adb_command(f"-s {serial} shell svc bluetooth {command}")
 
                 if result.returncode == 0:
-                    success_count += 1
                     status = "enabled" if enable else "disabled"
+                    with success_lock:
+                        success_count += 1
                     self._log_console(f"✅ Bluetooth {status} on device {serial}")
                     self.operation_completed_signal.emit("bluetooth", serial, True, f"Bluetooth {status}")
                 else:
-                    self._log_console(f"❌ Failed to {command} Bluetooth on device {serial}: {result.stderr}")
-                    self.operation_completed_signal.emit("bluetooth", serial, False, result.stderr)
+                    error_msg = getattr(result, 'stderr', '') or "Bluetooth command failed"
+                    self._log_console(f"❌ Failed to {command} Bluetooth on device {serial}: {error_msg}")
+                    self.operation_completed_signal.emit("bluetooth", serial, False, error_msg)
 
-            except Exception as e:
-                self._log_console(f"❌ Error {action_text} Bluetooth on device {serial}: {str(e)}")
-                self.operation_completed_signal.emit("bluetooth", serial, False, str(e))
+            except Exception as e:  # pragma: no cover - defensive
+                error_msg = str(e)
+                self._log_console(f"❌ Error {action_text} Bluetooth on device {serial}: {error_msg}")
+                self.operation_completed_signal.emit("bluetooth", serial, False, error_msg)
+
+        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_execute_toggle, serial) for serial in device_serials]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
         if success_count > 0:
             action_past = "enabled" if enable else "disabled"
@@ -409,28 +440,42 @@ class DeviceOperationsManager(QObject):
 
         self._log_console(f"📱 Installing {apk_name} on {total_devices} device(s)...")
 
-        for i, serial in enumerate(device_serials):
+        success_lock = threading.Lock()
+
+        def _install_device(position: int, serial: str) -> None:
+            nonlocal success_count
             try:
                 device_info = self._get_device_info(serial)
                 device_name = device_info.device_model if device_info else serial
 
-                self._log_console(f"📱 [{i+1}/{total_devices}] Installing on {device_name} ({serial})...")
+                self._log_console(f"📱 [{position}/{total_devices}] Installing on {device_name} ({serial})...")
 
-                # 執行安裝命令
                 result = adb_tools.run_adb_command(f"-s {serial} install -r \"{apk_file}\"")
 
                 if result.returncode == 0:
-                    success_count += 1
-                    self._log_console(f"✅ [{i+1}/{total_devices}] Successfully installed on {device_name}")
+                    with success_lock:
+                        success_count += 1
+                    self._log_console(f"✅ [{position}/{total_devices}] Successfully installed on {device_name}")
                     self.operation_completed_signal.emit("apk_install", serial, True, f"APK installed: {apk_name}")
                 else:
-                    error_msg = result.stderr or "Installation failed"
-                    self._log_console(f"❌ [{i+1}/{total_devices}] Failed to install on {device_name}: {error_msg}")
+                    error_msg = getattr(result, 'stderr', '') or "Installation failed"
+                    self._log_console(f"❌ [{position}/{total_devices}] Failed to install on {device_name}: {error_msg}")
                     self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
 
-            except Exception as e:
-                self._log_console(f"❌ [{i+1}/{total_devices}] Error installing on device {serial}: {str(e)}")
-                self.operation_completed_signal.emit("apk_install", serial, False, str(e))
+            except Exception as e:  # pragma: no cover - defensive
+                error_msg = str(e)
+                self._log_console(f"❌ [{position}/{total_devices}] Error installing on device {serial}: {error_msg}")
+                self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
+
+        if total_devices > 0:
+            max_workers = min(total_devices, max(1, os.cpu_count() or 1))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(_install_device, index + 1, serial)
+                    for index, serial in enumerate(device_serials)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    future.result()
 
         # 顯示最終結果
         if success_count > 0:
@@ -507,19 +552,68 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Device Selected", "Please select at least one device to launch UI Inspector.")
             return False
 
-        success_count = 0
-        for serial in device_serials:
-            if self.launch_ui_inspector_for_device(serial):
-                success_count += 1
+        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
 
-        if success_count > 0:
-            self._show_info("UI Inspector", f"UI Inspector launched for {success_count} device(s).")
-            return True
-        else:
-            self._show_error("UI Inspector Failed", "Failed to launch UI Inspector for any device.")
-            return False
+        def _launch_task(serial: str) -> bool:
+            success, result = QMetaObject.invokeMethod(
+                self,
+                "_launch_ui_inspector_for_device_slot",
+                Qt.ConnectionType.BlockingQueuedConnection,
+                Q_RETURN_ARG(bool),
+                Q_ARG(str, serial)
+            )
+            if not success:
+                raise RuntimeError(f'Failed to invoke UI Inspector for {serial}')
+            return bool(result)
+
+        future_map: dict[concurrent.futures.Future[bool], str] = {}
+        for serial in device_serials:
+            future = executor.submit(_launch_task, serial)
+            future_map[future] = serial
+
+        def _finalize_results() -> None:
+            success = 0
+            failures: list[str] = []
+
+            for future, serial in future_map.items():
+                try:
+                    if future.result():
+                        success += 1
+                    else:
+                        failures.append(serial)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    failures.append(serial)
+                    self._log_console(f"❌ Error launching UI Inspector for device {serial}: {exc}")
+
+            executor.shutdown(wait=True)
+
+            def _notify() -> None:
+                total = len(device_serials)
+                if success > 0:
+                    self._show_info("UI Inspector", f"UI Inspector launched for {success}/{total} device(s).")
+                if success == 0:
+                    self._show_error("UI Inspector Failed", "Failed to launch UI Inspector for any device.")
+                elif failures:
+                    failed_devices = ', '.join(failures)
+                    self._show_warning(
+                        "UI Inspector Partial Failure",
+                        f"Failed to launch UI Inspector for: {failed_devices}"
+                    )
+
+            QTimer.singleShot(0, _notify)
+
+        threading.Thread(target=_finalize_results, daemon=True).start()
+        return True
 
     def launch_ui_inspector_for_device(self, device_serial: str) -> bool:
+        return self._launch_ui_inspector_for_device_impl(device_serial)
+
+    @pyqtSlot(str, result=bool)
+    def _launch_ui_inspector_for_device_slot(self, device_serial: str) -> bool:
+        return self._launch_ui_inspector_for_device_impl(device_serial)
+
+    def _launch_ui_inspector_for_device_impl(self, device_serial: str) -> bool:
         """為單個設備啟動UI檢查器"""
         try:
             device_info = self._get_device_info(device_serial)

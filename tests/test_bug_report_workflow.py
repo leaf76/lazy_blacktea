@@ -2,6 +2,8 @@
 """Bug report workflow regression tests."""
 
 import os
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -75,17 +77,19 @@ class BugReportWorkflowTests(unittest.TestCase):
 
         progress_events = []
         completion_payloads = []
+        done_event = threading.Event()
 
         def progress_callback(payload):
             progress_events.append(payload)
 
         def completion_callback(title, payload, success_count, icon):
             completion_payloads.append((title, payload, success_count, icon))
+            done_event.set()
 
         generated_paths = []
 
         def fake_generate(serial, filepath, timeout=300):
-            generated_paths.append(filepath)
+            generated_paths.append((serial, filepath))
             if serial == "test-001":
                 success_output = f"{filepath}.zip"
                 return {
@@ -107,10 +111,10 @@ class BugReportWorkflowTests(unittest.TestCase):
         def fake_exists(path):
             if not generated_paths:
                 return False
-            return path == f"{generated_paths[0]}.zip"
+            # Ensure we only consider paths corresponding to generated reports
+            return any(path == f"{device_path}.zip" for _, device_path in generated_paths)
 
-        with patch("utils.file_generation_utils.threading.Thread", new=lambda target, daemon=True: _ImmediateThread(target)), \
-             patch("utils.file_generation_utils.common.current_format_time_utc", return_value="20250101_000000"), \
+        with patch("utils.file_generation_utils.common.current_format_time_utc", return_value="20250101_000000"), \
              patch("utils.file_generation_utils.os.path.exists", side_effect=fake_exists), \
              patch("utils.file_generation_utils.adb_tools.generate_bug_report_device", side_effect=fake_generate):
             file_generation_utils.generate_bug_report_batch(
@@ -119,19 +123,25 @@ class BugReportWorkflowTests(unittest.TestCase):
                 completion_callback,
                 progress_callback=progress_callback,
             )
+            self.assertTrue(done_event.wait(timeout=1.0))
 
         self.assertEqual(len(progress_events), 2)
 
-        first_event = progress_events[0]
-        self.assertTrue(first_event["success"])
-        self.assertEqual(first_event["current"], 1)
-        self.assertEqual(first_event["total"], 2)
-        self.assertIn("bug_report_Pixel_8_Pro_test-001_20250101_000000.zip", first_event["output_path"])
+        events_by_serial = {event["device_serial"]: event for event in progress_events}
 
-        second_event = progress_events[1]
-        self.assertFalse(second_event["success"])
-        self.assertEqual(second_event["current"], 2)
-        self.assertIn("Permission denied", second_event["error_message"])
+        self.assertIn("test-001", events_by_serial)
+        success_event = events_by_serial["test-001"]
+        self.assertTrue(success_event["success"])
+        self.assertEqual(success_event["total"], 2)
+        self.assertIn(
+            "bug_report_Pixel_8_Pro_test-001_20250101_000000.zip",
+            success_event["output_path"],
+        )
+
+        self.assertIn("test-002", events_by_serial)
+        failure_event = events_by_serial["test-002"]
+        self.assertFalse(failure_event["success"])
+        self.assertIn("Permission denied", failure_event["error_message"])
 
         self.assertTrue(completion_payloads)
         summary_title, summary_payload, success_count, _ = completion_payloads[0]
@@ -140,6 +150,33 @@ class BugReportWorkflowTests(unittest.TestCase):
         self.assertIn("Failed: 1 device", summary_payload.get("summary", ""))
         self.assertTrue(summary_payload.get("output_path", "").startswith("/tmp/output"))
         self.assertEqual(summary_title, "Bug Report Complete")
+
+    def test_generate_bug_report_batch_runs_tasks_concurrently(self):
+        """Bug report generation should execute device jobs concurrently."""
+
+        devices = [self.success_device, self.failure_device]
+
+        def fake_generate(_serial, _filepath, timeout=300):
+            time.sleep(0.15)
+            return {"success": True, "output_path": "dummy.zip"}
+
+        done_event = threading.Event()
+
+        with patch("utils.file_generation_utils.adb_tools.generate_bug_report_device", side_effect=fake_generate), \
+             patch("utils.file_generation_utils.common.current_format_time_utc", return_value="20250101_000000"), \
+             patch("utils.file_generation_utils.os.makedirs"):
+            start = time.perf_counter()
+            file_generation_utils.generate_bug_report_batch(
+                devices,
+                "/tmp/output",
+                lambda *_args, **_kwargs: done_event.set(),
+                progress_callback=lambda *_args, **_kwargs: None,
+            )
+            self.assertTrue(done_event.wait(timeout=2.0))
+            elapsed = time.perf_counter() - start
+
+        # Sequential execution would take roughly len(devices) * 0.15s (>0.30s)
+        self.assertLess(elapsed, 0.25, f"Bug report tasks were not parallelised: {elapsed:.3f}s")
 
     def test_device_availability_check(self):
         """確認 get-state 輸出 device 時視為連線"""

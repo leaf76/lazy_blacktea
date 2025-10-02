@@ -12,6 +12,7 @@
 
 import os
 import threading
+import concurrent.futures
 from typing import List, Callable, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from PyQt6.QtWidgets import QFileDialog
@@ -324,17 +325,33 @@ class UIHierarchyManager:
                 self.parent_window.show_error('Error', 'No devices selected.')
                 return
 
+            results: dict[str, Exception | None] = {}
+            max_workers = min(len(devices), max(1, os.cpu_count() or 1))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_map = {
+                    executor.submit(dump_device_ui.generate_process, device.device_serial_num, output_path): device
+                    for device in devices
+                }
+
+                for future in concurrent.futures.as_completed(future_map):
+                    device = future_map[future]
+                    try:
+                        future.result()
+                        results[device.device_serial_num] = None
+                    except Exception as exc:  # pragma: no cover - defensive
+                        results[device.device_serial_num] = exc
+
             for device in devices:
-                try:
-                    dump_device_ui.generate_process(device.device_serial_num, output_path)
+                error = results.get(device.device_serial_num)
+                if error is None:
                     self.parent_window.show_info(
                         'UI Export',
                         f'UI hierarchy exported for device: {device.device_serial_num}'
                     )
-                except Exception as e:
+                else:
                     self.parent_window.show_error(
                         'UI Export Error',
-                        f'Failed to export UI for {device.device_serial_num}:\n{e}'
+                        f'Failed to export UI for {device.device_serial_num}:\n{error}'
                     )
         else:
             self.parent_window.show_error('Error', 'Please select a valid output directory first.')

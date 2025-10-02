@@ -279,6 +279,21 @@ _adb_command_prefix = 'adb'
 _scrcpy_command_path = 'scrcpy'
 
 
+def _determine_worker_count(task_count: int) -> int:
+  """Select a sensible worker count for per-device parallelism.
+
+  Args:
+    task_count: Number of tasks to execute.
+
+  Returns:
+    Number of threads to schedule.
+  """
+  if task_count <= 0:
+    return 0
+  cpu_count = os.cpu_count() or 1
+  return max(1, min(task_count, cpu_count))
+
+
 def get_device_serial_num_list():
   return [l.device_serial_num for l in get_devices_list()]
 
@@ -1016,6 +1031,36 @@ def get_build_fingerprint(serial_num):
   return 'None'
 
 
+@adb_device_operation(default_return={})
+def get_device_properties(serial_num: str) -> dict[str, str]:
+  """Retrieve device properties via `adb shell getprop`.
+
+  Args:
+    serial_num: Device serial number.
+
+  Returns:
+    Dictionary mapping property keys to values.
+  """
+  cmd = adb_commands.cmd_adb_shell(serial_num, 'getprop')
+  lines = common.run_command(cmd)
+  if not lines:
+    return {}
+
+  properties: dict[str, str] = {}
+  pattern = re.compile(r'^\[(?P<key>[^\]]+)\]\s*:\s*\[(?P<value>[^\]]*)\]')
+  for line in lines:
+    if not line:
+      continue
+    match = pattern.match(str(line).strip())
+    if not match:
+      continue
+    key = match.group('key').strip()
+    value = match.group('value').strip()
+    properties[key] = value
+
+  return properties
+
+
 def run_as_root(serial_nums: list[str]):
   """Run as root.
 
@@ -1259,30 +1304,53 @@ def pull_devices_hsv(serial_nums: list[str], output_path: str) -> list[str]:
     return result
 
 
+def _capture_screenshot_for_device(serial: str, file_name: str, output_path: str) -> None:
+  remote_path = f'/sdcard/{serial}_screenshot_{file_name}.png'
+  logger.info('📸 [SCREENSHOT] Processing device %s -> %s', serial, remote_path)
+
+  capture_cmd = adb_commands.cmd_screencap_capture(serial, remote_path)
+  pull_cmd = adb_commands.cmd_pull_device_file(serial, remote_path, output_path)
+  cleanup_cmd = adb_commands.cmd_remove_device_file(serial, remote_path)
+
+  for stage, command in (
+      ('capture', capture_cmd),
+      ('pull', pull_cmd),
+      ('cleanup', cleanup_cmd),
+  ):
+    logger.debug('📸 [SCREENSHOT] %s command for %s: %s', stage, serial, command)
+    result = common.run_command(command)
+    logger.debug('📸 [SCREENSHOT] %s result for %s: %s', stage, serial, result)
+
+
 def start_to_screen_shot(
     serial_nums: list[str], file_name: str, output_path: str
 ) -> None:
   """Capture screenshots for the provided devices."""
 
+  if not serial_nums:
+    logger.info('No devices supplied for start_to_screen_shot')
+    return
+
   logger.info('Start to screen shot.')
   output_path = common.make_gen_dir_path(output_path)
+  worker_count = _determine_worker_count(len(serial_nums))
 
-  for serial in serial_nums:
-    remote_path = f'/sdcard/{serial}_screenshot_{file_name}.png'
-    logger.info('📸 [SCREENSHOT] Processing device %s -> %s', serial, remote_path)
+  if worker_count <= 0:
+    logger.info('No workers scheduled for screenshot capture (worker_count=%s)', worker_count)
+    return
 
-    capture_cmd = adb_commands.cmd_screencap_capture(serial, remote_path)
-    pull_cmd = adb_commands.cmd_pull_device_file(serial, remote_path, output_path)
-    cleanup_cmd = adb_commands.cmd_remove_device_file(serial, remote_path)
+  futures: dict[concurrent.futures.Future, str] = {}
+  with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+    for serial in serial_nums:
+      future = executor.submit(_capture_screenshot_for_device, serial, file_name, output_path)
+      futures[future] = serial
 
-    for stage, command in (
-        ('capture', capture_cmd),
-        ('pull', pull_cmd),
-        ('cleanup', cleanup_cmd),
-    ):
-      logger.debug('📸 [SCREENSHOT] %s command for %s: %s', stage, serial, command)
-      result = common.run_command(command)
-      logger.debug('📸 [SCREENSHOT] %s result for %s: %s', stage, serial, result)
+    for future in concurrent.futures.as_completed(futures):
+      serial = futures[future]
+      try:
+        future.result()
+      except Exception as exc:
+        logger.error('Error capturing screenshot for %s: %s', serial, exc)
 
   logger.info('Start to screen shot completed for %s device(s)', len(serial_nums))
 
@@ -1296,34 +1364,50 @@ def start_to_record_android_devices(
     serial_nums: Phones serial number.
     file_name: screen record file name.
   """
+  if not serial_nums:
+    logger.info('No devices supplied for start_to_record_android_devices')
+    return
+
   logger.info('🎬 [START DEBUG] Starting recording for devices')
   logger.info(f'🎬 [START DEBUG] Serial numbers: {serial_nums}')
   logger.info(f'🎬 [START DEBUG] File name: {file_name}')
 
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_android_screen_record(s, file_name)
-    logger.info(f'🎬 [START DEBUG] Command for {s}: {cmd}')
-    commands.append(cmd)
+  command_map: dict[str, str] = {}
+  for serial in serial_nums:
+    cmd = adb_commands.cmd_android_screen_record(serial, file_name)
+    logger.info(f'🎬 [START DEBUG] Command for {serial}: {cmd}')
+    command_map[serial] = cmd
 
-  logger.info(f'🎬 [START DEBUG] All commands: {commands}')
+  logger.info(f'🎬 [START DEBUG] All commands: {list(command_map.values())}')
+
+  worker_count = _determine_worker_count(len(serial_nums))
+  results: dict[str, list[str]] = {}
 
   try:
     logger.info(f'🎬 [START DEBUG] Executing recording commands on {len(serial_nums)} devices')
-    # Use mp_run_command for recording as it's non-blocking
-    results = []
-    for cmd in commands:
-      result = common.mp_run_command(cmd)
-      results.append(result)
-    logger.info(f'🎬 [START DEBUG] Recording commands completed. Results: {results}')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+      future_map = {
+          executor.submit(common.mp_run_command, command_map[serial]): serial
+          for serial in serial_nums
+      }
 
-    # Instead of sleep, verify recording has started
+      for future in concurrent.futures.as_completed(future_map):
+        serial = future_map[future]
+        try:
+          results[serial] = future.result()
+        except Exception as exc:  # pragma: no cover - defensive
+          logger.error(f'❌ [START DEBUG] Recording command failed for {serial}: {exc}')
+          raise
+
+    ordered_results = [results.get(serial, []) for serial in serial_nums]
+    logger.info(f'🎬 [START DEBUG] Recording commands completed. Results: {ordered_results}')
+
     _verify_recording_started(serial_nums)
 
   except Exception as e:
     logger.error(f'❌ [START DEBUG] Error starting recording: {e}')
     logger.error(f'❌ [START DEBUG] Traceback: {traceback.format_exc()}')
-    raise e
+    raise
 
   logger.info('✅ [START DEBUG] Recording started successfully')
 

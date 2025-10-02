@@ -1,5 +1,6 @@
 """File generation utilities for creating device reports and files."""
 
+import concurrent.futures
 import os
 import re
 import threading
@@ -14,6 +15,32 @@ def _sanitize_fragment(value: str) -> str:
         return 'unknown'
     sanitized = re.sub(r'[^A-Za-z0-9._-]+', '_', value)
     return sanitized.strip('_') or 'unknown'
+
+
+
+
+def _parallel_fetch(devices: List[adb_models.DeviceInfo], fetcher, logger, error_message: str) -> dict[str, Any]:
+    """Execute device-bound fetchers concurrently and collect results."""
+    if not devices:
+        return {}
+
+    worker_count = min(len(devices), max(1, os.cpu_count() or 1))
+    results: dict[str, Any] = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {
+            executor.submit(fetcher, device): device
+            for device in devices
+        }
+
+        for future in concurrent.futures.as_completed(future_map):
+            device = future_map[future]
+            try:
+                results[device.device_serial_num] = future.result()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"{error_message} for {device.device_serial_num}: {exc}")
+
+    return results
 
 
 def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
@@ -40,29 +67,66 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
 
             successes = 0
             failures: List[Dict[str, str]] = []
+            progress_count = 0
+            progress_lock = threading.Lock()
 
-            # Generate reports for each device with progress
-            for index, device in enumerate(devices, 1):
+            def _emit_progress(payload: Dict[str, Any]) -> None:
+                if progress_callback:
+                    try:
+                        progress_callback(payload)
+                    except Exception as callback_error:  # pragma: no cover - defensive
+                        logger.warning(f'Progress callback failed: {callback_error}')
+
+            def _record_failure(device, error_message: str) -> Dict[str, str]:
+                failure_entry = {
+                    'device_serial': device.device_serial_num,
+                    'device_model': device.device_model,
+                    'error': error_message,
+                }
+                return failure_entry
+
+            def _log_manufacturer_guidance(device_model: str) -> None:
+                device_model_lower = (device_model or '').lower()
+                if 'samsung' in device_model_lower:
+                    logger.warning(f'Samsung device {device_model} may require:')
+                    logger.info('  - Developer options enabled')
+                    logger.info('  - USB debugging authorized for this computer')
+                    logger.info('  - "Disable permission monitoring" enabled (if available)')
+                elif any(brand in device_model_lower for brand in ['huawei', 'honor']):
+                    logger.warning(f'Huawei device {device_model} may require HiSuite permissions')
+                elif 'xiaomi' in device_model_lower or 'redmi' in device_model_lower:
+                    logger.warning(f'Xiaomi device {device_model} may require MIUI developer options')
+                elif any(brand in device_model_lower for brand in ['oppo', 'realme', 'oneplus']):
+                    logger.warning(f'OPPO/OnePlus device {device_model} may require ColorOS/OxygenOS developer settings')
+                elif 'vivo' in device_model_lower:
+                    logger.warning(f'Vivo device {device_model} may require FunTouch OS developer permissions')
+
+            def _process_device(index: int, device: adb_models.DeviceInfo) -> None:
+                nonlocal successes, progress_count
+
+                sanitized_model = _sanitize_fragment(device.device_model)
+                sanitized_serial = _sanitize_fragment(device.device_serial_num)
+                filename = f"bug_report_{sanitized_model}_{sanitized_serial}_{timestamp}"
+                filepath = os.path.join(output_path, filename)
+
+                logger.info(
+                    f'Generating bug report {index}/{device_count} for '
+                    f'{device.device_model} ({device.device_serial_num})'
+                )
+
+                success = False
+                result: Optional[Dict[str, Any]] = None
+                failure_entry: Optional[Dict[str, str]] = None
+
                 try:
-                    sanitized_model = _sanitize_fragment(device.device_model)
-                    sanitized_serial = _sanitize_fragment(device.device_serial_num)
-                    filename = f"bug_report_{sanitized_model}_{sanitized_serial}_{timestamp}"
-                    filepath = os.path.join(output_path, filename)
-
-                    logger.info(
-                        f'Generating bug report {index}/{device_count} for '
-                        f'{device.device_model} ({device.device_serial_num})'
-                    )
-
                     result = adb_tools.generate_bug_report_device(
                         device.device_serial_num,
                         filepath,
                         timeout=300
                     )
-
                     success = bool(result.get('success'))
+
                     if success:
-                        successes += 1
                         logger.info(
                             'Bug report generated for %s (%s): %s bytes',
                             device.device_model,
@@ -71,11 +135,7 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                         )
                     else:
                         error_msg = result.get('error', 'Unknown error')
-                        failures.append({
-                            'device_serial': device.device_serial_num,
-                            'device_model': device.device_model,
-                            'error': error_msg
-                        })
+                        failure_entry = _record_failure(device, error_msg)
                         logger.error(
                             'Bug report failed for %s (%s): %s',
                             device.device_model,
@@ -83,64 +143,54 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                             error_msg
                         )
 
-                    progress_payload = {
-                        'success': success,
-                        'current': index,
-                        'total': device_count,
-                        'device_serial': device.device_serial_num,
-                        'device_model': device.device_model,
-                        'output_path': result.get('output_path', f'{filepath}.zip'),
-                        'error_message': result.get('error', ''),
-                        'details': result.get('details', '')
+                except Exception as exc:  # pragma: no cover - handled in tests via failure path
+                    error_msg = str(exc)
+                    logger.error(
+                        'Bug report failed for %s (%s): %s',
+                        device.device_model,
+                        device.device_serial_num,
+                        error_msg
+                    )
+                    failure_entry = _record_failure(device, error_msg)
+                    _log_manufacturer_guidance(device.device_model)
+                    result = {
+                        'success': False,
+                        'error': error_msg,
+                        'output_path': f'{filepath}.zip',
+                        'details': '',
                     }
 
-                    if progress_callback:
-                        try:
-                            progress_callback(progress_payload)
-                        except Exception as callback_error:
-                            logger.warning(f'Progress callback failed: {callback_error}')
+                payload = {
+                    'success': success,
+                    'total': device_count,
+                    'device_serial': device.device_serial_num,
+                    'device_model': device.device_model,
+                    'output_path': (result or {}).get('output_path', f'{filepath}.zip'),
+                    'error_message': (result or {}).get('error', ''),
+                    'details': (result or {}).get('details', ''),
+                }
 
-                except Exception as e:
-                    logger.error(f'Bug report failed for {device.device_model} ({device.device_serial_num}): {e}')
-                    failures.append({
-                        'device_serial': device.device_serial_num,
-                        'device_model': device.device_model,
-                        'error': str(e)
-                    })
+                with progress_lock:
+                    progress_count += 1
+                    payload['current'] = progress_count
+                    if success:
+                        successes += 1
+                    elif failure_entry is not None:
+                        failures.append(failure_entry)
 
-                    if progress_callback:
-                        failure_payload = {
-                            'success': False,
-                            'current': index,
-                            'total': device_count,
-                            'device_serial': device.device_serial_num,
-                            'device_model': device.device_model,
-                            'output_path': f'{filepath}.zip',
-                            'error_message': str(e),
-                            'details': ''
-                        }
-                        try:
-                            progress_callback(failure_payload)
-                        except Exception as callback_error:
-                            logger.warning(f'Progress callback failed: {callback_error}')
+                _emit_progress(payload)
 
-                    # Log manufacturer-specific guidance
-                    device_model_lower = device.device_model.lower()
-                    if 'samsung' in device_model_lower:
-                        logger.warning(f'Samsung device {device.device_model} may require:')
-                        logger.info('  - Developer options enabled')
-                        logger.info('  - USB debugging authorized for this computer')
-                        logger.info('  - "Disable permission monitoring" enabled (if available)')
-                    elif any(brand in device_model_lower for brand in ['huawei', 'honor']):
-                        logger.warning(f'Huawei device {device.device_model} may require HiSuite permissions')
-                    elif 'xiaomi' in device_model_lower or 'redmi' in device_model_lower:
-                        logger.warning(f'Xiaomi device {device.device_model} may require MIUI developer options')
-                    elif any(brand in device_model_lower for brand in ['oppo', 'realme', 'oneplus']):
-                        logger.warning(f'OPPO/OnePlus device {device.device_model} may require ColorOS/OxygenOS developer settings')
-                    elif 'vivo' in device_model_lower:
-                        logger.warning(f'Vivo device {device.device_model} may require FunTouch OS developer permissions')
+            if device_count > 0:
+                max_workers = min(device_count, max(1, os.cpu_count() or 1))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(_process_device, index, device)
+                        for index, device in enumerate(devices, 1)
+                    ]
 
-                    # Don't break the loop, continue with other devices
+                    for future in concurrent.futures.as_completed(futures):
+                        # Propagate unexpected errors
+                        future.result()
 
             # Single completion callback to avoid multiple dialogs
             if callback:
@@ -213,6 +263,13 @@ def generate_device_discovery_file(devices: List[adb_models.DeviceInfo],
                 ""
             ]
 
+            properties_map = _parallel_fetch(
+                devices,
+                lambda device: adb_tools.get_device_properties(device.device_serial_num),
+                logger,
+                'Could not get properties'
+            )
+
             for i, device in enumerate(devices, 1):
                 content_lines.extend([
                     f"## Device {i}: {device.device_model}",
@@ -223,16 +280,12 @@ def generate_device_discovery_file(devices: List[adb_models.DeviceInfo],
                     ""
                 ])
 
-                # Add device properties if available
-                try:
-                    properties = adb_tools.get_device_properties(device.device_serial_num)
-                    if properties:
-                        content_lines.append("### Device Properties:")
-                        for key, value in properties.items():
-                            content_lines.append(f"{key}: {value}")
-                        content_lines.append("")
-                except Exception as e:
-                    logger.warning(f'Could not get properties for {device.device_serial_num}: {e}')
+                properties = properties_map.get(device.device_serial_num, {})
+                if properties:
+                    content_lines.append("### Device Properties:")
+                    for key, value in properties.items():
+                        content_lines.append(f"{key}: {value}")
+                    content_lines.append("")
 
             # Write to file
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -271,6 +324,19 @@ def generate_device_info_batch(devices: List[adb_models.DeviceInfo],
             logger = common.get_logger('file_generation')
             logger.info(f'Generating device info files for {device_count} devices')
 
+            version_map = _parallel_fetch(
+                devices,
+                lambda device: adb_tools.get_android_version(device.device_serial_num),
+                logger,
+                'Could not get Android version'
+            )
+            properties_map = _parallel_fetch(
+                devices,
+                lambda device: adb_tools.get_device_properties(device.device_serial_num),
+                logger,
+                'Could not get properties'
+            )
+
             for device in devices:
                 try:
                     filename = f"device_info_{device.device_model}_{device.device_serial_num}_{timestamp}.txt"
@@ -291,26 +357,20 @@ def generate_device_info_batch(devices: List[adb_models.DeviceInfo],
                     ]
 
                     # Add system information
-                    try:
-                        # Get Android version
-                        android_version = adb_tools.get_android_version(device.device_serial_num)
-                        if android_version:
-                            content_lines.extend([
-                                "## System Information:",
-                                f"Android Version: {android_version}",
-                                ""
-                            ])
+                    android_version = version_map.get(device.device_serial_num)
+                    if android_version:
+                        content_lines.extend([
+                            "## System Information:",
+                            f"Android Version: {android_version}",
+                            ""
+                        ])
 
-                        # Get device properties
-                        properties = adb_tools.get_device_properties(device.device_serial_num)
-                        if properties:
-                            content_lines.append("## Device Properties:")
-                            for key, value in sorted(properties.items()):
-                                content_lines.append(f"{key}: {value}")
-                            content_lines.append("")
-
-                    except Exception as e:
-                        logger.warning(f'Could not get detailed info for {device.device_serial_num}: {e}')
+                    properties = properties_map.get(device.device_serial_num, {})
+                    if properties:
+                        content_lines.append("## Device Properties:")
+                        for key, value in sorted(properties.items()):
+                            content_lines.append(f"{key}: {value}")
+                        content_lines.append("")
 
                     # Write to file
                     with open(filepath, 'w', encoding='utf-8') as f:

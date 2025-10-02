@@ -56,6 +56,35 @@ class QtPluginLoaderTests(unittest.TestCase):
         self.assertIsNone(os.environ.get('QT_PLUGIN_PATH'))
         self.assertIsNone(os.environ.get('QT_QPA_PLATFORM_PLUGIN_PATH'))
 
+    def test_existing_environment_values_are_prefixed(self):
+        from utils import qt_plugin_loader
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_path = Path(tmp_dir)
+            plugin_dir = base_path / '_internal' / 'PyQt6' / 'Qt6' / 'plugins'
+            platforms_dir = plugin_dir / 'platforms'
+            platforms_dir.mkdir(parents=True)
+
+            os.environ['QT_PLUGIN_PATH'] = '/some/other/path'
+            os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = '/another/platform/path'
+            sys._MEIPASS = str(base_path)
+
+            qt_plugin_loader.configure_qt_plugin_path()
+
+            self.assertEqual(
+                os.environ['QT_PLUGIN_PATH'].split(os.pathsep)[0],
+                str(plugin_dir),
+            )
+            self.assertIn('/some/other/path', os.environ['QT_PLUGIN_PATH'].split(os.pathsep))
+            self.assertEqual(
+                os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'].split(os.pathsep)[0],
+                str(platforms_dir),
+            )
+            self.assertIn(
+                '/another/platform/path',
+                os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'].split(os.pathsep),
+            )
+
 
 if __name__ == '__main__':
     unittest.main()
