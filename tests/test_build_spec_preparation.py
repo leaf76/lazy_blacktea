@@ -21,6 +21,16 @@ class PrepareSpecContentTests(unittest.TestCase):
             self.assertIn(expected_prefix, rewritten)
             self.assertNotIn("('build/native-libs'", rewritten)
 
+    def test_includes_version_file_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            content = "('VERSION', 'VERSION'),"
+
+            rewritten = spec_utils.prepare_spec_content(content, tmp_dir)
+
+            expected_prefix = f"('{os.path.join(tmp_dir, 'VERSION')}'"
+            self.assertIn(expected_prefix, rewritten)
+            self.assertNotIn("('VERSION'", rewritten)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -21,6 +21,7 @@ def prepare_spec_content(spec_content: str, project_root: str) -> str:
     abs_utils = os.path.join(abs_root, 'utils')
     abs_icons = _ensure_trailing_sep(os.path.join(abs_assets, 'icons'))
     abs_native = os.path.join(abs_root, 'build', 'native-libs')
+    abs_version = os.path.join(abs_root, 'VERSION')
 
     replacements: Dict[str, str] = {
         "['../lazy_blacktea_pyqt.py']": f"['{abs_pyqt}']",
@@ -37,6 +38,8 @@ def prepare_spec_content(spec_content: str, project_root: str) -> str:
         "'assets/icons/": f"'{abs_icons}",
         "('build/native-libs'": f"('{abs_native}'",
         "('../build/native-libs'": f"('{abs_native}'",
+        "('../VERSION'": f"('{abs_version}'",
+        "('VERSION'": f"('{abs_version}'",
     }
 
     updated = spec_content
