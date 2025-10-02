@@ -6,7 +6,7 @@ import os
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QPixmap
+from PyQt6.QtGui import QDesktopServices, QPixmap, QPainter
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -77,7 +77,9 @@ class DeviceFilePreviewWindow(QDialog):
         image_frame.setLayout(image_container)
 
         self.graphics_view = QGraphicsView(self)
-        self.graphics_view.setRenderHints(self.graphics_view.renderHints() | Qt.RenderHint.Antialiasing)
+        self.graphics_view.setRenderHints(
+            self.graphics_view.renderHints() | QPainter.RenderHint.Antialiasing
+        )
         self.graphics_view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.graphics_view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.graphics_scene = QGraphicsScene(self)
