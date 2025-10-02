@@ -58,6 +58,7 @@ from ui.device_list_controller import DeviceListController
 from ui.device_actions_controller import DeviceActionsController
 from ui.tools_panel_controller import ToolsPanelController
 from ui.screenshot_widget import ClickableScreenshotLabel
+from ui.output_path_manager import OutputPathManager
 from ui.ui_inspector_dialog import UIInspectorDialog
 from ui.device_group_manager import DeviceGroupManager
 from ui.console_manager import ConsoleManager
@@ -153,7 +154,6 @@ class WindowMain(QMainWindow):
         self.refresh_interval_actions: Dict[int, QAction] = {}
         self.auto_refresh_action: Optional[QAction] = None
         self.auto_refresh_enabled = True
-        self.previous_output_path_value: str = ''
         self.device_file_tree: Optional[QTreeWidget] = None
         self.device_file_browser_path_edit = None
         self.device_file_status_label = None
@@ -276,6 +276,7 @@ class WindowMain(QMainWindow):
             logger.info(f'scrcpy is available (version {getattr(self, "scrcpy_major_version", "unknown")})')
 
         self.init_ui()
+        self.output_path_manager = OutputPathManager(self, self.file_dialog_manager)
         self.load_config()
 
         # Initialize groups list (now that UI is created)
@@ -859,28 +860,37 @@ class WindowMain(QMainWindow):
 
     def browse_output_path(self):
         """Browse for unified output directory used by screenshots/recordings."""
+        if hasattr(self, 'output_path_manager'):
+            self.output_path_manager.browse_primary_output_path()
+            return
+
         directory = self.file_dialog_manager.select_directory(self, 'Select Output Directory')
         if directory:
-            # Use common.py to ensure proper path handling
             normalized_path = common.make_gen_dir_path(directory)
             self.output_path_edit.setText(normalized_path)
-            # Keep file generation path in sync if it was empty or following main path
             current_file_gen = self.file_gen_output_path_edit.text().strip()
-            if not current_file_gen or current_file_gen == self.previous_output_path_value:
+            if not current_file_gen:
                 self.file_gen_output_path_edit.setText(normalized_path)
-            self.previous_output_path_value = normalized_path
 
     def browse_file_generation_output_path(self):
         """Browse and select file generation output directory."""
+        if hasattr(self, 'output_path_manager'):
+            path = self.output_path_manager.browse_file_generation_output_path()
+            if path:
+                logger.info(f'Selected file generation output directory: {path}')
+            return
+
         directory = self.file_dialog_manager.select_directory(self, 'Select File Generation Output Directory')
         if directory:
-            # Use common.py to ensure proper path handling
             normalized_path = common.make_gen_dir_path(directory)
             self.file_gen_output_path_edit.setText(normalized_path)
             logger.info(f'Selected file generation output directory: {normalized_path}')
 
     def _ensure_output_path_initialized(self) -> str:
         """Make sure we have a usable primary output path."""
+        if hasattr(self, 'output_path_manager'):
+            return self.output_path_manager.ensure_primary_output_path()
+
         path = self.output_path_edit.text().strip()
         if path:
             return path
@@ -888,20 +898,20 @@ class WindowMain(QMainWindow):
         fallback = self.file_gen_output_path_edit.text().strip()
         if fallback:
             self.output_path_edit.setText(fallback)
-            self.previous_output_path_value = fallback
             if not self.file_gen_output_path_edit.text().strip():
                 self.file_gen_output_path_edit.setText(fallback)
             return fallback
 
         default_dir = common.make_gen_dir_path(PathConstants.DEFAULT_OUTPUT_DIR)
         self.output_path_edit.setText(default_dir)
-        self.previous_output_path_value = default_dir
         if not self.file_gen_output_path_edit.text().strip():
             self.file_gen_output_path_edit.setText(default_dir)
         return default_dir
 
     def get_primary_output_path(self) -> str:
         """Return the current effective output path used for screenshots/recordings."""
+        if hasattr(self, 'output_path_manager'):
+            return self.output_path_manager.get_primary_output_path()
         return self._ensure_output_path_initialized()
 
 
@@ -2024,6 +2034,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     # File generation methods
     def _get_file_generation_output_path(self) -> str:
         """Retrieve preferred output path for file generation workflows."""
+        if hasattr(self, 'output_path_manager'):
+            return self.output_path_manager.get_file_generation_output_path()
+
         if hasattr(self, 'file_gen_output_path_edit'):
             candidate = self.file_gen_output_path_edit.text().strip()
             if candidate:
@@ -2036,6 +2049,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
     def _get_adb_tools_output_path(self) -> str:
         """Return the output directory configured in the ADB Tools tab."""
+        if hasattr(self, 'output_path_manager'):
+            return self.output_path_manager.get_adb_tools_output_path()
+
         if hasattr(self, 'output_path_edit'):
             return self.output_path_edit.text().strip()
         return ''
@@ -2494,19 +2510,22 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
             # Load output path from old config format for compatibility
             old_config = json_utils.read_config_json()
-            if old_config.get('output_path'):
-                self.output_path_edit.setText(old_config['output_path'])
-                self.previous_output_path_value = old_config['output_path']
-
-            # Load file generation output path
-            file_gen_path = old_config.get('file_gen_output_path', '').strip()
-            if file_gen_path:
-                self.file_gen_output_path_edit.setText(file_gen_path)
+            if hasattr(self, 'output_path_manager'):
+                self.output_path_manager.apply_legacy_paths(
+                    old_config.get('output_path'),
+                    old_config.get('file_gen_output_path', ''),
+                )
             else:
-                # Use main output path as default for file generation
-                main_output_path = old_config.get('output_path', '')
-                if main_output_path:
-                    self.file_gen_output_path_edit.setText(main_output_path)
+                if old_config.get('output_path'):
+                    self.output_path_edit.setText(old_config['output_path'])
+
+                file_gen_path = old_config.get('file_gen_output_path', '').strip()
+                if file_gen_path:
+                    self.file_gen_output_path_edit.setText(file_gen_path)
+                else:
+                    main_output_path = old_config.get('output_path', '')
+                    if main_output_path:
+                        self.file_gen_output_path_edit.setText(main_output_path)
 
             # Load refresh interval from new config (set minimum 5 seconds for packaged apps)
             self.set_refresh_interval(max(5, config.device.refresh_interval))

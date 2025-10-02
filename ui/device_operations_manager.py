@@ -723,9 +723,14 @@ class DeviceOperationsManager(QObject):
         )
         if directory:
             normalized = common.make_gen_dir_path(directory)
-            if self.parent_window and hasattr(self.parent_window, 'output_path_edit'):
+            if self.parent_window and hasattr(self.parent_window, 'output_path_manager'):
+                self.parent_window.output_path_manager.set_primary_output_path(
+                    normalized,
+                    sync_generation_if_following=False,
+                    update_previous=True,
+                )
+            elif self.parent_window and hasattr(self.parent_window, 'output_path_edit'):
                 self.parent_window.output_path_edit.setText(normalized)
-                self.parent_window.previous_output_path_value = normalized
             return normalized
         return ''
 
