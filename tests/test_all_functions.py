@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch, MagicMock
 import subprocess
 from typing import List, Dict
 import shutil
+import logging
 
 # Add the project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +21,9 @@ from utils.adb_models import DeviceInfo
 from ui.device_manager import DeviceManager, DeviceRefreshThread
 from utils.recording_utils import RecordingManager
 from config.config_manager import ConfigManager
+from ui.command_executor import CommandExecutor
+from ui.file_operations_manager import CommandHistoryManager
+from PyQt6.QtCore import QObject
 
 
 class TestDeviceDetection(unittest.TestCase):
@@ -431,6 +435,68 @@ class TestUtilityFunctions(unittest.TestCase):
             return False
 
 
+class TestCommandHistoryPersistence(unittest.TestCase):
+    """Test command history synchronization and persistence logic."""
+
+    def _create_dummy_parent(self):
+        class DummyParent(QObject):
+            def __init__(self):
+                super().__init__()
+                self.logger = logging.getLogger('test_command_history')
+                self.command_executor = CommandExecutor(self)
+                self.history_updates = 0
+
+            def update_history_display(self):
+                self.history_updates += 1
+
+        return DummyParent()
+
+    def test_history_sync_with_executor(self):
+        """Ensure manager updates command executor history consistently."""
+        print("🧪 Testing command history synchronization...")
+
+        try:
+            with patch('ui.file_operations_manager.json_utils.read_config_json', return_value={}), \
+                 patch('ui.file_operations_manager.json_utils.save_config_json'):
+
+                parent = self._create_dummy_parent()
+                manager = CommandHistoryManager(parent)
+                parent.command_history_manager = manager
+
+                test_command = 'adb devices'
+                manager.add_to_history(test_command)
+
+                assert test_command in manager.command_history, 'Manager should record command'
+                executor_history = parent.command_executor.get_command_history()
+                assert test_command in executor_history, 'Executor should mirror manager history'
+
+                manager.clear_history()
+                assert manager.command_history == [], 'Manager history should clear'
+                assert parent.command_executor.get_command_history() == [], 'Executor history should clear'
+
+            print("   ✅ Command history synchronization works")
+            return True
+
+        except Exception as e:
+            print(f"   ❌ Command history test failed: {e}")
+            import traceback
+            print(f"   🔍 Traceback: {traceback.format_exc()}")
+            return False
+
+
+def run_command_history_tests():
+    """Run command history synchronization tests."""
+    print("\n📜 === COMMAND HISTORY TESTS ===")
+
+    test_case = TestCommandHistoryPersistence()
+    results = {}
+
+    success = test_case.test_history_sync_with_executor()
+    results['command_history_sync'] = success
+
+    return results
+
+
 def run_device_detection_tests():
     """Run device detection tests."""
     print("\\n🔍 === DEVICE DETECTION TESTS ===")
@@ -541,6 +607,7 @@ def main():
     all_results = {}
 
     # Run all test suites
+    all_results.update(run_command_history_tests())
     all_results.update(run_device_detection_tests())
     all_results.update(run_recording_tests())
     all_results.update(run_screenshot_tests())

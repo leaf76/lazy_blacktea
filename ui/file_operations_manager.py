@@ -306,21 +306,42 @@ class CommandHistoryManager:
         self.command_history = []
         self.load_command_history_from_config()
 
+    def _can_update_ui(self) -> bool:
+        """Return True when parent can safely refresh the history list."""
+        return (
+            hasattr(self.parent_window, 'update_history_display') and
+            hasattr(self.parent_window, 'command_history_manager') and
+            getattr(self.parent_window, 'command_history_manager') is self
+        )
+
+    def _sync_executor_history(self) -> None:
+        """Keep the command executor's history aligned with the manager."""
+        executor = getattr(self.parent_window, 'command_executor', None)
+        if executor is not None:
+            executor.set_command_history(self.command_history)
+
+    def set_history(self, history: List[str], *, persist: bool = False) -> None:
+        """Replace command history with the provided sequence."""
+        normalized = history[-50:] if history else []
+        self.command_history = normalized
+
+        if self._can_update_ui():
+            self.parent_window.update_history_display()
+
+        self._sync_executor_history()
+
+        if persist:
+            self.save_command_history_to_config()
+
     def add_to_history(self, command: str):
         """添加命令到歷史記錄"""
         if command and command not in self.command_history:
-            self.command_history.append(command)
-            # 保持最近50條命令
-            if len(self.command_history) > 50:
-                self.command_history.pop(0)
-            self.save_command_history_to_config()
+            updated_history = self.command_history + [command]
+            self.set_history(updated_history, persist=True)
 
     def clear_history(self):
         """清空命令歷史"""
-        self.command_history.clear()
-        if hasattr(self.parent_window, 'update_history_display'):
-            self.parent_window.update_history_display()
-        self.save_command_history_to_config()
+        self.set_history([], persist=True)
 
     def export_command_history(self):
         """導出命令歷史到文件"""
@@ -365,17 +386,10 @@ class CommandHistoryManager:
                         loaded_commands.append(line)
 
                 if loaded_commands:
-                    self.command_history.extend(loaded_commands)
-                    # 去重並保持順序
+                    merged_commands = self.command_history + loaded_commands
                     seen = set()
-                    self.command_history = [x for x in self.command_history if not (x in seen or seen.add(x))]
-                    # 保持最近50條命令
-                    if len(self.command_history) > 50:
-                        self.command_history = self.command_history[-50:]
-
-                    if hasattr(self.parent_window, 'update_history_display'):
-                        self.parent_window.update_history_display()
-                    self.save_command_history_to_config()
+                    deduped_commands = [cmd for cmd in merged_commands if not (cmd in seen or seen.add(cmd))]
+                    self.set_history(deduped_commands, persist=True)
                     self.parent_window.show_info('Import History', f'Imported {len(loaded_commands)} commands from:\n{filename}')
                 else:
                     self.parent_window.show_info('Import History', 'No valid commands found in file.')
@@ -387,12 +401,13 @@ class CommandHistoryManager:
         """從配置文件加載命令歷史"""
         try:
             config_data = json_utils.read_config_json()
-            if 'command_history' in config_data:
-                self.command_history = config_data['command_history'][-50:]  # 保持最近50條
-                if hasattr(self.parent_window, 'update_history_display'):
-                    self.parent_window.update_history_display()
+            history = config_data.get('command_history', [])
+            self.set_history(history, persist=False)
         except Exception:
             self.command_history = []
+            self._sync_executor_history()
+            if self._can_update_ui():
+                self.parent_window.update_history_display()
 
     def save_command_history_to_config(self):
         """保存命令歷史到配置文件"""

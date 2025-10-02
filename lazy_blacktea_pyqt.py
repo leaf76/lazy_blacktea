@@ -2315,8 +2315,8 @@ After installation, restart lazy blacktea to use device mirroring functionality.
                 self.device_groups = old_config['device_groups']
 
             # Load command history from new config
-            if config.command_history:
-                self.command_executor.set_command_history(config.command_history)
+            if hasattr(self, 'command_history_manager'):
+                self.command_history_manager.set_history(config.command_history or [], persist=False)
 
             logger.info('Configuration loaded successfully')
         except Exception as e:
@@ -2331,9 +2331,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.config_manager.update_device_settings(refresh_interval=self.refresh_interval)
 
             # Save command history to new config
-            if hasattr(self, 'command_executor'):
+            if hasattr(self, 'command_history_manager'):
                 config = self.config_manager.load_config()
-                config.command_history = self.command_executor.get_command_history()
+                config.command_history = list(self.command_history_manager.command_history)
                 self.config_manager.save_config(config)
 
             # Also save to old config format for compatibility
