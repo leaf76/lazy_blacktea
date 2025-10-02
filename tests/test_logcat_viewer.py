@@ -192,6 +192,53 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         ]
         self.assertEqual(results, ['beta event ready'])
 
+    def test_persisted_settings_apply_on_init(self):
+        settings = {
+            'max_lines': 2048,
+            'history_multiplier': 9,
+            'update_interval_ms': 180,
+            'max_lines_per_update': 120,
+            'max_buffer_size': 220,
+        }
+
+        window = LogcatWindow(_DummyDevice(), settings=settings)
+        try:
+            self.assertEqual(window.max_lines, 2048)
+            self.assertEqual(window.history_multiplier, 9)
+            self.assertEqual(window.update_interval_ms, 180)
+            self.assertEqual(window.max_lines_per_update, 120)
+            self.assertEqual(window.max_buffer_size, 220)
+            self.assertEqual(window.log_proxy._visible_limit, 2048)
+        finally:
+            window.close()
+
+    def test_performance_settings_updates_notify_callback(self):
+        captured = {}
+
+        def record(settings):
+            captured.update(settings)
+
+        window = LogcatWindow(_DummyDevice(), on_settings_changed=record)
+        try:
+            window.max_lines = 1500
+            window.history_multiplier = 6
+            window.update_interval_ms = 175
+            window.max_lines_per_update = 90
+            window.max_buffer_size = 180
+
+            window.on_performance_settings_updated()
+
+            self.assertEqual(captured,
+                             {
+                                 'max_lines': 1500,
+                                 'history_multiplier': 6,
+                                 'update_interval_ms': 175,
+                                 'max_lines_per_update': 90,
+                                 'max_buffer_size': 180,
+                             })
+        finally:
+            window.close()
+
     def test_filtered_history_retains_until_capacity(self):
         self.window.max_lines = 3
         self.window.history_multiplier = 1

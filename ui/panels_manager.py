@@ -415,14 +415,18 @@ class PanelsManager(QObject):
         # UI Scale submenu
         scale_menu = settings_menu.addMenu('UI Scale')
         scale_group = QActionGroup(main_window)
+        scale_group.setExclusive(True)
         scales = [('Default', 1.0), ('Large', 1.25), ('Extra Large', 1.5)]
+        scale_actions = {}
         for name, scale in scales:
             action = QAction(name, main_window, checkable=True)
             scale_group.addAction(action)
-            if scale == 1.0:
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, s=scale: main_window.set_ui_scale(s))
+            action.triggered.connect(lambda checked, s=scale: main_window.handle_ui_scale_selection(s))
             scale_menu.addAction(action)
+            scale_actions[scale] = action
+
+        if hasattr(main_window, 'register_ui_scale_actions'):
+            main_window.register_ui_scale_actions(scale_actions)
 
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')

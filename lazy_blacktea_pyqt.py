@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import math
 import os
 import platform
 import posixpath
@@ -31,7 +32,7 @@ from utils import json_utils
 from utils import time_formatting
 
 # Import configuration and constants
-from config.config_manager import ConfigManager
+from config.config_manager import ConfigManager, LogcatSettings
 from config.constants import (
     UIConstants, PathConstants, ADBConstants, MessageConstants,
     LoggingConstants, ApplicationConstants, PanelText
@@ -147,6 +148,8 @@ class WindowMain(QMainWindow):
         self.device_file_browser_current_serial: Optional[str] = None
         self.device_file_browser_current_path: str = '/'
         self.selection_summary_label = None
+        self.ui_scale_actions: Dict[float, QAction] = {}
+        self.logcat_settings: Optional[LogcatSettings] = None
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -425,13 +428,52 @@ class WindowMain(QMainWindow):
         """Show error message box."""
         self.dialog_manager.show_error(title, message)
 
+    def register_ui_scale_actions(self, actions: Dict[float, QAction]):
+        """Register UI scale actions so menu state stays in sync."""
+        self.ui_scale_actions = actions or {}
+        self._update_ui_scale_actions(self.user_scale)
+
+    def _update_ui_scale_actions(self, active_scale: float):
+        """Sync UI scale menu actions with the current scale."""
+        if not self.ui_scale_actions:
+            return
+
+        matched_scale: Optional[float] = None
+        for scale in self.ui_scale_actions:
+            if math.isclose(scale, active_scale, rel_tol=1e-6, abs_tol=1e-3):
+                matched_scale = scale
+                break
+
+        for scale, action in self.ui_scale_actions.items():
+            previous_state = action.blockSignals(True)
+            action.setChecked(scale == matched_scale)
+            action.blockSignals(previous_state)
+
+    def handle_ui_scale_selection(self, scale: float):
+        """Apply user-selected UI scale and persist the preference."""
+        self.set_ui_scale(scale)
+        if hasattr(self, 'config_manager') and self.config_manager is not None:
+            try:
+                self.config_manager.update_ui_settings(ui_scale=self.user_scale)
+            except Exception as exc:
+                logger.error('Failed to persist UI scale preference: %s', exc)
+
     def set_ui_scale(self, scale: float):
         """Set UI scale factor."""
-        self.user_scale = scale
+        self.user_scale = max(0.5, min(scale, 3.0))
         font = self.font()
-        font.setPointSize(int(10 * scale))
+        base_size = max(6, int(round(10 * self.user_scale)))
+        font.setPointSize(base_size)
         self.setFont(font)
-        logger.debug(f'UI scale set to {scale}')
+
+        app = QApplication.instance()
+        if app is not None:
+            app_font = app.font()
+            app_font.setPointSize(base_size)
+            app.setFont(app_font)
+
+        self._update_ui_scale_actions(self.user_scale)
+        logger.debug(f'UI scale set to {self.user_scale}')
 
     def set_refresh_interval(self, interval: int):
         """Set device refresh interval."""
@@ -1488,7 +1530,22 @@ class WindowMain(QMainWindow):
             return
 
         try:
-            self.logcat_window = LogcatWindow(device, self)
+            settings_payload: Dict[str, int] = {}
+            if self.logcat_settings is not None:
+                settings_payload = {
+                    'max_lines': self.logcat_settings.max_lines,
+                    'history_multiplier': self.logcat_settings.history_multiplier,
+                    'update_interval_ms': self.logcat_settings.update_interval_ms,
+                    'max_lines_per_update': self.logcat_settings.max_lines_per_update,
+                    'max_buffer_size': self.logcat_settings.max_buffer_size,
+                }
+
+            self.logcat_window = LogcatWindow(
+                device,
+                self,
+                settings=settings_payload,
+                on_settings_changed=self.persist_logcat_settings,
+            )
             self.logcat_window.show()
         except Exception as exc:
             logger.error('Failed to open logcat window: %s', exc)
@@ -2034,6 +2091,8 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         try:
             config = self.config_manager.load_config()
 
+            self.logcat_settings = config.logcat
+
             # Load output path from old config format for compatibility
             old_config = json_utils.read_config_json()
             if old_config.get('output_path'):
@@ -2095,6 +2154,34 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         except Exception as e:
             logger.error(f'Could not save config: {e}')
             self.error_handler.handle_error(ErrorCode.CONFIG_INVALID, str(e))
+
+    def persist_logcat_settings(self, settings: Dict[str, int]) -> None:
+        """Persist logcat performance settings through the config manager."""
+        if not isinstance(settings, dict):
+            return
+
+        if self.logcat_settings is None:
+            self.logcat_settings = LogcatSettings()
+
+        update_payload: Dict[str, int] = {}
+        for field in ['max_lines', 'history_multiplier', 'update_interval_ms', 'max_lines_per_update', 'max_buffer_size']:
+            if field in settings:
+                try:
+                    value = int(settings[field])
+                except (TypeError, ValueError):
+                    logger.debug('Ignoring invalid logcat setting for %s: %s', field, settings[field])
+                    continue
+                setattr(self.logcat_settings, field, value)
+                update_payload[field] = value
+
+        if not update_payload:
+            return
+
+        try:
+            self.config_manager.update_logcat_settings(**update_payload)
+            logger.info('Logcat performance settings persisted: %s', update_payload)
+        except Exception as exc:
+            logger.error('Failed to persist logcat settings: %s', exc)
 
     def closeEvent(self, event):
         """Handle window close event with immediate response."""

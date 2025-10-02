@@ -5,7 +5,13 @@ import tempfile
 import json
 from pathlib import Path
 
-from config.config_manager import ConfigManager, AppConfig, UISettings, DeviceSettings
+from config.config_manager import (
+    ConfigManager,
+    AppConfig,
+    UISettings,
+    DeviceSettings,
+    LogcatSettings,
+)
 
 
 class TestConfigManager(unittest.TestCase):
@@ -30,12 +36,15 @@ class TestConfigManager(unittest.TestCase):
         self.assertIsInstance(config, AppConfig)
         self.assertIsInstance(config.ui, UISettings)
         self.assertIsInstance(config.device, DeviceSettings)
+        self.assertIsInstance(config.logcat, LogcatSettings)
 
         # Check default values
         self.assertEqual(config.ui.window_width, 1200)
         self.assertEqual(config.ui.window_height, 800)
         self.assertEqual(config.device.refresh_interval, 30)
         self.assertEqual(config.command.max_history_size, 50)
+        self.assertEqual(config.logcat.max_lines, 1000)
+        self.assertEqual(config.logcat.history_multiplier, 5)
 
     def test_save_and_load_config(self):
         """Test configuration saving and loading."""
@@ -100,6 +109,38 @@ class TestConfigManager(unittest.TestCase):
         config = self.config_manager.load_config()
         self.assertEqual(config.device.refresh_interval, 15)
         self.assertEqual(config.device.auto_connect, False)
+
+    def test_update_logcat_settings(self):
+        """Test logcat performance settings update."""
+        self.config_manager.update_logcat_settings(
+            max_lines=2000,
+            history_multiplier=7,
+            update_interval_ms=150,
+            max_lines_per_update=80,
+            max_buffer_size=250,
+        )
+
+        config = self.config_manager.load_config()
+        self.assertEqual(config.logcat.max_lines, 2000)
+        self.assertEqual(config.logcat.history_multiplier, 7)
+        self.assertEqual(config.logcat.update_interval_ms, 150)
+        self.assertEqual(config.logcat.max_lines_per_update, 80)
+        self.assertEqual(config.logcat.max_buffer_size, 250)
+
+    def test_load_legacy_ui_scale_from_flat_config(self):
+        """Ensure legacy flat ui_scale values are respected."""
+        legacy_config = {
+            "ui_scale": 1.4,
+            "refresh_interval": 45  # Legacy device interval placement
+        }
+
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            json.dump(legacy_config, f)
+
+        config = self.config_manager.load_config()
+
+        self.assertAlmostEqual(config.ui.ui_scale, 1.4)
+        self.assertEqual(config.device.refresh_interval, 45)
 
     def test_export_import_config(self):
         """Test configuration export and import."""

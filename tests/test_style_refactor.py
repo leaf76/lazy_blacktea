@@ -250,6 +250,12 @@ class StyleRefactorTest(unittest.TestCase):
         print(f"    ✅ CSS格式正確")
         print(f"    📏 PRIMARY按鈕CSS長度: {len(primary_css)} 字符")
 
+    def test_action_button_style_has_explicit_text_color(self):
+        """確保動作按鈕樣式包含文字顏色設定避免反白看不見。"""
+        style = StyleManager.get_action_button_style()
+        self.assertIn('\n    color:', style)
+        print("    ✅ Action 按鈕具備文字顏色設定")
+
     def test_style_consistency(self):
         """測試樣式一致性"""
         print("\n⚖️ 測試樣式一致性...")

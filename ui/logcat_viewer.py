@@ -9,7 +9,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Callable
 
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
@@ -510,7 +510,14 @@ class PerformanceSettingsDialog(QDialog):
 class LogcatWindow(QDialog):
     """Logcat viewer window with real-time streaming and filtering capabilities."""
 
-    def __init__(self, device, parent=None):
+    def __init__(
+        self,
+        device,
+        parent=None,
+        *,
+        settings: Optional[Dict[str, int]] = None,
+        on_settings_changed: Optional[Callable[[Dict[str, int]], None]] = None,
+    ):
         super().__init__(parent)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
@@ -523,6 +530,7 @@ class LogcatWindow(QDialog):
         self.max_lines = 1000
         self.filters: Dict[str, str] = {}
         self.current_filter = None
+        self._settings_callback = on_settings_changed
 
         # Data model and filtering pipeline
         self.log_model = LogcatListModel(self)
@@ -546,6 +554,8 @@ class LogcatWindow(QDialog):
         self.last_update_time = 0
         self.history_multiplier = 5
 
+        self._apply_persisted_settings(settings or {})
+
         # Filtering state
         self.log_levels_order = ['V', 'D', 'I', 'W', 'E', 'F']
         self.live_filter_pattern: Optional[str] = None
@@ -558,6 +568,38 @@ class LogcatWindow(QDialog):
     def _get_status_prefix(self):
         """Get status prefix emoji based on running state."""
         return '🟢' if self.is_running else '⏸️'
+
+    def _apply_persisted_settings(self, settings: Dict[str, int]) -> None:
+        """Apply persisted performance settings with basic validation."""
+        if not settings:
+            return
+
+        def _coerce(value, minimum, default):
+            try:
+                numeric = int(value)
+            except (TypeError, ValueError):
+                return default
+            if numeric < minimum:
+                return minimum
+            return numeric
+
+        if 'max_lines' in settings:
+            self.max_lines = _coerce(settings.get('max_lines'), 100, self.max_lines)
+            self.log_proxy.set_visible_limit(self.max_lines)
+
+        if 'history_multiplier' in settings:
+            self.history_multiplier = _coerce(settings.get('history_multiplier'), 1, self.history_multiplier)
+
+        if 'update_interval_ms' in settings:
+            self.update_interval_ms = _coerce(settings.get('update_interval_ms'), 50, self.update_interval_ms)
+
+        if 'max_lines_per_update' in settings:
+            self.max_lines_per_update = _coerce(settings.get('max_lines_per_update'), 5, self.max_lines_per_update)
+
+        if 'max_buffer_size' in settings:
+            self.max_buffer_size = _coerce(settings.get('max_buffer_size'), 10, self.max_buffer_size)
+
+        self.update_timer.setInterval(self.update_interval_ms)
 
     def _update_status_label(self, text):
         """Update status label with consistent formatting."""
@@ -1138,10 +1180,25 @@ class LogcatWindow(QDialog):
             total_logs = self.log_model.rowCount()
             self._update_status_label(f'Total: {total_logs}/{capacity} lines')
 
+    def _notify_settings_changed(self) -> None:
+        """Emit persisted settings through callback if provided."""
+        if callable(self._settings_callback):
+            self._settings_callback(
+                {
+                    'max_lines': self.max_lines,
+                    'history_multiplier': self.history_multiplier,
+                    'update_interval_ms': self.update_interval_ms,
+                    'max_lines_per_update': self.max_lines_per_update,
+                    'max_buffer_size': self.max_buffer_size,
+                }
+            )
+
     def on_performance_settings_updated(self):
         """Handle updates from the performance settings dialog."""
         self.limit_log_lines()
         self._update_status_counts()
+        self.update_timer.setInterval(self.update_interval_ms)
+        self._notify_settings_changed()
 
     def start_logcat(self):
         """Start the logcat streaming process."""

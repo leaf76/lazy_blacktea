@@ -127,10 +127,15 @@ class CompletionDialogManager:
         start_recording_btn.clicked.connect(lambda: (dialog.accept(), window.start_screen_record()))
         layout.addWidget(start_recording_btn)
 
-        copy_path_btn = QPushButton('📋 Copy Folder Path')
-        copy_path_btn.setStyleSheet(button_style)
-        copy_path_btn.clicked.connect(lambda: window.system_actions_manager.copy_to_clipboard(payload['output_path']))
-        layout.addWidget(copy_path_btn)
+        open_folder_btn = QPushButton('🗂️ Open Folder')
+        open_folder_btn.setStyleSheet(button_style)
+        open_folder_btn.clicked.connect(
+            lambda: (
+                dialog.accept(),
+                window.system_actions_manager.open_folder(payload['output_path'])
+            )
+        )
+        layout.addWidget(open_folder_btn)
 
         if payload['suggested_actions']['file_count']:
             file_count_label = QLabel(

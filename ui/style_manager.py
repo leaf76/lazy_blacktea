@@ -476,6 +476,7 @@ class StyleManager:
                 (
                     ("background-color", "{background}"),
                     ("border", "1px solid {border}"),
+                    ("color", "{text_primary}"),
                     ("padding", "10px"),
                     ("border-radius", "5px"),
                     ("text-align", "left"),
@@ -485,6 +486,20 @@ class StyleManager:
                 "QPushButton:hover",
                 (
                     ("background-color", "{background_hover}"),
+                ),
+            ),
+            (
+                "QPushButton:pressed",
+                (
+                    ("background-color", "{border}"),
+                    ("color", "{text_primary}"),
+                ),
+            ),
+            (
+                "QPushButton:focus",
+                (
+                    ("outline", "none"),
+                    ("border", "1px solid {secondary}"),
                 ),
             ),
         ),

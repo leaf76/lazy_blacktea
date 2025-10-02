@@ -56,12 +56,23 @@ class LoggingSettings:
 
 
 @dataclass
+class LogcatSettings:
+    """Logcat performance tuning settings."""
+    max_lines: int = 1000
+    history_multiplier: int = 5
+    update_interval_ms: int = 200
+    max_lines_per_update: int = 50
+    max_buffer_size: int = 100
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     ui: UISettings
     device: DeviceSettings
     command: CommandSettings
     logging: LoggingSettings
+    logcat: LogcatSettings
     command_history: list = None
     version: str = "1.0.0"
 
@@ -92,11 +103,22 @@ class ConfigManager:
             ui=UISettings(),
             device=DeviceSettings(),
             command=CommandSettings(),
-            logging=LoggingSettings()
+            logging=LoggingSettings(),
+            logcat=LogcatSettings()
         )
 
     def _validate_config(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and clean configuration dictionary."""
+        # Normalize legacy flat keys before merging
+        normalized: Dict[str, Any] = dict(config_dict)
+        legacy_ui_scale = normalized.pop('ui_scale', None)
+        if isinstance(legacy_ui_scale, (int, float)):
+            normalized.setdefault('ui', {})['ui_scale'] = float(legacy_ui_scale)
+
+        legacy_refresh = normalized.pop('refresh_interval', None)
+        if isinstance(legacy_refresh, int):
+            normalized.setdefault('device', {})['refresh_interval'] = legacy_refresh
+
         # Ensure all required sections exist
         default_config = asdict(self._create_default_config())
 
@@ -111,7 +133,7 @@ class ConfigManager:
                         result[key] = value
             return result
 
-        validated = merge_dict(default_config, config_dict)
+        validated = merge_dict(default_config, normalized)
 
         # Validate specific constraints
         ui_settings = validated.get('ui', {})
@@ -123,6 +145,23 @@ class ConfigManager:
         if device_settings.get('refresh_interval', 30) < 1:
             device_settings['refresh_interval'] = 30
             logger.warning('Refresh interval too low, reset to 30 seconds')
+
+        logcat_settings = validated.get('logcat', {})
+        if logcat_settings.get('max_lines', 1000) < 100:
+            logcat_settings['max_lines'] = 1000
+            logger.warning('Logcat max_lines too low, reset to 1000')
+        if logcat_settings.get('history_multiplier', 5) < 1:
+            logcat_settings['history_multiplier'] = 5
+            logger.warning('Logcat history multiplier too low, reset to 5')
+        if logcat_settings.get('update_interval_ms', 200) < 50:
+            logcat_settings['update_interval_ms'] = 200
+            logger.warning('Logcat update interval too low, reset to 200 ms')
+        if logcat_settings.get('max_lines_per_update', 50) < 5:
+            logcat_settings['max_lines_per_update'] = 50
+            logger.warning('Logcat lines per update too low, reset to 50')
+        if logcat_settings.get('max_buffer_size', 100) < 10:
+            logcat_settings['max_buffer_size'] = 100
+            logger.warning('Logcat buffer size too low, reset to 100')
 
         return validated
 
@@ -144,6 +183,7 @@ class ConfigManager:
                     device=DeviceSettings(**validated_dict['device']),
                     command=CommandSettings(**validated_dict['command']),
                     logging=LoggingSettings(**validated_dict['logging']),
+                    logcat=LogcatSettings(**validated_dict['logcat']),
                     command_history=validated_dict.get('command_history', []),
                     version=validated_dict.get('version', '1.0.0')
                 )
@@ -167,6 +207,7 @@ class ConfigManager:
                         device=DeviceSettings(**validated_dict['device']),
                         command=CommandSettings(**validated_dict['command']),
                         logging=LoggingSettings(**validated_dict['logging']),
+                        logcat=LogcatSettings(**validated_dict['logcat']),
                         command_history=validated_dict.get('command_history', []),
                         version=validated_dict.get('version', '1.0.0')
                     )
@@ -225,6 +266,10 @@ class ConfigManager:
         """Get logging settings."""
         return self.load_config().logging
 
+    def get_logcat_settings(self) -> LogcatSettings:
+        """Get logcat performance settings."""
+        return self.load_config().logcat
+
     def update_ui_settings(self, **kwargs):
         """Update UI settings."""
         config = self.load_config()
@@ -247,6 +292,14 @@ class ConfigManager:
         for key, value in kwargs.items():
             if hasattr(config.command, key):
                 setattr(config.command, key, value)
+        self.save_config(config)
+
+    def update_logcat_settings(self, **kwargs):
+        """Update logcat performance settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.logcat, key):
+                setattr(config.logcat, key, value)
         self.save_config(config)
 
     def reset_to_defaults(self):
@@ -282,6 +335,7 @@ class ConfigManager:
                 device=DeviceSettings(**validated_dict['device']),
                 command=CommandSettings(**validated_dict['command']),
                 logging=LoggingSettings(**validated_dict['logging']),
+                logcat=LogcatSettings(**validated_dict['logcat']),
                 command_history=validated_dict.get('command_history', []),
                 version=validated_dict.get('version', '1.0.0')
             )
