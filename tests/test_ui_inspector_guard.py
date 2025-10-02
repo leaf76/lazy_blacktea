@@ -36,6 +36,17 @@ class UIInspectorPrerequisitesTests(unittest.TestCase):
         self.assertTrue(ready)
         self.assertIsNone(message)
 
+    def test_minimal_qt_platform_is_blocked(self):
+        with patch('utils.ui_inspector_utils.platform.system', return_value='Linux'):
+            with patch('utils.ui_inspector_utils.adb_tools.is_adb_installed', return_value=True):
+                env = {'QT_QPA_PLATFORM': 'minimal'}
+                with patch.dict('utils.ui_inspector_utils.os.environ', env, clear=True):
+                    ready, message = check_ui_inspector_prerequisites()
+
+        self.assertFalse(ready)
+        self.assertIsNotNone(message)
+        self.assertIn('QT_QPA_PLATFORM=minimal', message)
+
 
 if __name__ == '__main__':
     unittest.main()

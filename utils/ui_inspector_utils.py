@@ -36,8 +36,10 @@ def check_ui_inspector_prerequisites() -> Tuple[bool, Optional[str]]:
     if system == 'linux':
         display = os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')
         qt_platform = os.environ.get('QT_QPA_PLATFORM', '').lower()
-        allowed_headless = {'offscreen', 'minimal'}
-        if not display and qt_platform not in allowed_headless:
+
+        if qt_platform == 'minimal':
+            issues.append('• QT_QPA_PLATFORM=minimal causes segmentation faults. Use a graphical session or set QT_QPA_PLATFORM=offscreen.')
+        elif not display and qt_platform not in {'offscreen'}:
             issues.append('• DISPLAY/WAYLAND_DISPLAY is not set. Launch from a graphical session or set QT_QPA_PLATFORM=offscreen.')
 
     if issues:
