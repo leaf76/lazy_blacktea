@@ -10,6 +10,11 @@ import sys
 import threading
 import webbrowser
 from typing import Dict, List, Iterable, Optional, Set
+
+from utils.qt_plugin_loader import configure_qt_plugin_path
+
+configure_qt_plugin_path()
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
