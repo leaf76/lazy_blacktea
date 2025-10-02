@@ -90,6 +90,7 @@ from utils.debounced_refresh import (
     DeviceListDebouncedRefresh, BatchedUIUpdater, PerformanceOptimizedRefresh
 )
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
+from utils.icon_resolver import iter_icon_paths
 
 logger = common.get_logger('lazy_blacktea')
 
@@ -348,29 +349,40 @@ class WindowMain(QMainWindow):
         self.create_status_bar()
 
     def set_app_icon(self):
-        """Set the application icon."""
+        """Set the application icon across supported platforms."""
 
-        # Try different icon formats based on the platform
-        icon_paths = [
-            'assets/icons/icon_128x128.png',  # Default for cross-platform
-            'assets/icons/AppIcon.icns',      # macOS format
-            'assets/icons/app_icon.ico'       # Windows format
-        ]
+        app = QApplication.instance()
+        for icon_path in iter_icon_paths():
+            try:
+                resolved_path = os.fspath(icon_path)
+                icon = QIcon(resolved_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"Failed to instantiate icon from {icon_path}: {exc}")
+                continue
 
-        for icon_path in icon_paths:
-            if os.path.exists(icon_path):
-                try:
-                    # Set window icon
-                    self.setWindowIcon(QIcon(icon_path))
-                    # Set application icon (for taskbar/dock)
-                    QApplication.instance().setWindowIcon(QIcon(icon_path))
-                    logger.debug(f"Successfully loaded app icon from {icon_path}")
-                    break
-                except Exception as e:
-                    logger.warning(f"Failed to load icon from {icon_path}: {e}")
-                    continue
-        else:
-            logger.warning("No suitable app icon found")
+            if icon.isNull():
+                logger.warning(f"Icon at {icon_path} could not be loaded (null icon)")
+                continue
+
+            self.setWindowIcon(icon)
+            if app is not None:
+                app.setWindowIcon(icon)
+            logger.debug(f"Successfully loaded app icon from {icon_path}")
+            return
+
+        # As a fallback for Linux environments, attempt to load a theme icon
+        if platform.system().lower() == 'linux':
+            theme_icon = QIcon.fromTheme('lazyblacktea')
+            if theme_icon.isNull():
+                theme_icon = QIcon.fromTheme('applications-utilities')
+            if not theme_icon.isNull():
+                self.setWindowIcon(theme_icon)
+                if app is not None:
+                    app.setWindowIcon(theme_icon)
+                logger.info('Using theme icon fallback for Linux desktop environment')
+                return
+
+        logger.warning('No suitable app icon found')
 
     def _setup_async_device_signals(self):
         """設置異步設備管理器的信號連接（通過DeviceManager）"""

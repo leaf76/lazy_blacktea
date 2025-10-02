@@ -45,6 +45,7 @@ def main():
 
     tests = [
         ("Unit Tests", "test_all_functions.py"),
+        ("Icon Resolver Tests", "test_icon_resolver.py"),
         ("Device Manager Tests", "test_device_manager_simple.py"),
         ("Integration Tests", "test_integration.py"),
         # Note: Functional tests require user interaction, run separately
