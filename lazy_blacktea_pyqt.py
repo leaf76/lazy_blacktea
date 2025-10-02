@@ -49,6 +49,7 @@ from ui.ui_factory import UIFactory
 from ui.device_operations_manager import DeviceOperationsManager
 from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
 from ui.device_file_browser_manager import DeviceFileBrowserManager
+from ui.device_file_preview_window import DeviceFilePreviewWindow
 from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
@@ -159,6 +160,7 @@ class WindowMain(QMainWindow):
         self.device_file_browser_device_label = None
         self.device_file_browser_current_serial: Optional[str] = None
         self.device_file_browser_current_path: str = self.DEVICE_FILE_BROWSER_DEFAULT_PATH
+        self.device_file_preview_window: Optional[DeviceFilePreviewWindow] = None
         self.selection_summary_label = None
         self.ui_scale_actions: Dict[float, QAction] = {}
         self.logcat_settings: Optional[LogcatSettings] = None
@@ -2176,6 +2178,16 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         self._set_device_file_status(f'Preparing preview for {file_name}...')
         self.device_file_browser_manager.preview_file(device.device_serial_num, remote_path)
 
+    def display_device_file_preview(self, local_path: str) -> None:
+        """Render the downloaded preview in a dedicated window."""
+        preview_window = self.ensure_preview_window()
+        preview_window.display_preview(local_path)
+
+    def clear_device_file_preview(self) -> None:
+        """Reset the preview window contents."""
+        if self.device_file_preview_window:
+            self.device_file_preview_window.clear_preview()
+
     def copy_device_file_path(self, item: Optional[QTreeWidgetItem] = None) -> None:
         """Copy the selected device file path to the clipboard."""
         if not self._device_file_widgets_ready() or self.device_file_tree is None:
@@ -2270,6 +2282,26 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         global_pos = self.device_file_tree.viewport().mapToGlobal(position)
         menu.exec(global_pos)
 
+    def ensure_preview_window(self) -> DeviceFilePreviewWindow:
+        """Ensure a preview window instance exists and return it."""
+        if self.device_file_preview_window is None:
+            self.device_file_preview_window = DeviceFilePreviewWindow(self)
+        return self.device_file_preview_window
+
+    def clear_preview_cache(self) -> None:
+        """Remove cached preview files and reset the viewer."""
+        try:
+            if self.device_file_browser_manager:
+                self.device_file_browser_manager.cleanup_preview_cache()
+        finally:
+            self.clear_device_file_preview()
+            self._set_device_file_status('Preview cache cleared.')
+
+    def open_preview_externally(self) -> None:
+        """Open the cached preview file using the system default application."""
+        preview_window = self.ensure_preview_window()
+        preview_window._open_externally()
+
     def _on_device_directory_listing(self, serial: str, path: str, listing: adb_models.DeviceDirectoryListing) -> None:
         if not self._device_file_widgets_ready():
             return
@@ -2309,12 +2341,8 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         message = f'Preview ready for {file_name}' if file_name else 'Preview ready'
         self._set_device_file_status(message)
 
-        url = QUrl.fromLocalFile(local_path)
-        if not QDesktopServices.openUrl(url):
-            logger.warning('Failed to open preview via QDesktopServices for %s; falling back to manual path.', local_path)
-            self.show_info('Preview Saved', f'Preview file saved to:\n{local_path}\nOpen it manually if it did not launch automatically.')
-        else:
-            logger.info('Opened preview file %s for %s', local_path, serial)
+        self.display_device_file_preview(local_path)
+        logger.info('Preview cached at %s for %s', local_path, serial)
 
     @ensure_devices_selected
     def generate_android_bug_report(self):
@@ -2550,6 +2578,12 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
         if hasattr(self, 'device_file_browser_manager'):
             self.device_file_browser_manager.cleanup_preview_cache()
+
+        if self.device_file_preview_window is not None:
+            try:
+                self.device_file_preview_window.close()
+            except Exception:  # pragma: no cover - best effort
+                pass
 
         # Clean up device management threads aggressively for immediate shutdown
         if hasattr(self, 'device_manager'):

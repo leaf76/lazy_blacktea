@@ -268,6 +268,7 @@ class PanelText:
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_COMMAND_HISTORY = '📜 Command History'
     GROUP_DEVICE_FILES = '📁 Device Browser'
+    GROUP_DEVICE_FILE_PREVIEW = '🖼️ Preview'
     GROUP_DEVICE_FILE_OUTPUT = '💾 Download'
     GROUP_CREATE_UPDATE = 'Create/Update Group'
     GROUP_EXISTING = 'Existing Groups'
@@ -295,10 +296,14 @@ class PanelText:
     BUTTON_PREVIEW_SELECTED = 'Preview Selected'
     BUTTON_DOWNLOAD_ITEM = 'Download Item'
     BUTTON_COPY_PATH = 'Copy Path'
+    BUTTON_CLEAR_PREVIEW_CACHE = 'Clear Preview Cache'
+    BUTTON_OPEN_EXTERNALLY = 'Open Externally'
     BUTTON_GENERATE_BUG_REPORT = 'Generate Bug Report'
 
     LABEL_NO_RECORDING = 'No active recordings'
     LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'
+    LABEL_PREVIEW_PLACEHOLDER = 'Select a file to preview.'
+    LABEL_PREVIEW_UNAVAILABLE = 'Preview not available for this file.'
 
 
 class PanelConfig:

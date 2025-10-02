@@ -8,13 +8,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtCore import Qt, QPoint
-from PyQt6.QtWidgets import QTreeWidgetItem
+from PyQt6.QtWidgets import QApplication, QMainWindow, QTreeWidgetItem
 
 # Ensure a Qt application instance exists for signal delivery
-if QCoreApplication.instance() is None:  # pragma: no cover - guard
-    QCoreApplication([])
+if QApplication.instance() is None:  # pragma: no cover - guard
+    QApplication([])
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +26,69 @@ from lazy_blacktea_pyqt import (
     DEVICE_FILE_PATH_ROLE,
 )
 from config.constants import PanelText
+from ui.device_file_preview_controller import DeviceFilePreviewController
+
+
+class DummyStack:
+    def __init__(self):
+        self.widgets = []
+        self.current = None
+
+    def addWidget(self, widget):
+        self.widgets.append(widget)
+        return len(self.widgets) - 1
+
+    def setCurrentWidget(self, widget):
+        self.current = widget
+
+    def currentIndex(self):
+        if self.current in self.widgets:
+            return self.widgets.index(self.current)
+        return -1
+
+
+class DummyText:
+    def __init__(self):
+        self._text = ''
+
+    def setPlainText(self, text):
+        self._text = text
+
+    def toPlainText(self):
+        return self._text
+
+
+class DummyImage:
+    def __init__(self):
+        self.pixmap = None
+
+    def setPixmap(self, pixmap):
+        self.pixmap = pixmap
+
+    def clear(self):
+        self.pixmap = None
+
+
+class DummyLabel:
+    def __init__(self):
+        self._text = ''
+
+    def setText(self, text):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+
+class DummyButton:
+    def __init__(self):
+        self.enabled = False
+
+    def setEnabled(self, enabled):
+        self.enabled = enabled
+
+    def isEnabled(self):
+        return self.enabled
 
 
 class DeviceFileBrowserManagerTests(unittest.TestCase):
@@ -186,64 +248,75 @@ class WindowMainDeviceFileInteractionTests(unittest.TestCase):
     """Validate WindowMain interactions for device file browser."""
 
     def setUp(self):
-        self.window = WindowMain.__new__(WindowMain)
-        self.window.refresh_device_file_browser = MagicMock()
+        device_tree = MagicMock()
+        device_tree.selectedItems.return_value = []
+        viewport = MagicMock()
+        device_tree.viewport.return_value = viewport
+        viewport.mapToGlobal.return_value = QPoint(0, 0)
+
+        self.window = SimpleNamespace(
+            refresh_device_file_browser=MagicMock(),
+            device_file_tree=device_tree,
+            device_file_browser_path_edit=MagicMock(),
+            show_warning=MagicMock(),
+            show_error=MagicMock(),
+            _set_device_file_status=MagicMock(),
+            device_file_browser_manager=MagicMock(),
+            device_file_preview_controller=MagicMock(),
+            require_single_device_selection=MagicMock(return_value=SimpleNamespace(device_serial_num='SER123')),
+            _device_file_widgets_ready=MagicMock(return_value=True),
+            _get_file_generation_output_path=MagicMock(return_value='/tmp/out'),
+        )
         self.window.preview_selected_device_file = MagicMock()
-        self.window.device_file_tree = MagicMock()
-        self.window.device_file_browser_path_edit = MagicMock()
-        self.window.show_warning = MagicMock()
-        self.window.show_error = MagicMock()
-        self.window._set_device_file_status = MagicMock()
-        self.window.device_file_browser_manager = MagicMock()
+        self.window.display_device_file_preview = MagicMock()
+        self.window.clear_device_file_preview = MagicMock()
+        self.window.device_file_preview_controller.display_preview = MagicMock()
+        self.window.device_file_browser_path_edit.text = MagicMock(return_value='/sdcard')
 
     def test_double_click_directory_refreshes_listing(self):
-        """Double-clicking a directory should navigate into it."""
         item = QTreeWidgetItem(['Download'])
         item.setData(0, DEVICE_FILE_IS_DIR_ROLE, True)
         item.setData(0, DEVICE_FILE_PATH_ROLE, '/sdcard/Download')
 
-        self.window.on_device_file_item_double_clicked(item, 0)
+        WindowMain.on_device_file_item_double_clicked(self.window, item, 0)
 
         self.window.refresh_device_file_browser.assert_called_once_with('/sdcard/Download')
         self.window.preview_selected_device_file.assert_not_called()
 
     def test_double_click_file_triggers_preview(self):
-        """Double-clicking a file should trigger preview without toggling selection."""
         item = QTreeWidgetItem(['file.txt'])
         item.setData(0, DEVICE_FILE_IS_DIR_ROLE, False)
         item.setData(0, DEVICE_FILE_PATH_ROLE, '/sdcard/file.txt')
         item.setCheckState(0, Qt.CheckState.Unchecked)
 
-        self.window.on_device_file_item_double_clicked(item, 0)
-
+        WindowMain.on_device_file_item_double_clicked(self.window, item, 0)
         self.window.preview_selected_device_file.assert_called_once_with(item)
+
         self.assertEqual(item.checkState(0), Qt.CheckState.Unchecked)
 
     def test_copy_device_file_path_sets_clipboard(self):
-        """Copying device file path should place path on clipboard."""
         clipboard = MagicMock()
         with patch('lazy_blacktea_pyqt.QGuiApplication.clipboard', return_value=clipboard):
             item = QTreeWidgetItem(['file.txt'])
             item.setData(0, DEVICE_FILE_PATH_ROLE, '/sdcard/file.txt')
-            self.window.copy_device_file_path(item)
+            WindowMain.copy_device_file_path(self.window, item)
 
         clipboard.setText.assert_called_once_with('/sdcard/file.txt')
 
     def test_download_device_file_item_delegates_to_manager(self):
-        """Downloading from context menu should pull single path via manager."""
         item = QTreeWidgetItem(['file.txt'])
         item.setData(0, DEVICE_FILE_PATH_ROLE, '/sdcard/file.txt')
 
-        device = SimpleNamespace(device_serial_num='SERIAL123')
-        self.window.require_single_device_selection = MagicMock(return_value=device)
-        self.window._get_file_generation_output_path = MagicMock(return_value='/tmp/out')
-        self.window._set_device_file_status = MagicMock()
-        manager_mock = MagicMock()
-        self.window.device_file_browser_manager = manager_mock
+        WindowMain.download_device_file_item(self.window, item)
 
-        self.window.download_device_file_item(item)
+        self.window.device_file_browser_manager.download_paths.assert_called_once_with(
+            'SER123', ['/sdcard/file.txt'], '/tmp/out'
+        )
+        self.window._set_device_file_status.assert_called()
 
-        manager_mock.download_paths.assert_called_once_with('SERIAL123', ['/sdcard/file.txt'], '/tmp/out')
+    def test_on_device_file_preview_ready_uses_embedded_viewer(self):
+        WindowMain._on_device_file_preview_ready(self.window, 'SER', '/sdcard/file.txt', '/tmp/local.txt')
+        self.window.display_device_file_preview.assert_called_once_with('/tmp/local.txt')
         self.window._set_device_file_status.assert_called()
 
 
@@ -288,6 +361,83 @@ class WindowMainContextMenuTests(unittest.TestCase):
         self.assertIn(PanelText.BUTTON_COPY_PATH, added_texts)
         self.assertIn(PanelText.BUTTON_DOWNLOAD_ITEM, added_texts)
 
+
+class DeviceFilePreviewControllerTests(unittest.TestCase):
+    """Test preview controller behaviour without full WindowMain dependency."""
+
+    def setUp(self):
+        self.stack = DummyStack()
+        self.text = DummyText()
+        self.image = DummyImage()
+        self.message = DummyLabel()
+        self.button = DummyButton()
+        self.controller = DeviceFilePreviewController(
+            stack=self.stack,
+            text_widget=self.text,
+            image_widget=self.image,
+            message_widget=self.message,
+            open_button=self.button,
+            image_loader=lambda path: f'PIXMAP:{path}'
+        )
+
+    def test_display_text_file(self):
+        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp:
+            tmp.write('hello preview')
+            path = tmp.name
+
+        try:
+            self.controller.display_preview(path)
+            self.assertEqual(self.text.toPlainText(), 'hello preview')
+            self.assertEqual(self.stack.currentIndex(), self.controller.text_index)
+            self.assertTrue(self.button.isEnabled())
+            self.assertEqual(self.controller.current_path, path)
+        finally:
+            os.remove(path)
+
+    def test_display_binary_file(self):
+        with tempfile.NamedTemporaryFile('wb', delete=False) as tmp:
+            tmp.write(b'\x00\x01\x02')
+            path = tmp.name
+
+        try:
+            self.controller.display_preview(path)
+            self.assertEqual(self.stack.currentIndex(), self.controller.message_index)
+            self.assertIn('Preview not available', self.message.text())
+            self.assertFalse(self.button.isEnabled())
+        finally:
+            os.remove(path)
+
+    def test_clear_preview(self):
+        self.text.setPlainText('data')
+        self.button.setEnabled(True)
+        self.controller.current_path = '/tmp/file'
+
+        self.controller.clear_preview()
+
+        self.assertEqual(self.text.toPlainText(), '')
+        self.assertIsNone(self.image.pixmap)
+        self.assertIn('Select a file', self.message.text())
+        self.assertFalse(self.button.isEnabled())
+        self.assertIsNone(self.controller.current_path)
+        self.assertEqual(self.stack.currentIndex(), self.controller.message_index)
+
+
+class WindowMainPreviewCacheTests(unittest.TestCase):
+    """Validate WindowMain integration with preview cache controls."""
+
+    def setUp(self):
+        self.window = SimpleNamespace(
+            device_file_browser_manager=MagicMock(),
+            device_file_preview_controller=MagicMock(),
+            _set_device_file_status=MagicMock(),
+            clear_device_file_preview=MagicMock(),
+        )
+
+    def test_clear_preview_cache_invokes_dependencies(self):
+        WindowMain.clear_preview_cache(self.window)
+        self.window.device_file_browser_manager.cleanup_preview_cache.assert_called_once()
+        self.window.clear_device_file_preview.assert_called_once()
+        self.window._set_device_file_status.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()
