@@ -15,12 +15,12 @@ from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
     QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox, QFrame, QMessageBox,
     QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView,
-    QSpinBox, QSizePolicy, QGroupBox, QFormLayout
+    QSpinBox, QSizePolicy, QGroupBox, QFormLayout, QApplication, QMenu
 )
 from PyQt6.QtCore import (
     QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel
 )
-from PyQt6.QtGui import QFont, QCloseEvent
+from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut
 
 try:
     from utils import adb_tools
@@ -512,6 +512,11 @@ class LogcatWindow(QDialog):
 
     def __init__(self, device, parent=None):
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setSizeGripEnabled(True)
+
         self.device = device
         self.logcat_process = None
         self.is_running = False
@@ -547,6 +552,7 @@ class LogcatWindow(QDialog):
         self.active_filters: List[Dict[str, str]] = []
 
         self.init_ui()
+        self._setup_copy_features()
         self.load_filters()
 
     def _get_status_prefix(self):
@@ -717,6 +723,106 @@ class LogcatWindow(QDialog):
         splitter.setCollapsible(1, False)
 
         layout.addWidget(splitter)
+
+    def _setup_copy_features(self) -> None:
+        """Enable context menu and keyboard shortcuts for copying logs."""
+        self.log_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.log_display.customContextMenuRequested.connect(self._show_log_context_menu)
+        self.log_display.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        copy_sequence = QKeySequence(QKeySequence.StandardKey.Copy)
+        select_all_sequence = QKeySequence(QKeySequence.StandardKey.SelectAll)
+        copy_all_sequence = QKeySequence('Ctrl+Shift+C')
+
+        self._copy_selected_action = QAction('Copy Selected', self)
+        self._copy_selected_action.setShortcut(copy_sequence)
+        self._copy_selected_action.triggered.connect(self.copy_selected_logs)
+
+        self._copy_all_action = QAction('Copy All', self)
+        self._copy_all_action.setShortcut(copy_all_sequence)
+        self._copy_all_action.triggered.connect(self.copy_all_logs)
+
+        self._select_all_action = QAction('Select All', self)
+        self._select_all_action.setShortcut(select_all_sequence)
+        self._select_all_action.triggered.connect(self.select_all_logs)
+
+        self._copy_shortcut = QShortcut(copy_sequence, self.log_display)
+        self._copy_shortcut.activated.connect(self.copy_selected_logs)
+
+        self._select_all_shortcut = QShortcut(select_all_sequence, self.log_display)
+        self._select_all_shortcut.activated.connect(self.select_all_logs)
+
+        self._copy_all_shortcut = QShortcut(copy_all_sequence, self.log_display)
+        self._copy_all_shortcut.activated.connect(self.copy_all_logs)
+
+    def _build_log_context_menu(self) -> QMenu:
+        """Create the context menu used by the log view."""
+        has_selection = bool(self.log_display.selectionModel() and self.log_display.selectionModel().hasSelection())
+        self._copy_selected_action.setEnabled(has_selection)
+
+        menu = QMenu(self)
+        menu.addAction(self._copy_selected_action)
+        menu.addAction(self._copy_all_action)
+        menu.addSeparator()
+        menu.addAction(self._select_all_action)
+        return menu
+
+    def _show_log_context_menu(self, position) -> None:
+        """Display the context menu at the requested viewport position."""
+        menu = self._build_log_context_menu()
+        global_position = self.log_display.viewport().mapToGlobal(position)
+        menu.exec(global_position)
+
+    def _collect_selected_lines(self) -> List[str]:
+        selection_model = self.log_display.selectionModel()
+        model = self.log_display.model()
+        if not selection_model or model is None:
+            return []
+
+        rows = sorted(selection_model.selectedRows(), key=lambda idx: idx.row())
+        lines: List[str] = []
+        for index in rows:
+            if not index.isValid():
+                continue
+            text = model.data(index, Qt.ItemDataRole.DisplayRole)
+            if text is None:
+                continue
+            lines.append(str(text))
+        return lines
+
+    def _collect_all_visible_lines(self) -> List[str]:
+        model = self.log_display.model()
+        if model is None:
+            return []
+
+        lines: List[str] = []
+        for row in range(model.rowCount()):
+            index = model.index(row, 0)
+            text = model.data(index, Qt.ItemDataRole.DisplayRole)
+            if text is None:
+                continue
+            lines.append(str(text))
+        return lines
+
+    def copy_selected_logs(self) -> str:
+        """Copy the selected log rows to the clipboard and return the payload."""
+        lines = self._collect_selected_lines()
+        text = '\n'.join(lines)
+        if text:
+            QApplication.clipboard().setText(text)
+        return text
+
+    def copy_all_logs(self) -> str:
+        """Copy all visible log rows to the clipboard and return the payload."""
+        lines = self._collect_all_visible_lines()
+        text = '\n'.join(lines)
+        if text:
+            QApplication.clipboard().setText(text)
+        return text
+
+    def select_all_logs(self) -> None:
+        """Select every row in the log display for convenience."""
+        self.log_display.selectAll()
 
     def create_control_panel(self):
         """Create the control panel with start/stop buttons."""

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, ANY
 
 from PyQt6.QtWidgets import QApplication, QListView
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QItemSelectionModel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -299,6 +299,46 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             event = QCloseEvent()
             self.window.closeEvent(event)
             mock_stop.assert_called_once_with()
+
+    def test_window_enables_min_max_buttons(self):
+        flags = self.window.windowFlags()
+        self.assertTrue(flags & Qt.WindowType.WindowMaximizeButtonHint)
+        self.assertTrue(flags & Qt.WindowType.WindowMinimizeButtonHint)
+
+    @patch('ui.logcat_viewer.QApplication.clipboard')
+    def test_copy_selected_logs_copies_to_clipboard(self, clipboard_factory):
+        lines = [
+            LogLine(timestamp='', pid='', tid='', level='I', tag='Tag', message=f'msg {idx}', raw=f'line {idx}')
+            for idx in range(3)
+        ]
+        self.window.log_model.append_lines(lines)
+
+        model = self.window.log_display.model()
+        selection = self.window.log_display.selectionModel()
+        selection.select(
+            model.index(0, 0),
+            QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        selection.select(
+            model.index(2, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+        clipboard = Mock()
+        clipboard_factory.return_value = clipboard
+
+        copied_text = self.window.copy_selected_logs()
+
+        self.assertEqual(copied_text, 'line 0\nline 2')
+        clipboard.setText.assert_called_once_with('line 0\nline 2')
+
+    def test_log_context_menu_has_copy_actions(self):
+        menu = self.window._build_log_context_menu()
+        action_texts = [action.text() for action in menu.actions()]
+
+        self.assertIn('Copy Selected', action_texts)
+        self.assertIn('Copy All', action_texts)
+        self.assertIn('Select All', action_texts)
 
 
 class FakeSignal:
