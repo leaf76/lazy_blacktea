@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from typing import Iterable
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -26,6 +27,7 @@ class DeviceFileBrowserManager(QObject):
         super().__init__(parent)
         self._lock = threading.Lock()
         self._preview_dirs: set[str] = set()
+        self._preview_meta: dict[str, dict[str, float]] = {}
 
     # ------------------------------------------------------------------
     # Directory listing
@@ -122,6 +124,9 @@ class DeviceFileBrowserManager(QObject):
         if preview_dir:
             with self._lock:
                 self._preview_dirs.add(preview_dir)
+            self._register_preview_directory(preview_dir)
+            logger.debug('Cached preview %s (%s)', local_path, preview_dir)
+            self._enforce_cache_limits()
 
         self.preview_ready.emit(serial, remote_path, local_path)
 
@@ -130,12 +135,83 @@ class DeviceFileBrowserManager(QObject):
         with self._lock:
             preview_dirs = list(self._preview_dirs)
             self._preview_dirs.clear()
+            self._preview_meta = {}
 
         for directory in preview_dirs:
-            try:
-                shutil.rmtree(directory, ignore_errors=True)
-            except Exception as exc:  # pragma: no cover - best-effort cleanup
-                logger.debug('Failed to remove preview directory %s: %s', directory, exc)
+            self._remove_preview_directory(directory)
+
+    def cleanup_preview_path(self, local_path: str) -> bool:
+        """Remove a single preview directory associated with the provided file."""
+        if not local_path:
+            return False
+
+        directory = os.path.dirname(local_path)
+        if not directory:
+            return False
+
+        return self._remove_preview_directory(directory)
+
+    def _register_preview_directory(self, directory: str) -> None:
+        size = self._compute_directory_size(directory)
+        with self._lock:
+            self._preview_meta[directory] = {
+                'size': float(size),
+                'timestamp': time.time(),
+            }
+
+    def _enforce_cache_limits(self, *, max_total_bytes: float = 500 * 1024 * 1024, max_age_seconds: float = 3600.0) -> None:
+        with self._lock:
+            directories = list(self._preview_meta.items())
+
+        now = time.time()
+        for directory, meta in directories:
+            if now - meta['timestamp'] > max_age_seconds:
+                logger.debug('Removing stale preview cache %s', directory)
+                self._remove_preview_directory(directory)
+
+        with self._lock:
+            directories = list(self._preview_meta.items())
+            total_size = sum(meta['size'] for _, meta in directories)
+
+        while total_size > max_total_bytes and directories:
+            directories.sort(key=lambda item: item[1]['timestamp'])
+            directory, meta = directories.pop(0)
+            logger.debug(
+                'Removing preview cache %s to enforce size limit (total %.2f MB)',
+                directory,
+                total_size / (1024 * 1024),
+            )
+            self._remove_preview_directory(directory)
+            with self._lock:
+                directories = list(self._preview_meta.items())
+                total_size = sum(meta['size'] for _, meta in directories)
+
+    def _compute_directory_size(self, directory: str) -> int:
+        total = 0
+        for root, _, files in os.walk(directory):
+            for filename in files:
+                path = os.path.join(root, filename)
+                try:
+                    total += os.path.getsize(path)
+                except OSError:
+                    pass
+        return total
+
+    def _remove_preview_directory(self, directory: str) -> bool:
+        if not directory:
+            return False
+
+        with self._lock:
+            self._preview_dirs.discard(directory)
+            self._preview_meta.pop(directory, None)
+
+        try:
+            shutil.rmtree(directory, ignore_errors=True)
+            logger.debug('Cleaned preview cache directory %s', directory)
+            return True
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            logger.error('Failed to remove preview directory %s: %s', directory, exc)
+            return False
 
 
 __all__ = ['DeviceFileBrowserManager']

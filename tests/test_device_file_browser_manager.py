@@ -254,6 +254,12 @@ class WindowMainDeviceFileInteractionTests(unittest.TestCase):
         device_tree.viewport.return_value = viewport
         viewport.mapToGlobal.return_value = QPoint(0, 0)
 
+        preview_window_mock = SimpleNamespace(
+            display_preview=MagicMock(),
+            clear_preview=MagicMock(),
+            _open_externally=MagicMock(),
+        )
+
         self.window = SimpleNamespace(
             refresh_device_file_browser=MagicMock(),
             device_file_tree=device_tree,
@@ -262,16 +268,18 @@ class WindowMainDeviceFileInteractionTests(unittest.TestCase):
             show_error=MagicMock(),
             _set_device_file_status=MagicMock(),
             device_file_browser_manager=MagicMock(),
-            device_file_preview_controller=MagicMock(),
             require_single_device_selection=MagicMock(return_value=SimpleNamespace(device_serial_num='SER123')),
             _device_file_widgets_ready=MagicMock(return_value=True),
             _get_file_generation_output_path=MagicMock(return_value='/tmp/out'),
+            ensure_preview_window=MagicMock(return_value=preview_window_mock),
+            device_file_preview_window=None,
         )
+        self.window.device_file_browser_manager.cleanup_preview_path = MagicMock(return_value=True)
         self.window.preview_selected_device_file = MagicMock()
-        self.window.display_device_file_preview = MagicMock()
-        self.window.clear_device_file_preview = MagicMock()
-        self.window.device_file_preview_controller.display_preview = MagicMock()
+        self.window.display_device_file_preview = WindowMain.display_device_file_preview.__get__(self.window, SimpleNamespace)
+        self.window.clear_device_file_preview = WindowMain.clear_device_file_preview.__get__(self.window, SimpleNamespace)
         self.window.device_file_browser_path_edit.text = MagicMock(return_value='/sdcard')
+        self.preview_window_mock = preview_window_mock
 
     def test_double_click_directory_refreshes_listing(self):
         item = QTreeWidgetItem(['Download'])
@@ -316,7 +324,8 @@ class WindowMainDeviceFileInteractionTests(unittest.TestCase):
 
     def test_on_device_file_preview_ready_uses_embedded_viewer(self):
         WindowMain._on_device_file_preview_ready(self.window, 'SER', '/sdcard/file.txt', '/tmp/local.txt')
-        self.window.display_device_file_preview.assert_called_once_with('/tmp/local.txt')
+        self.window.ensure_preview_window.assert_called_once()
+        self.preview_window_mock.display_preview.assert_called_once_with('/tmp/local.txt')
         self.window._set_device_file_status.assert_called()
 
 
@@ -403,7 +412,7 @@ class DeviceFilePreviewControllerTests(unittest.TestCase):
             self.controller.display_preview(path)
             self.assertEqual(self.stack.currentIndex(), self.controller.message_index)
             self.assertIn('Preview not available', self.message.text())
-            self.assertFalse(self.button.isEnabled())
+            self.assertTrue(self.button.isEnabled())
         finally:
             os.remove(path)
 
@@ -432,12 +441,18 @@ class WindowMainPreviewCacheTests(unittest.TestCase):
             _set_device_file_status=MagicMock(),
             clear_device_file_preview=MagicMock(),
         )
+        self.window.device_file_browser_manager.cleanup_preview_path = MagicMock(return_value=True)
 
     def test_clear_preview_cache_invokes_dependencies(self):
         WindowMain.clear_preview_cache(self.window)
         self.window.device_file_browser_manager.cleanup_preview_cache.assert_called_once()
         self.window.clear_device_file_preview.assert_called_once()
         self.window._set_device_file_status.assert_called_once()
+
+    def test_handle_preview_cleanup_deletes_specific_path(self):
+        WindowMain._handle_preview_cleanup(self.window, '/tmp/file')
+        self.window.device_file_browser_manager.cleanup_preview_path.assert_called_once_with('/tmp/file')
+
 
 if __name__ == '__main__':
     unittest.main()
