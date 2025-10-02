@@ -2034,6 +2034,12 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
         return ''
 
+    def _get_adb_tools_output_path(self) -> str:
+        """Return the output directory configured in the ADB Tools tab."""
+        if hasattr(self, 'output_path_edit'):
+            return self.output_path_edit.text().strip()
+        return ''
+
     @staticmethod
     def _normalize_device_remote_path(path: str) -> str:
         default_path = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
@@ -2372,7 +2378,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     def generate_android_bug_report(self):
         """Generate Android bug report using file operations manager."""
         devices = self.get_checked_devices()
-        output_path = self._get_file_generation_output_path()
+        output_path = self._get_adb_tools_output_path()
         if not output_path:
             return
 
