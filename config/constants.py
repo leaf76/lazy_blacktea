@@ -1,5 +1,7 @@
 """Application constants and configuration values."""
 
+import os
+import sys
 from pathlib import Path
 
 
@@ -188,13 +190,47 @@ class PerformanceConstants:
     UI_BATCH_UPDATE_DELAY_MS = 50
 
 
+def _normalize_version(raw: str | None) -> str | None:
+    """Normalize raw version strings by trimming whitespace and leading prefixes."""
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if cleaned[0] in {'v', 'V'}:
+        cleaned = cleaned[1:]
+    return cleaned or None
+
+
+def _version_candidates() -> list[Path]:
+    """Return possible locations for the VERSION file."""
+    base_dir = Path(__file__).resolve().parent.parent
+    candidates = [base_dir / 'VERSION']
+
+    bundle_root = getattr(sys, '_MEIPASS', None)
+    if bundle_root:
+        candidates.append(Path(bundle_root) / 'VERSION')
+
+    return candidates
+
+
 def _read_version() -> str:
-    """Read application version from the central VERSION file."""
-    version_path = Path(__file__).resolve().parent.parent / 'VERSION'
-    try:
-        return version_path.read_text(encoding='utf-8').strip()
-    except FileNotFoundError:
-        return '0.0.0'
+    """Read application version from environment or available VERSION files."""
+    env_version = _normalize_version(os.environ.get('LAZY_BLACKTEA_VERSION'))
+    if env_version:
+        return env_version
+
+    for candidate in _version_candidates():
+        if not candidate.exists():
+            continue
+        try:
+            normalized = _normalize_version(candidate.read_text(encoding='utf-8'))
+        except OSError:
+            continue
+        if normalized:
+            return normalized
+
+    return '0.0.0'
 
 
 class ApplicationConstants:
