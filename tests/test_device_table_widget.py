@@ -239,6 +239,34 @@ class DeviceTableWidgetTest(unittest.TestCase):
         self.assertEqual(self.table.item(0, 0).checkState(), Qt.CheckState.Unchecked)
         self.assertEqual(toggles[-1], ('serial-a', False))
 
+    def test_active_row_uses_accessible_text_color(self):
+        devices = [
+            adb_models.DeviceInfo(
+                device_serial_num='serial-a',
+                device_usb='usb1',
+                device_prod='prod',
+                device_model='Pixel 8',
+                wifi_is_on=True,
+                bt_is_on=True,
+                android_ver='15',
+                android_api_level='35',
+                gms_version='35.2',
+                build_fingerprint='fp',
+            ),
+        ]
+
+        self.table.update_devices(devices)
+        default_color = self.table.item(0, 1).foreground().color().name()
+
+        self.table.set_active_serial('serial-a')
+        active_color = self.table.item(0, 1).foreground().color().name()
+        self.assertEqual(active_color, '#0b5394')
+        self.assertNotEqual(active_color, default_color)
+
+        self.table.set_active_serial(None)
+        reset_color = self.table.item(0, 1).foreground().color().name()
+        self.assertEqual(reset_color, default_color)
+
 
 if __name__ == '__main__':
     unittest.main()

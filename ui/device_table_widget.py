@@ -205,6 +205,9 @@ class DeviceTableWidget(QTableWidget):
         try:
             active_brush = QBrush(QColor('#e6f4ff'))
             default_brush = QBrush(Qt.GlobalColor.transparent)
+            active_text_brush = QBrush(QColor('#0b5394'))
+            default_text_color = self.palette().color(self.foregroundRole())
+            default_text_brush = QBrush(default_text_color)
             highlighted_rows = set()
             if self._active_serial in self._serial_to_row:
                 highlighted_rows.add(self._serial_to_row[self._active_serial])
@@ -216,8 +219,10 @@ class DeviceTableWidget(QTableWidget):
                         continue
                     if row in highlighted_rows:
                         item.setBackground(active_brush)
+                        item.setForeground(active_text_brush)
                     else:
                         item.setBackground(default_brush)
+                        item.setForeground(default_text_brush)
         finally:
             self._updating_items = previous_state
 
