@@ -22,15 +22,19 @@ class CommandExecutionManager(QObject):
 
     # 信號定義
     console_output_signal = pyqtSignal(str)
+    command_results_ready = pyqtSignal(str, object, object)
 
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
         self.active_processes = []
         self.process_lock = threading.Lock()
+        self._console_connected = False
         # 連接信號到父視窗的處理方法
         if hasattr(parent_window, '_write_to_console_safe'):
             self.console_output_signal.connect(parent_window._write_to_console_safe)
+            self._console_connected = True
+        self.command_results_ready.connect(self._process_command_results)
 
     def cancel_all_commands(self):
         """Cancel all currently running commands."""
@@ -74,14 +78,7 @@ class CommandExecutionManager(QObject):
                 if stderr:
                     full_output.extend(stderr.splitlines())
 
-                # Package results for the main thread
-                results_for_device = {
-                    'serial': serial,
-                    'output': full_output
-                }
-                
-                # Use QTimer to safely call the logging function on the main thread
-                QTimer.singleShot(0, lambda r=results_for_device, c=command: self.log_command_results(c, [r['serial']], [r['output']]))
+                self.command_results_ready.emit(command, [serial], [full_output])
 
             QTimer.singleShot(0, lambda: self._log_completion(f'All monitored processes for command "{command}" have completed.'))
         except Exception as e:
@@ -104,6 +101,8 @@ class CommandExecutionManager(QObject):
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.info(f'Running shell command "{command}" on {device_count} device(s): {serials}')
 
+        self.write_to_console(f'🚀 Running shell command "{command}" on {device_count} device(s)...')
+
         self.parent_window.show_info(
             'Shell Command',
             f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.'
@@ -113,7 +112,10 @@ class CommandExecutionManager(QObject):
         def shell_wrapper():
             """Shell命令執行包裝器"""
             try:
-                adb_tools.run_adb_shell_command(serials, command, callback=lambda results: self.log_command_results(command, serials, results))
+                def _handle_results(results):
+                    self.command_results_ready.emit(command, serials, results)
+
+                adb_tools.run_adb_shell_command(serials, command, callback=_handle_results)
                 QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
             except Exception as e:
                 self._log_error(f"Error executing shell command: {e}")
@@ -131,6 +133,8 @@ class CommandExecutionManager(QObject):
 
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.info(f'🚀 Starting cancellable command: "{command}" on {device_count} device(s)')
+
+        self.write_to_console(f'🚀 Running single command "{command}" on {device_count} device(s)...')
 
         self.parent_window.show_info(
             'Single Command',
@@ -176,6 +180,10 @@ class CommandExecutionManager(QObject):
             (f'\n... and {len(commands)-5} more' if len(commands) > 5 else '')
         )
 
+        self.write_to_console(
+            f'🚀 Running {len(commands)} batch command(s) on {device_count} device(s)...'
+        )
+
         for command in commands:
             if hasattr(self.parent_window, 'command_history_manager'):
                 self.parent_window.command_history_manager.add_to_history(command)
@@ -196,56 +204,69 @@ class CommandExecutionManager(QObject):
             self._run_in_thread(cancellable_batch_wrapper)
 
     def log_command_results(self, command: str, serials: List[str], results):
-        """記錄命令結果到控制台"""
-        if hasattr(self.parent_window, 'logger'):
-            self.parent_window.logger.info(f'🔍 Processing results for command: {command}')
+        """Record command execution results in the console."""
+        normalized_results = self._normalize_results(results, len(serials))
+        delegate = getattr(self.parent_window, 'log_command_results', None)
+        handled = False
+        if callable(delegate):
+            try:
+                delegate(command, serials, normalized_results)
+                handled = True
+            except Exception as exc:
+                self._log_error(f'Error delegating command results: {exc}')
 
-        if not results:
-            if hasattr(self.parent_window, 'logger'):
-                self.parent_window.logger.warning(f'❌ No results for command: {command}')
+        # Fallback if parent window does not provide its own implementation
+        if handled:
+            return
+
+        if not normalized_results:
             self.write_to_console(f'❌ No results: {command}')
             return
 
-        results_list = list(results) if not isinstance(results, list) else results
-        if hasattr(self.parent_window, 'logger'):
-            self.parent_window.logger.info(f'🔍 Found {len(results_list)} result set(s)')
-
-        for serial, result in zip(serials, results_list):
+        for serial, result in zip(serials, normalized_results):
             device_name = serial
-            if (hasattr(self.parent_window, 'device_dict') and
-                serial in self.parent_window.device_dict):
-                device_name = f"{self.parent_window.device_dict[serial].device_model} ({serial[:8]}...)"
-
-            if hasattr(self.parent_window, 'logger'):
-                self.parent_window.logger.info(f'📱 [{device_name}] Command: {command}')
             self.write_to_console(f'📱 [{device_name}] {command}')
 
-            # The result from _monitor_processes is already a list of lines
             output_lines = result if isinstance(result, list) else []
-
             if output_lines:
-                max_lines = 10
-                display_lines = output_lines[:max_lines]
-
                 self.write_to_console(f'📋 {len(output_lines)} lines output:')
-
-                for line in display_lines:
-                    if line and line.strip():
-                        self.write_to_console(f'  {line.strip()}')
-
-                if len(output_lines) > max_lines:
-                    self.write_to_console(f'  ... {len(output_lines) - max_lines} more lines')
-
+                for line in output_lines:
+                    if line and str(line).strip():
+                        self.write_to_console(f'  {str(line).strip()}')
                 self.write_to_console(f'✅ [{device_name}] Completed')
             else:
                 self.write_to_console(f'❌ [{device_name}] No output')
 
         self.write_to_console('─' * 30)
 
+    def _process_command_results(self, command, serials, results):
+        if isinstance(serials, (list, tuple)):
+            serials_list = list(serials)
+        else:
+            serials_list = [serials]
+
+        if results is None:
+            results_payload = []
+        elif isinstance(results, (list, tuple)):
+            results_payload = list(results)
+        else:
+            results_payload = [results]
+
+        self._emit_command_results(command, serials_list, results_payload)
+
+    def _emit_command_results(self, command: str, serials: List[str], results):
+        """Normalize and forward command results."""
+        self.log_command_results(command, serials, results)
+
     def write_to_console(self, message: str):
         """將消息寫入控制台"""
         try:
-            self.console_output_signal.emit(message)
+            if self._console_connected:
+                self.console_output_signal.emit(message)
+            elif hasattr(self.parent_window, 'write_to_console'):
+                self.parent_window.write_to_console(message)
+            else:
+                print(message)
         except Exception as e:
             print(f'Error emitting console signal: {e}')
 
@@ -295,3 +316,27 @@ class CommandExecutionManager(QObject):
         """記錄錯誤消息"""
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.error(message)
+
+    @staticmethod
+    def _normalize_results(results, expected_length: int) -> List[List[str]]:
+        """Ensure command results are a list of string lists with consistent length."""
+        normalized: List[List[str]] = []
+
+        if results is None:
+            results = []
+
+        if not isinstance(results, list):
+            results = list(results)
+
+        for item in results:
+            if isinstance(item, (list, tuple)):
+                normalized.append([str(line) for line in item])
+            elif item is None:
+                normalized.append([])
+            else:
+                normalized.append([str(item)])
+
+        while len(normalized) < expected_length:
+            normalized.append([])
+
+        return normalized

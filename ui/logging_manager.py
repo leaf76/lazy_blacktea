@@ -11,6 +11,7 @@
 """
 
 import logging
+import subprocess
 import threading
 from typing import Dict, Optional, List
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QTimer
@@ -20,6 +21,9 @@ from PyQt6.QtWidgets import QTextEdit
 
 from config.constants import LoggingConstants
 from utils import adb_tools, common
+
+
+diagnostics_logger = common.get_logger('diagnostics_manager')
 
 
 class ConsoleHandler(logging.Handler):
@@ -185,22 +189,28 @@ class LoggingManager(QObject):
             self.logger.critical(message, **kwargs)
 
     def log_operation_start(self, operation: str, details: str = ""):
-        """記錄操作開始"""
-        message = f'🚀 開始操作: {operation}'
+        """Log the start of an operation."""
+        message = f'🚀 Operation started: {operation}'
         if details:
             message += f' - {details}'
         self.info(message)
 
     def log_operation_complete(self, operation: str, details: str = ""):
-        """記錄操作完成"""
-        message = f'✅ 完成操作: {operation}'
+        """Log the completion of an operation."""
+        message = f'✅ Operation completed: {operation}'
         if details:
             message += f' - {details}'
         self.info(message)
 
+    def log_operation_failure(self, operation: str, error: str):
+        """Log the failure of an operation."""
+        self.log_operation_failed(operation, error or '')
+
     def log_operation_failed(self, operation: str, error: str):
-        """記錄操作失敗"""
-        message = f'❌ 操作失敗: {operation} - {error}'
+        """Legacy helper to log an operation failure."""
+        message = f'❌ Operation failed: {operation}'
+        if error:
+            message += f' - {error}'
         self.error(message)
 
     def log_device_operation(self, device_serial: str, operation: str, status: str):
@@ -208,17 +218,18 @@ class LoggingManager(QObject):
         device_name = self._get_device_name(device_serial)
         message = f'📱 [{device_name}] {operation}: {status}'
 
-        if '成功' in status or '完成' in status:
+        status_lower = status.lower()
+        if any(keyword in status_lower for keyword in ('success', 'completed', 'done', 'ok')):
             self.info(message)
-        elif '失敗' in status or '錯誤' in status:
+        elif any(keyword in status_lower for keyword in ('fail', 'error', 'exception')):
             self.error(message)
         else:
             self.info(message)
 
     def log_command_execution(self, command: str, devices: List[str], status: str):
-        """記錄命令執行"""
+        """Log command execution details."""
         device_count = len(devices)
-        message = f'⚡ 命令執行: "{command}" (設備數: {device_count}) - {status}'
+        message = f'⚡ Command execution: "{command}" (devices: {device_count}) - {status}'
         self.info(message)
 
     def _get_device_name(self, device_serial: str) -> str:
@@ -265,12 +276,12 @@ class LogcatManager:
                     adb_tools.clear_device_logcat(serial)
                     if hasattr(self.parent_window, 'logging_manager'):
                         self.parent_window.logging_manager.log_device_operation(
-                            serial, 'Logcat清除', '成功'
+                            serial, 'Logcat cleared', 'success'
                         )
                 except Exception as e:
                     if hasattr(self.parent_window, 'logging_manager'):
                         self.parent_window.logging_manager.log_device_operation(
-                            serial, 'Logcat清除', f'失敗: {e}'
+                            serial, 'Logcat cleared', f'failed: {e}'
                         )
 
         # 在背景線程執行
@@ -288,7 +299,9 @@ class LogcatManager:
         self.clear_logcat_on_devices(device_serials)
 
         if hasattr(self.parent_window, 'logging_manager'):
-            self.parent_window.logging_manager.info(f'開始清除 {len(devices)} 個設備的logcat')
+            self.parent_window.logging_manager.info(
+                f'Starting logcat clear for {len(devices)} device(s)'
+            )
 
 
 class DiagnosticsManager:
@@ -314,11 +327,11 @@ class DiagnosticsManager:
         try:
             adb_version = adb_tools.get_adb_version()
             info['ADB版本'] = adb_version if adb_version else '未檢測到'
-        except (subprocess.SubprocessError, FileNotFoundError) as e:
-            logger.debug(f'ADB version detection failed: {e}')
+        except (subprocess.SubprocessError, FileNotFoundError, AttributeError) as e:
+            diagnostics_logger.debug('ADB version detection failed: %s', e)
             info['ADB版本'] = '檢測失敗'
         except Exception as e:
-            logger.warning(f'Unexpected error getting ADB version: {e}')
+            diagnostics_logger.warning('Unexpected error getting ADB version: %s', e)
             info['ADB版本'] = '檢測失敗'
 
         return info

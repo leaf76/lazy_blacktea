@@ -36,6 +36,7 @@ from utils import adb_models, adb_tools, common
 from utils.recording_utils import RecordingManager
 from utils.screenshot_utils import take_screenshots_batch
 from ui.ui_inspector_dialog import UIInspectorDialog
+from utils.ui_inspector_utils import check_ui_inspector_prerequisites
 
 
 class DeviceOperationsManager(QObject):
@@ -545,6 +546,9 @@ class DeviceOperationsManager(QObject):
 
     def launch_ui_inspector(self, device_serials: List[str] = None) -> bool:
         """啟動UI檢查器"""
+        if not self._ensure_ui_inspector_ready():
+            return False
+
         if device_serials is None:
             device_serials = self._get_selected_device_serials()
 
@@ -607,6 +611,8 @@ class DeviceOperationsManager(QObject):
         return True
 
     def launch_ui_inspector_for_device(self, device_serial: str) -> bool:
+        if not self._ensure_ui_inspector_ready():
+            return False
         return self._launch_ui_inspector_for_device_impl(device_serial)
 
     @pyqtSlot(str, result=bool)
@@ -615,6 +621,8 @@ class DeviceOperationsManager(QObject):
 
     def _launch_ui_inspector_for_device_impl(self, device_serial: str) -> bool:
         """為單個設備啟動UI檢查器"""
+        if not self._ensure_ui_inspector_ready():
+            return False
         try:
             device_info = self._get_device_info(device_serial)
             device_name = device_info.device_model if device_info else device_serial
@@ -632,6 +640,18 @@ class DeviceOperationsManager(QObject):
             self._log_console(f"❌ Error launching UI Inspector for device {device_serial}: {str(e)}")
             self.operation_completed_signal.emit("ui_inspector", device_serial, False, str(e))
             return False
+
+    def _ensure_ui_inspector_ready(self) -> bool:
+        """Check host prerequisites before launching UI Inspector."""
+        ready, issue_message = check_ui_inspector_prerequisites()
+        if ready:
+            return True
+
+        message = issue_message or 'UI Inspector prerequisites not satisfied.'
+        sanitized = message.replace('\n', ' | ')
+        self._log_console(f"❌ UI Inspector prerequisites failed: {sanitized}")
+        self._show_error("UI Inspector Unavailable", message)
+        return False
 
     # ===== 狀態管理和輔助方法 =====
 
