@@ -116,6 +116,8 @@ class UIInspectorDialog(QDialog):
         self.screenshot_data = None
         self.ui_hierarchy = None
         self.ui_elements = []
+        self._progress_is_busy = False
+        self._worker_start_scheduled = False
 
         # Initialize UI Inspector factory for creating UI components
         self.ui_inspector_factory = UIInspectorFactory(parent_dialog=self)
@@ -188,6 +190,7 @@ class UIInspectorDialog(QDialog):
         self.progress_bar.setVisible(False)
         self.progress_bar.setFixedSize(200, 28)
         self.progress_bar.setTextVisible(True)
+        self.progress_bar.setRange(0, 100)
         toolbar.addWidget(self.progress_bar)
 
         save_btn = self.create_system_button('💾 Save')
@@ -374,8 +377,13 @@ class UIInspectorDialog(QDialog):
             logger.info('UI Inspector refresh already running for %s', self.device_serial)
             return
 
+        if self._worker_start_scheduled:
+            logger.info('UI Inspector refresh already scheduled for %s', self.device_serial)
+            return
+
+        self._worker_start_scheduled = True
         self._prepare_loading_state()
-        self._start_worker()
+        QTimer.singleShot(0, self._start_worker)
 
     # ------------------------------------------------------------------
     # Worker lifecycle helpers
@@ -389,8 +397,8 @@ class UIInspectorDialog(QDialog):
         self.screenshot_label.set_ui_elements([], 1.0)
         self.screenshot_label.set_selected_element(None)
 
+        self._set_progress_busy_mode()
         self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
         self.progress_bar.setFormat('🔄 Initializing...')
 
         self.refresh_btn.setEnabled(False)
@@ -398,7 +406,18 @@ class UIInspectorDialog(QDialog):
 
         self.show_loading_message()
 
+    def _set_progress_busy_mode(self) -> None:
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setValue(0)
+        self._progress_is_busy = True
+
+    def _ensure_progress_determinate(self) -> None:
+        if self._progress_is_busy:
+            self.progress_bar.setRange(0, 100)
+            self._progress_is_busy = False
+
     def _start_worker(self) -> None:
+        self._worker_start_scheduled = False
         self._worker_thread = QThread(self)
         self._worker_thread.setObjectName(f'UIInspectorWorker-{self.device_serial}')
         self._worker = UIInspectorWorker(self.device_serial)
@@ -429,8 +448,10 @@ class UIInspectorDialog(QDialog):
 
         self._worker_thread = None
         self._worker = None
+        self._worker_start_scheduled = False
 
     def _on_worker_progress(self, value: int, label: str) -> None:
+        self._ensure_progress_determinate()
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(value)
         self.progress_bar.setFormat(label)
@@ -467,6 +488,7 @@ class UIInspectorDialog(QDialog):
         self.update_hierarchy_tree()
         self.show_success_message(len(ui_elements))
 
+        self._ensure_progress_determinate()
         self.progress_bar.setValue(100)
         self.progress_bar.setFormat('✅ Complete!')
         QTimer.singleShot(1500, lambda: self.progress_bar.setVisible(False))
@@ -480,6 +502,7 @@ class UIInspectorDialog(QDialog):
         logger.error('Error refreshing UI data for %s: %s', self.device_serial, message)
         self._cleanup_worker()
 
+        self._ensure_progress_determinate()
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat('❌ Error occurred')
         self.progress_bar.setVisible(False)

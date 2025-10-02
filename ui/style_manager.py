@@ -12,6 +12,7 @@
 from typing import Dict, List, Mapping, Sequence, Tuple
 from enum import Enum
 from textwrap import dedent
+import platform
 
 
 CSSDeclaration = Tuple[str, str]
@@ -112,6 +113,7 @@ class StyleManager:
             'pressed': '#1a1a1a',
             'pressed_fg': '#ffffff',
             'border': '#000000',
+            'border_width': '1px',
         },
         ButtonStyle.SECONDARY: {
             'bg': '#f9f9f9',
@@ -121,6 +123,7 @@ class StyleManager:
             'pressed': '#dcdcdc',
             'pressed_fg': '#111111',
             'border': '#111111',
+            'border_width': '1px',
         },
         ButtonStyle.WARNING: {
             'bg': '#444444',
@@ -130,6 +133,7 @@ class StyleManager:
             'pressed': '#1f1f1f',
             'pressed_fg': '#ffffff',
             'border': '#444444',
+            'border_width': '1px',
         },
         ButtonStyle.DANGER: {
             'bg': '#000000',
@@ -139,6 +143,7 @@ class StyleManager:
             'pressed': '#000000',
             'pressed_fg': '#ffffff',
             'border': '#000000',
+            'border_width': '1px',
         },
         ButtonStyle.NEUTRAL: {
             'bg': '#f2f2f2',
@@ -148,6 +153,7 @@ class StyleManager:
             'pressed': '#d0d0d0',
             'pressed_fg': '#111111',
             'border': '#c4c4c4',
+            'border_width': '1px',
         },
     }
 
@@ -155,6 +161,57 @@ class StyleManager:
         'disabled_bg': '#ebebeb',
         'disabled_fg': '#9a9a9a',
         'disabled_border': '#d1d1d1',
+        'disabled_border_width': '1px',
+    }
+
+    _HIGH_CONTRAST_PLATFORMS = {'darwin', 'linux'}
+
+    _HIGH_CONTRAST_BUTTON_PROFILES: Dict[ButtonStyle, Dict[str, str]] = {
+        ButtonStyle.PRIMARY: {
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
+        ButtonStyle.SECONDARY: {
+            'bg': '#c8c8c8',
+            'fg': '#111111',
+            'hover': '#b8b8b8',
+            'hover_fg': '#111111',
+            'pressed': '#a3a3a3',
+            'pressed_fg': '#111111',
+            'border': '#2b2b2b',
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
+        ButtonStyle.WARNING: {
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
+        ButtonStyle.DANGER: {
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
+        ButtonStyle.NEUTRAL: {
+            'bg': '#d2d2d2',
+            'fg': '#111111',
+            'hover': '#bcbcbc',
+            'hover_fg': '#111111',
+            'pressed': '#a7a7a7',
+            'pressed_fg': '#111111',
+            'border': '#2b2b2b',
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
+        ButtonStyle.SYSTEM: {
+            'bg': '#d0d0d0',
+            'fg': '#111111',
+            'hover': '#bcbcbc',
+            'hover_fg': '#111111',
+            'pressed': '#a6a6a6',
+            'pressed_fg': '#111111',
+            'border': '#292929',
+            'border_width': '2px',
+            'disabled_border_width': '2px',
+        },
     }
 
     _LABEL_STYLE_BLOCKS: Dict[LabelStyle, CSSBlocks] = {
@@ -471,7 +528,7 @@ class StyleManager:
                 (
                     ("background-color", "{bg}"),
                     ("color", "{fg}"),
-                    ("border", "1px solid {border}"),
+                    ("border", "{border_width} solid {border}"),
                 ),
             ),
             (
@@ -479,6 +536,7 @@ class StyleManager:
                 (
                     ("background-color", "{hover}"),
                     ("color", "{hover_fg}"),
+                    ("border", "{border_width} solid {border}"),
                 ),
             ),
             (
@@ -486,6 +544,7 @@ class StyleManager:
                 (
                     ("background-color", "{pressed}"),
                     ("color", "{pressed_fg}"),
+                    ("border", "{border_width} solid {border}"),
                 ),
             ),
             (
@@ -493,23 +552,58 @@ class StyleManager:
                 (
                     ("background-color", "{disabled_bg}"),
                     ("color", "{disabled_fg}"),
-                    ("border", "1px solid {disabled_border}"),
+                    ("border", "{disabled_border_width} solid {disabled_border}"),
                 ),
             ),
         )
+
+    @staticmethod
+    def _detect_platform() -> str:
+        """回傳目前執行平台名稱 (小寫)。"""
+
+        try:
+            return platform.system().lower()
+        except Exception:
+            return ""
+
+    @classmethod
+    def _requires_high_contrast(cls) -> bool:
+        """判斷是否需要啟用高對比按鈕樣式。"""
+
+        return cls._detect_platform() in cls._HIGH_CONTRAST_PLATFORMS
+
+    @classmethod
+    def _resolve_button_profile(cls, style: ButtonStyle) -> Dict[str, str]:
+        """取得按鈕樣式設定並套用高對比調整。"""
+
+        profile = dict(cls.BUTTON_STYLE_PROFILES.get(style, cls.BUTTON_STYLE_PROFILES[ButtonStyle.NEUTRAL]))
+        profile.setdefault('border_width', '1px')
+        profile.setdefault('disabled_border_width', cls.BUTTON_DISABLED_STATE['disabled_border_width'])
+
+        if cls._requires_high_contrast():
+            overrides = cls._HIGH_CONTRAST_BUTTON_PROFILES.get(style)
+            if overrides:
+                profile.update(overrides)
+
+        return profile
 
     @classmethod
     def get_button_style(cls, style: ButtonStyle, fixed_height: int = 36) -> str:
         """獲取按鈕樣式"""
         overrides = {"button_height": f"{fixed_height}px"}
-        if style == ButtonStyle.SYSTEM:
-            return _render_css(cls._SYSTEM_BUTTON_BLOCKS, cls.COLORS, overrides)
+        base_blocks = cls._SYSTEM_BUTTON_BLOCKS if style == ButtonStyle.SYSTEM else cls._BUTTON_BASE_BLOCKS
+        base_style = _render_css(base_blocks, cls.COLORS, overrides)
 
-        base_style = _render_css(cls._BUTTON_BASE_BLOCKS, cls.COLORS, overrides)
-        profile = dict(cls.BUTTON_STYLE_PROFILES.get(style, cls.BUTTON_STYLE_PROFILES[ButtonStyle.NEUTRAL]))
-        profile.setdefault('hover_fg', profile['fg'])
-        profile.setdefault('pressed', profile['hover'])
-        profile.setdefault('pressed_fg', profile['hover_fg'])
+        include_monochrome = style != ButtonStyle.SYSTEM or cls._requires_high_contrast()
+        if not include_monochrome:
+            return base_style
+
+        profile = cls._resolve_button_profile(style)
+        profile.setdefault('hover', profile.get('bg', '#e0e0e0'))
+        profile.setdefault('hover_fg', profile.get('fg', '#111111'))
+        profile.setdefault('pressed', profile.get('hover'))
+        profile.setdefault('pressed_fg', profile.get('hover_fg'))
+
         css_tokens = {**cls.BUTTON_DISABLED_STATE, **profile}
         button_css = _render_css(cls._monochrome_button_blocks(), {}, css_tokens)
         return _combine_css(base_style, button_css)

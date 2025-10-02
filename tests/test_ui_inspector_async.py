@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,10 +34,9 @@ class UIInspectorAsyncTests(unittest.TestCase):
             time.sleep(0.01)
         return False
 
-    def test_refresh_executes_in_background_thread(self):
+    @contextmanager
+    def _mocked_inspector_dialog(self):
         captured_threads: list[int] = []
-        main_thread_id = threading.get_ident()
-
         temp_dirs: list[str] = []
 
         def fake_create_temp_files():
@@ -81,20 +81,7 @@ class UIInspectorAsyncTests(unittest.TestCase):
             dialog = UIInspectorDialog(None, 'SERIAL123', 'Pixel Test')
 
             try:
-                finished = self._process_events_until(
-                    lambda: getattr(dialog, '_worker_thread', None) is None,
-                    timeout=4.0,
-                )
-                self.assertTrue(finished, 'UI Inspector worker 未在期限內完成')
-
-                self.assertTrue(captured_threads, '預期背景執行緒應該執行耗時作業')
-                for thread_id in captured_threads:
-                    self.assertNotEqual(thread_id, main_thread_id, '耗時作業不應在主執行緒執行')
-
-                pixmap = dialog.screenshot_label.pixmap()
-                self.assertIsNotNone(pixmap)
-                self.assertFalse(pixmap.isNull())
-
+                yield dialog, captured_threads
             finally:
                 dialog.close()
                 for path in temp_dirs:
@@ -104,6 +91,51 @@ class UIInspectorAsyncTests(unittest.TestCase):
                             shutil.rmtree(path)
                         except OSError:
                             pass
+
+    def test_refresh_executes_in_background_thread(self):
+        main_thread_id = threading.get_ident()
+
+        with self._mocked_inspector_dialog() as (dialog, captured_threads):
+            first_progress = self._process_events_until(
+                lambda: bool(captured_threads),
+                timeout=4.0,
+            )
+            self.assertTrue(first_progress, '未偵測到背景執行緒的進度訊號')
+
+            done = self._process_events_until(
+                lambda: not dialog._worker_start_scheduled
+                and getattr(dialog, '_worker_thread', None) is None,
+                timeout=4.0,
+            )
+            self.assertTrue(done, 'UI Inspector worker 未在期限內完成')
+
+            for thread_id in captured_threads:
+                self.assertNotEqual(thread_id, main_thread_id, '耗時作業不應在主執行緒執行')
+
+            pixmap = dialog.screenshot_label.pixmap()
+            self.assertIsNotNone(pixmap)
+            self.assertFalse(pixmap.isNull())
+
+    def test_progress_bar_transitions_from_busy_to_determinate(self):
+        with self._mocked_inspector_dialog() as (dialog, _):
+            started_busy = self._process_events_until(
+                lambda: dialog._progress_is_busy,
+                timeout=1.0,
+            )
+            self.assertTrue(started_busy, '預期進度條在初始化時為忙碌模式')
+
+            became_determinate = self._process_events_until(
+                lambda: not dialog._progress_is_busy
+                and dialog.progress_bar.value() >= 90,
+                timeout=4.0,
+            )
+            self.assertTrue(became_determinate, '預期進度條應在取得進度後切換為可度量模式')
+
+            self._process_events_until(
+                lambda: not dialog._worker_start_scheduled
+                and getattr(dialog, '_worker_thread', None) is None,
+                timeout=4.0,
+            )
 
 
 if __name__ == '__main__':

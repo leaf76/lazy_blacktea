@@ -72,9 +72,25 @@ class StatusBarManager:
         if progress_bar is None:
             return
 
-        maximum = total or 1
-        progress_bar.setMaximum(maximum)
-        progress_bar.setValue(max(0, min(current, maximum)))
+        has_set_range = hasattr(progress_bar, "setRange")
+        has_set_maximum = hasattr(progress_bar, "setMaximum")
+
+        if total and total > 0:
+            maximum = total
+            if has_set_range:
+                progress_bar.setRange(0, maximum)
+            elif has_set_maximum:
+                progress_bar.setMaximum(maximum)
+            progress_bar.setValue(max(0, min(current, maximum)))
+        else:
+            # Unknown total - switch to busy indicator mode for visual feedback
+            if has_set_range:
+                progress_bar.setRange(0, 0)
+            elif has_set_maximum:
+                progress_bar.setMaximum(0)
+            if hasattr(progress_bar, "setValue"):
+                progress_bar.setValue(0)
+
         progress_bar.setVisible(True)
 
         self.show_message(message)

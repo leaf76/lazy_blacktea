@@ -20,17 +20,25 @@ class DummyStatusBar:
 class DummyProgressBar:
     def __init__(self):
         self.visible = False
+        self.minimum = 0
         self.maximum = 0
         self.value = 0
 
     def setVisible(self, value):
         self.visible = bool(value)
 
+    def setMinimum(self, value):
+        self.minimum = value
+
     def setMaximum(self, value):
         self.maximum = value
 
     def setValue(self, value):
         self.value = value
+
+    def setRange(self, minimum, maximum):
+        self.minimum = minimum
+        self.maximum = maximum
 
 
 class DummyLabel:
@@ -98,6 +106,7 @@ class StatusBarManagerTest(unittest.TestCase):
         self.manager.create_status_bar()
         self.manager.update_progress(current=5, total=10, message='Halfway')
         self.assertTrue(self.progress_bar.visible)
+        self.assertEqual(self.progress_bar.minimum, 0)
         self.assertEqual(self.progress_bar.maximum, 10)
         self.assertEqual(self.progress_bar.value, 5)
         self.assertEqual(self.status_bar.message_calls[-1], ('Halfway', 0))
@@ -106,6 +115,17 @@ class StatusBarManagerTest(unittest.TestCase):
         self.assertFalse(self.progress_bar.visible)
         self.assertEqual(self.progress_bar.value, 0)
         self.assertEqual(self.status_bar.message_calls[-1], ('Ready', 0))
+
+    def test_update_progress_without_total_enables_busy_indicator(self):
+        self.manager.create_status_bar()
+
+        self.manager.update_progress(current=0, total=0, message='Loading devices')
+
+        self.assertTrue(self.progress_bar.visible)
+        self.assertEqual(self.progress_bar.minimum, 0)
+        self.assertEqual(self.progress_bar.maximum, 0)
+        self.assertEqual(self.progress_bar.value, 0)
+        self.assertEqual(self.status_bar.message_calls[-1], ('Loading devices', 0))
 
 
 if __name__ == '__main__':

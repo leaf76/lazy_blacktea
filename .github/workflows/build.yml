@@ -47,6 +47,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
@@ -304,15 +306,39 @@ jobs:
     - name: Generate release notes
       id: release_notes
       run: |
-        # Extract version from tag
-        if [[ "${{ github.ref }}" =~ refs/tags/v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+        set -euo pipefail
+
+        if [[ "${{ github.ref }}" =~ refs/tags/(v.+) ]]; then
           VERSION="${BASH_REMATCH[1]}"
         else
           VERSION="development-$(date +%Y%m%d-%H%M%S)"
         fi
 
-        # Generate release notes
-        cat > release-notes.md << EOF
+        git fetch --tags --force >/dev/null 2>&1 || true
+
+        CURRENT_TAG=""
+        if git describe --tags --exact-match >/dev/null 2>&1; then
+          CURRENT_TAG="$(git describe --tags --exact-match)"
+        fi
+
+        PREVIOUS_TAG=""
+        if [[ -n "${CURRENT_TAG}" ]]; then
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)"
+        else
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+        fi
+
+        if [[ -n "${PREVIOUS_TAG}" ]]; then
+          CHANGELOG="$(git log --no-merges --pretty=format:'- %s (%h)' "${PREVIOUS_TAG}"..HEAD)"
+        else
+          CHANGELOG="$(git log --no-merges --pretty=format:'- %s (%h)')"
+        fi
+
+        if [[ -z "${CHANGELOG}" ]]; then
+          CHANGELOG='- No code changes detected.'
+        fi
+
+        cat > release-notes.md <<EOF
         # Lazy Blacktea ${VERSION}
 
         ## 📦 Downloads
@@ -343,19 +369,21 @@ jobs:
         - Click "Open Anyway" button next to the LazyBlacktea message
 
         **Method 3 - Terminal (if app crashes immediately):**
-        \`\`\`bash
+        ```bash
         # Remove quarantine and re-sign the app
         xattr -rd com.apple.quarantine /Applications/LazyBlacktea.app
         codesign --force --deep --sign - /Applications/LazyBlacktea.app
-        \`\`\`
+        ```
 
         > **Note**: The app is signed with ad-hoc signature but not notarized by Apple. This is safe to use - it's just not distributed through the App Store.
 
         ### Linux
         - **AppImage**: Download and run \`chmod +x LazyBlacktea-linux-x86_64.AppImage && ./LazyBlacktea-linux-x86_64.AppImage\`
-        - **Tarball**: Extract and run \`tar -xzf lazyblacktea-linux-x86_64.tar.gz && ./lazyblacktea/lazyblacktea\`
+        - **Tarball**: Extract and run \`tar -xzf lazyblacktea-linux-x86_64.tar.gz && ./lazyblacktea/lazy_blacktea\`
 
         ## 📝 Changes
+
+        ${CHANGELOG}
 
         Built from commit: \`${{ github.sha }}\`
 
@@ -387,6 +415,7 @@ jobs:
 
         echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
@@ -397,6 +426,7 @@ jobs:
         draft: false
         prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
         token: ${{ secrets.GITHUB_TOKEN }}
+        allowUpdates: true
 
   notify:
     name: Build Status Notification

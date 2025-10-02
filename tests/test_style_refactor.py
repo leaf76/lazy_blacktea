@@ -127,6 +127,42 @@ class StyleRefactorTest(unittest.TestCase):
 
             print(f"    ✅ {button_style.name} -> {len(css)} 個字符")
 
+    def test_high_contrast_button_styles_on_unix_platforms(self):
+        """確保在 Linux 與 macOS 上啟用高對比按鈕樣式。"""
+        print("\n🖥️ 測試 Unix-like 平台高對比樣式...")
+
+        for platform_key in ("linux", "darwin"):
+            with self.subTest(platform=platform_key), \
+                    patch('ui.style_manager.StyleManager._detect_platform', return_value=platform_key):
+                secondary_css = StyleManager.get_button_style(ButtonStyle.SECONDARY, 36).lower()
+                neutral_css = StyleManager.get_button_style(ButtonStyle.NEUTRAL, 36).lower()
+                system_css = StyleManager.get_button_style(ButtonStyle.SYSTEM, 36).lower()
+
+                self.assertIn('border: 2px solid', secondary_css)
+                self.assertIn('border: 2px solid', neutral_css)
+                self.assertIn('border: 2px solid', system_css)
+
+                self.assertNotIn('background-color: #f9f9f9', secondary_css)
+                self.assertNotIn('background-color: #f2f2f2', neutral_css)
+                self.assertIn('background-color', system_css)
+
+                print(f"    ✅ {platform_key} secondary border -> {secondary_css.count('border:')}")
+
+    def test_windows_button_styles_remain_lightweight(self):
+        """驗證 Windows 上維持原本的輕量樣式。"""
+        print("\n🪟 測試 Windows 平台保持原樣式...")
+
+        with patch('ui.style_manager.StyleManager._detect_platform', return_value='windows'):
+            secondary_css = StyleManager.get_button_style(ButtonStyle.SECONDARY, 36).lower()
+            system_css = StyleManager.get_button_style(ButtonStyle.SYSTEM, 36).lower()
+
+        self.assertIn('border: 1px solid', secondary_css)
+        self.assertIn('background-color: #f9f9f9', secondary_css)
+        self.assertNotIn('border: 2px solid', system_css)
+        self.assertNotIn('background-color', system_css)
+
+        print("    ✅ Windows secondary retains lightweight border")
+
     def test_label_style_generation(self):
         """測試標籤樣式生成"""
         print("\n🏷️ 測試標籤樣式生成...")
@@ -220,7 +256,9 @@ class StyleRefactorTest(unittest.TestCase):
 
         # 檢查所有按鈕樣式是否使用統一的顏色
         for button_style in [ButtonStyle.PRIMARY, ButtonStyle.SECONDARY, ButtonStyle.WARNING]:
-            css = StyleManager.get_button_style(button_style)
+            with patch('ui.style_manager.StyleManager._detect_platform', return_value='windows'):
+                css = StyleManager.get_button_style(button_style)
+
             profile = StyleManager.BUTTON_STYLE_PROFILES[button_style]
             self.assertIn(profile['bg'], css)
             self.assertIn(profile['border'], css)
