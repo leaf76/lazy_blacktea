@@ -292,6 +292,9 @@ class PanelText:
     BUTTON_GO = 'Go'
     BUTTON_UP = 'Up'
     BUTTON_DOWNLOAD_SELECTED = 'Download Selected'
+    BUTTON_PREVIEW_SELECTED = 'Preview Selected'
+    BUTTON_DOWNLOAD_ITEM = 'Download Item'
+    BUTTON_COPY_PATH = 'Copy Path'
     BUTTON_GENERATE_BUG_REPORT = 'Generate Bug Report'
 
     LABEL_NO_RECORDING = 'No active recordings'

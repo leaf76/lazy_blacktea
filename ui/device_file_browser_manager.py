@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 from typing import Iterable
 
@@ -13,15 +15,17 @@ logger = common.get_logger('device_file_browser_manager')
 
 
 class DeviceFileBrowserManager(QObject):
-    """Coordinates listing and downloading files from Android devices."""
+    """Coordinates listing, downloading, and previewing files from Android devices."""
 
     directory_listing_ready = pyqtSignal(str, str, adb_models.DeviceDirectoryListing)
     download_completed = pyqtSignal(str, str, list, list)
+    preview_ready = pyqtSignal(str, str, str)
     operation_failed = pyqtSignal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._lock = threading.Lock()
+        self._preview_dirs: set[str] = set()
 
     # ------------------------------------------------------------------
     # Directory listing
@@ -84,6 +88,54 @@ class DeviceFileBrowserManager(QObject):
             return
 
         self.download_completed.emit(serial, output_path, remote_paths, results)
+
+    # ------------------------------------------------------------------
+    # Preview
+    # ------------------------------------------------------------------
+    def preview_file(
+        self,
+        serial: str,
+        remote_path: str,
+        *,
+        use_thread: bool = True,
+    ) -> None:
+        """Pull a remote file into a temporary directory for preview."""
+        if use_thread:
+            threading.Thread(
+                target=self._preview_file,
+                args=(serial, remote_path),
+                daemon=True,
+                name=f'DeviceFilePreview-{serial}'
+            ).start()
+        else:
+            self._preview_file(serial, remote_path)
+
+    def _preview_file(self, serial: str, remote_path: str) -> None:
+        try:
+            local_path = adb_tools.pull_device_file_preview(serial, remote_path)
+        except Exception as exc:  # pragma: no cover - guarded by tests
+            logger.error('Failed to prepare preview for %s:%s - %s', serial, remote_path, exc)
+            self.operation_failed.emit(f'Failed to preview {remote_path}: {exc}')
+            return
+
+        preview_dir = os.path.dirname(local_path)
+        if preview_dir:
+            with self._lock:
+                self._preview_dirs.add(preview_dir)
+
+        self.preview_ready.emit(serial, remote_path, local_path)
+
+    def cleanup_preview_cache(self) -> None:
+        """Remove any temporary directories created for previews."""
+        with self._lock:
+            preview_dirs = list(self._preview_dirs)
+            self._preview_dirs.clear()
+
+        for directory in preview_dirs:
+            try:
+                shutil.rmtree(directory, ignore_errors=True)
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                logger.debug('Failed to remove preview directory %s: %s', directory, exc)
 
 
 __all__ = ['DeviceFileBrowserManager']

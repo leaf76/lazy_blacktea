@@ -287,6 +287,7 @@ class ToolsPanelController:
         self.window.device_file_browser_path_edit = QLineEdit()
         self.window.device_file_browser_path_edit.setObjectName('device_file_browser_path')
         self.window.device_file_browser_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_PATH)
+        self.window.device_file_browser_path_edit.setText(PanelText.PLACEHOLDER_DEVICE_FILE_PATH)
         path_layout.addWidget(self.window.device_file_browser_path_edit)
 
         up_btn = UIFactory.create_standard_button(
@@ -323,6 +324,10 @@ class ToolsPanelController:
         self.window.device_file_tree.setMinimumHeight(260)
         self.window.device_file_tree.itemDoubleClicked.connect(
             lambda item, column: self.window.on_device_file_item_double_clicked(item, column)
+        )
+        self.window.device_file_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.window.device_file_tree.customContextMenuRequested.connect(
+            lambda pos: self.window.on_device_file_context_menu(pos)
         )
         layout.addWidget(self.window.device_file_tree)
 

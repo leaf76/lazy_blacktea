@@ -20,10 +20,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QSplitter,
     QTreeWidget,
-    QTreeWidgetItem
+    QTreeWidgetItem,
+    QMenu,
 )
-from PyQt6.QtCore import (Qt, QTimer, pyqtSignal)
-from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
+from PyQt6.QtCore import (Qt, QTimer, QUrl, QPoint, pyqtSignal)
+from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication, QDesktopServices)
 
 from utils import adb_models
 from utils import adb_tools
@@ -105,6 +106,8 @@ class WindowMain(QMainWindow):
     finalize_operation_requested = pyqtSignal(list, str)
     """Main PyQt6 application window."""
 
+    DEVICE_FILE_BROWSER_DEFAULT_PATH = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
+
     # Define custom signals for thread-safe UI updates
     recording_stopped_signal = pyqtSignal(str, str, str, str, str)  # device_name, device_serial, duration, filename, output_path
     recording_state_cleared_signal = pyqtSignal(str)  # device_serial
@@ -132,6 +135,7 @@ class WindowMain(QMainWindow):
         self.device_manager.status_updated.connect(self._on_device_status_updated)
         self.device_file_browser_manager.directory_listing_ready.connect(self._on_device_directory_listing)
         self.device_file_browser_manager.download_completed.connect(self._on_device_file_download_completed)
+        self.device_file_browser_manager.preview_ready.connect(self._on_device_file_preview_ready)
         self.device_file_browser_manager.operation_failed.connect(self._on_device_file_operation_failed)
 
         # Setup global error handler and exception hook
@@ -154,7 +158,7 @@ class WindowMain(QMainWindow):
         self.device_file_status_label = None
         self.device_file_browser_device_label = None
         self.device_file_browser_current_serial: Optional[str] = None
-        self.device_file_browser_current_path: str = '/'
+        self.device_file_browser_current_path: str = self.DEVICE_FILE_BROWSER_DEFAULT_PATH
         self.selection_summary_label = None
         self.ui_scale_actions: Dict[float, QAction] = {}
         self.logcat_settings: Optional[LogcatSettings] = None
@@ -2030,14 +2034,15 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
     @staticmethod
     def _normalize_device_remote_path(path: str) -> str:
-        normalized = (path or '/').strip()
+        default_path = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
+        normalized = (path or default_path).strip()
         if not normalized:
-            return '/'
+            return default_path
         if not normalized.startswith('/'):
             normalized = f'/{normalized}'
         if normalized != '/' and normalized.endswith('/'):
             normalized = normalized.rstrip('/')
-        return normalized or '/'
+        return normalized or default_path
 
     def _device_file_widgets_ready(self) -> bool:
         if self.device_file_tree is None or self.device_file_browser_path_edit is None:
@@ -2102,9 +2107,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.refresh_device_file_browser(target_path)
             return
 
-        current_state = item.checkState(0)
-        new_state = Qt.CheckState.Unchecked if current_state == Qt.CheckState.Checked else Qt.CheckState.Checked
-        item.setCheckState(0, new_state)
+        self.preview_selected_device_file(item)
 
     def download_selected_device_files(self) -> None:
         """Download the checked files or folders from the current device."""
@@ -2136,6 +2139,136 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
         self._set_device_file_status(f'Downloading {len(remote_paths)} item(s)...')
         self.device_file_browser_manager.download_paths(serial, remote_paths, output_path)
+
+    def preview_selected_device_file(self, item: Optional[QTreeWidgetItem] = None) -> None:
+        """Open the currently selected file from the device without downloading it permanently."""
+        if not self._device_file_widgets_ready():
+            self.show_error('Device Files', 'Device file browser UI is not ready yet.')
+            return
+
+        device = self.require_single_device_selection('Device file preview')
+        if device is None:
+            return
+
+        if item is not None:
+            target_items = [item]
+        elif self.device_file_tree is not None:
+            target_items = self.device_file_tree.selectedItems()
+        else:
+            target_items = []
+
+        if not target_items:
+            self.show_warning('No File Selected', 'Select a single file to preview.')
+            return
+
+        selected_item = target_items[0]
+        is_dir = bool(selected_item.data(0, DEVICE_FILE_IS_DIR_ROLE))
+        if is_dir:
+            self.show_warning('Preview Not Available', 'Preview is only supported for files. Select a file instead of a folder.')
+            return
+
+        remote_path = selected_item.data(0, DEVICE_FILE_PATH_ROLE)
+        if not remote_path:
+            self.show_error('Device Files', 'Unable to determine the remote path for the selected item.')
+            return
+
+        file_name = posixpath.basename(remote_path)
+        self._set_device_file_status(f'Preparing preview for {file_name}...')
+        self.device_file_browser_manager.preview_file(device.device_serial_num, remote_path)
+
+    def copy_device_file_path(self, item: Optional[QTreeWidgetItem] = None) -> None:
+        """Copy the selected device file path to the clipboard."""
+        if not self._device_file_widgets_ready() or self.device_file_tree is None:
+            return
+
+        target_item: Optional[QTreeWidgetItem]
+        if item is not None:
+            target_item = item
+        else:
+            selected_items = self.device_file_tree.selectedItems()
+            target_item = selected_items[0] if selected_items else None
+
+        if target_item is None:
+            self.show_warning('No Item Selected', 'Select a file or folder to copy its path.')
+            return
+
+        remote_path = target_item.data(0, DEVICE_FILE_PATH_ROLE)
+        if not remote_path:
+            self.show_error('Device Files', 'Unable to determine the remote path for the selected item.')
+            return
+
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(remote_path)
+        self._set_device_file_status(f'Path copied: {remote_path}')
+
+    def download_device_file_item(self, item: Optional[QTreeWidgetItem] = None) -> None:
+        """Download a single device file or directory from the context menu."""
+        if not self._device_file_widgets_ready():
+            self.show_error('Device Files', 'Device file browser UI is not ready yet.')
+            return
+
+        device = self.require_single_device_selection('Device files download')
+        if device is None:
+            return
+
+        if item is not None:
+            target_item = item
+        elif self.device_file_tree is not None:
+            selected_items = self.device_file_tree.selectedItems()
+            target_item = selected_items[0] if selected_items else None
+        else:
+            target_item = None
+
+        if target_item is None:
+            self.show_warning('No Item Selected', 'Select a file or folder to download.')
+            return
+
+        remote_path = target_item.data(0, DEVICE_FILE_PATH_ROLE)
+        if not remote_path:
+            self.show_error('Device Files', 'Unable to determine the remote path for the selected item.')
+            return
+
+        output_path = self._get_file_generation_output_path()
+        if not output_path:
+            self.show_error('Output Directory Required', 'Please select a download destination first.')
+            return
+
+        item_name = target_item.text(0) or posixpath.basename(remote_path)
+        self._set_device_file_status(f'Downloading {item_name}...')
+        self.device_file_browser_manager.download_paths(
+            device.device_serial_num,
+            [remote_path],
+            output_path
+        )
+
+    def on_device_file_context_menu(self, position: QPoint) -> None:
+        """Display context menu actions for the device file browser."""
+        if not self._device_file_widgets_ready() or self.device_file_tree is None:
+            return
+
+        item = self.device_file_tree.itemAt(position)
+        menu = QMenu(self.device_file_tree)
+        actions_added = False
+
+        if item is not None:
+            is_dir = bool(item.data(0, DEVICE_FILE_IS_DIR_ROLE))
+            if not is_dir:
+                preview_action = menu.addAction(PanelText.BUTTON_PREVIEW_SELECTED)
+                preview_action.triggered.connect(lambda checked=False, target=item: self.preview_selected_device_file(target))
+                actions_added = True
+
+            download_action = menu.addAction(PanelText.BUTTON_DOWNLOAD_ITEM)
+            download_action.triggered.connect(lambda checked=False, target=item: self.download_device_file_item(target))
+            copy_action = menu.addAction(PanelText.BUTTON_COPY_PATH)
+            copy_action.triggered.connect(lambda checked=False, target=item: self.copy_device_file_path(target))
+            actions_added = True
+
+        if not actions_added:
+            return
+
+        global_pos = self.device_file_tree.viewport().mapToGlobal(position)
+        menu.exec(global_pos)
 
     def _on_device_directory_listing(self, serial: str, path: str, listing: adb_models.DeviceDirectoryListing) -> None:
         if not self._device_file_widgets_ready():
@@ -2169,6 +2302,19 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     def _on_device_file_operation_failed(self, message: str) -> None:
         self._set_device_file_status(message)
         self.show_error('Device Files', message)
+
+    def _on_device_file_preview_ready(self, serial: str, remote_path: str, local_path: str) -> None:
+        """Handle preview completion by launching the file with the system viewer."""
+        file_name = posixpath.basename(remote_path)
+        message = f'Preview ready for {file_name}' if file_name else 'Preview ready'
+        self._set_device_file_status(message)
+
+        url = QUrl.fromLocalFile(local_path)
+        if not QDesktopServices.openUrl(url):
+            logger.warning('Failed to open preview via QDesktopServices for %s; falling back to manual path.', local_path)
+            self.show_info('Preview Saved', f'Preview file saved to:\n{local_path}\nOpen it manually if it did not launch automatically.')
+        else:
+            logger.info('Opened preview file %s for %s', local_path, serial)
 
     @ensure_devices_selected
     def generate_android_bug_report(self):
@@ -2401,6 +2547,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         if hasattr(self, 'recording_manager'):
             # Stop any active recordings
             self.recording_manager.stop_recording()
+
+        if hasattr(self, 'device_file_browser_manager'):
+            self.device_file_browser_manager.cleanup_preview_cache()
 
         # Clean up device management threads aggressively for immediate shutdown
         if hasattr(self, 'device_manager'):

@@ -9,6 +9,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import traceback
 from typing import List, Callable, Any, Optional
@@ -1249,6 +1250,42 @@ def pull_device_paths(serial_num: str, remote_paths: list[str], output_path: str
   logger.info('Pulling %d paths for device %s into %s', len(commands), serial_num, final_output)
   native_results = _execute_commands_parallel_native(commands, 'pull_device_paths')
   return ['\n'.join(result) if result else '' for result in native_results]
+
+
+def pull_device_file_preview(serial_num: str, remote_path: str) -> str:
+  """Pull a single remote file into a temporary directory for previewing.
+
+  Args:
+    serial_num: Device serial number.
+    remote_path: Remote file path to preview.
+
+  Returns:
+    Local path to the preview file.
+
+  Raises:
+    ValueError: If the remote path is invalid or points to a directory.
+  """
+
+  stripped_input = (remote_path or '').strip()
+  if stripped_input.endswith('/') and stripped_input not in ('/', ''):
+    raise ValueError(f'Remote path appears to be a directory: {stripped_input}')
+
+  normalized_remote = _normalize_remote_path(remote_path)
+  if normalized_remote in ('/', ''):
+    raise ValueError('Remote path must reference a file, not the device root.')
+
+  file_name = posixpath.basename(normalized_remote)
+  if not file_name or file_name in ('.', '..'):
+    raise ValueError(f'Unable to determine file name for {normalized_remote}')
+
+  preview_dir = tempfile.mkdtemp(prefix=f'lazy_blacktea_preview_{serial_num}_')
+  local_path = os.path.join(preview_dir, file_name)
+
+  command = adb_commands.cmd_pull_device_file(serial_num, normalized_remote, local_path)
+  logger.info('Pulling preview file %s:%s into %s', serial_num, normalized_remote, local_path)
+  result = common.run_command(command)
+  logger.debug('Preview pull result for %s:%s -> %s', serial_num, normalized_remote, result)
+  return local_path
 
 
 def pull_device_dcim_folders_with_device_folder(serial_nums: list[str], output_path: str) -> list[str]:
