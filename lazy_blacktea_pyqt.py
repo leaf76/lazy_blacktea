@@ -163,6 +163,7 @@ class WindowMain(QMainWindow):
         self.device_file_browser_current_path: str = self.DEVICE_FILE_BROWSER_DEFAULT_PATH
         self.device_file_preview_window: Optional[DeviceFilePreviewWindow] = None
         self.selection_summary_label = None
+        self.device_overview_widget = None
         self.ui_scale_actions: Dict[float, QAction] = {}
         self.logcat_settings: Optional[LogcatSettings] = None
 
@@ -333,6 +334,7 @@ class WindowMain(QMainWindow):
 
         # Create tools panel via controller
         self.tools_panel_controller.create_tools_panel(main_splitter)
+        self.update_device_overview()
 
         # Set splitter proportions (default 50/50 but still resizable)
         default_width = UIConstants.WINDOW_WIDTH
@@ -725,6 +727,75 @@ class WindowMain(QMainWindow):
         """Update the title to show current selection count."""
         self.device_list_controller.update_selection_count()
 
+    def update_device_overview(self) -> None:
+        """Synchronise the overview tab with the active selection."""
+        widget = getattr(self, 'device_overview_widget', None)
+        if widget is None:
+            return
+
+        active_serial = self.device_selection_manager.get_active_serial()
+        device = self.device_dict.get(active_serial) if active_serial else None
+
+        if device is None:
+            widget.set_overview(None, None, None)
+            return
+
+        try:
+            detail_text = self.device_list_controller.get_device_detail_text(
+                device,
+                active_serial,
+                include_additional=False,
+                include_identity=False,
+                include_connectivity=False,
+                include_status=True,
+            )
+        except Exception as exc:  # pragma: no cover - defensive safeguard
+            logger.warning('Failed to build overview details for %s: %s', active_serial, exc)
+            detail_text = 'Details unavailable.'
+
+        widget.set_overview(device, active_serial, detail_text)
+
+    def refresh_active_device_overview(self) -> None:
+        """Trigger a detail refresh for the active device and update the overview."""
+        widget = getattr(self, 'device_overview_widget', None)
+        if widget is None:
+            return
+
+        active_serial = self.device_selection_manager.get_active_serial()
+        if not active_serial:
+            self.show_warning('Device Selection', 'Select a device before refreshing the overview.')
+            return
+
+        device = self.device_dict.get(active_serial)
+        if device is None:
+            self.show_error('Device Selection', f'Device {active_serial} is no longer available.')
+            widget.set_overview(None, None, None)
+            return
+
+        try:
+            self._refresh_device_detail_and_get_text(active_serial)
+        except Exception as exc:  # pragma: no cover - defensive safeguard
+            logger.error('Failed to refresh overview for %s: %s', active_serial, exc)
+            self.show_error('Refresh Failed', str(exc))
+            return
+
+        self.update_device_overview()
+
+    def copy_active_device_overview(self) -> None:
+        """Copy the current overview details to the clipboard."""
+        widget = getattr(self, 'device_overview_widget', None)
+        if widget is None:
+            return
+
+        detail_text = widget.get_current_detail_text()
+        if not detail_text.strip():
+            self.show_warning('Copy Failed', 'No device details available to copy.')
+            return
+
+        active_serial = widget.get_active_serial()
+        device_model = widget.get_active_model() or 'Unknown Device'
+        self._copy_device_detail_text(active_serial or 'Unknown Serial', device_model, detail_text)
+
     def show_device_context_menu(self, position, device_serial, checkbox_widget):
         """Delegate context menu handling to the device actions controller."""
         self.device_actions_controller.show_context_menu(position, device_serial, checkbox_widget)
@@ -868,7 +939,21 @@ class WindowMain(QMainWindow):
         self.device_manager.device_dict[device_serial] = device
         self.device_manager.update_device_list(self.device_dict)
 
-        return self.device_list_controller.get_device_detail_text(device, device_serial)
+        detail_text = self.device_list_controller.get_device_detail_text(device, device_serial)
+
+        widget = getattr(self, 'device_overview_widget', None)
+        if widget is not None and widget.get_active_serial() == device_serial:
+            condensed_text = self.device_list_controller.get_device_detail_text(
+                device,
+                device_serial,
+                include_additional=False,
+                include_identity=False,
+                include_connectivity=False,
+                include_status=True,
+            )
+            widget.set_overview(device, device_serial, condensed_text)
+
+        return detail_text
 
     def browse_output_path(self):
         """Browse for unified output directory used by screenshots/recordings."""

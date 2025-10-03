@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
+from collections import OrderedDict
+from typing import Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QStackedWidget
@@ -235,6 +236,10 @@ class DeviceListController:
                 f'Selected {selected_count} of {total_count} · Active: {active_label}'
             )
 
+        update_overview = getattr(self.window, 'update_device_overview', None)
+        if callable(update_overview):
+            update_overview()
+
     def filter_and_sort_devices(self) -> None:
         """Reapply search filtering and render the table."""
         self.update_device_list(self.window.device_dict)
@@ -354,8 +359,91 @@ class DeviceListController:
     def get_additional_device_info(self, serial: str) -> Dict[str, str]:
         return self._get_additional_device_info(serial)
 
-    def get_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
-        return self._build_device_detail_text(device, serial)
+    def get_device_overview_summary(
+        self,
+        device: adb_models.DeviceInfo,
+        serial: str,
+    ) -> OrderedDict[str, List[Tuple[str, str]]]:
+        status_helper = self.get_on_off_status
+
+        try:
+            additional_info = self._get_additional_device_info(serial)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug('Failed to obtain additional info for %s: %s', serial, exc)
+            additional_info = {}
+
+        def _info(key: str, fallback: str = 'Unknown') -> str:
+            value = additional_info.get(key)
+            if value in (None, ''):
+                return fallback
+            return str(value)
+
+        sections: OrderedDict[str, List[Tuple[str, str]]] = OrderedDict()
+        sections['device'] = [
+            ('Model', device.device_model or 'Unknown'),
+            ('Serial', device.device_serial_num or 'Unknown'),
+            (
+                'Android',
+                f"{device.android_ver or 'Unknown'} (API {device.android_api_level or 'Unknown'})",
+            ),
+            ('Build Fingerprint', device.build_fingerprint or 'Unknown'),
+            ('Product', device.device_prod or 'Unknown'),
+            ('USB', device.device_usb or 'Unknown'),
+        ]
+
+        sections['connectivity'] = [
+            ('WiFi', status_helper(device.wifi_is_on)),
+            ('Bluetooth', status_helper(device.bt_is_on)),
+        ]
+
+        sections['hardware'] = [
+            ('Screen Size', _info('screen_size')),
+            ('Screen Density', _info('screen_density')),
+            ('CPU Architecture', _info('cpu_arch')),
+        ]
+
+        sections['battery'] = [
+            ('Battery Level', _info('battery_level')),
+            ('Capacity (mAh)', _info('battery_capacity_mah')),
+            ('Battery mAs', _info('battery_mas')),
+            ('Estimated DOU', _info('battery_dou_hours')),
+        ]
+
+        status_lines: List[Tuple[str, str]] = []
+        operation_status = self.get_device_operation_status(serial)
+        recording_status = self.get_device_recording_status(serial)
+        if operation_status:
+            status_lines.append(('Operation', operation_status))
+        if recording_status:
+            status_lines.append(('Recording', recording_status))
+        if device.audio_state:
+            status_lines.append(('Audio', device.audio_state))
+        if device.bluetooth_manager_state:
+            status_lines.append(('BT Manager', device.bluetooth_manager_state))
+
+        if status_lines:
+            sections['status'] = status_lines
+
+        return sections
+
+    def get_device_detail_text(
+        self,
+        device: adb_models.DeviceInfo,
+        serial: str,
+        *,
+        include_additional: bool = True,
+        include_identity: bool = True,
+        include_connectivity: bool = True,
+        include_status: bool = True,
+    ) -> str:
+        return self._build_device_detail_text(
+            device,
+            serial,
+            include_additional=include_additional,
+            include_identity=include_identity,
+            include_connectivity=include_connectivity,
+            include_status=include_status,
+        )
 
     # Backward compatibility shim
     def create_device_tooltip(self, device: adb_models.DeviceInfo, serial: str) -> str:
@@ -391,7 +479,16 @@ class DeviceListController:
                 cache_source.update_cache(serial, info)
             return info
 
-    def _build_device_detail_text(self, device: adb_models.DeviceInfo, serial: str) -> str:
+    def _build_device_detail_text(
+        self,
+        device: adb_models.DeviceInfo,
+        serial: str,
+        *,
+        include_additional: bool = True,
+        include_identity: bool = True,
+        include_connectivity: bool = True,
+        include_status: bool = True,
+    ) -> str:
         operation_status = self.get_device_operation_status(serial)
         recording_status = self.get_device_recording_status(serial)
 
@@ -402,45 +499,67 @@ class DeviceListController:
         wifi_status = self.get_on_off_status(device.wifi_is_on)
         bt_status = self.get_on_off_status(device.bt_is_on)
 
-        base_tooltip = (
-            f"{self._format_title(device.device_model)}\n"
-            f"{self._format_subtitle(device.device_serial_num)}\n"
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            '📱 Device Overview\n'
-            f"{self._format_detail('Model', device.device_model)}\n"
-            f"{self._format_detail('Serial', device.device_serial_num)}\n"
-            f"{self._format_detail('Android', android_ver)} "
-            f"(API {android_api})\n"
-            f"{self._format_detail('GMS Version', gms_display)}\n"
-            f"{self._format_detail('Build Fingerprint', device.build_fingerprint)}\n"
-            f"{self._format_detail('Product', device.device_prod)}\n"
-            f"{self._format_detail('USB', device.device_usb)}\n"
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-            '📡 Connectivity\n'
-            f"{self._format_detail('WiFi', wifi_status)}\n"
-            f"{self._format_detail('Bluetooth', bt_status)}\n"
-            f"{self._format_detail('Audio', device.audio_state)}\n"
-            f"{self._format_detail('BT Manager', device.bluetooth_manager_state)}\n"
-        )
+        sections: list[str] = []
 
-        try:
-            additional_info = self._get_additional_device_info(serial)
-            return base_tooltip + (
-                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🖥️ Hardware Information\n'
-                f"{self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown'))}\n"
-                f"{self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown'))}\n"
-                f"{self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown'))}\n"
-                f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-                f'🔋 Battery Information\n'
-                f"{self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown'))}\n"
-                f"{self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown'))}\n"
-                f"{self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown'))}\n"
-                f"{self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown'))}"
-            )
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
-            return base_tooltip
+        if include_identity:
+            identity_lines = [
+                self._format_detail('Model', device.device_model),
+                self._format_detail('Serial', device.device_serial_num),
+                f"{self._format_detail('Android', android_ver)} (API {android_api})",
+                self._format_detail('GMS Version', gms_display),
+                self._format_detail('Build Fingerprint', device.build_fingerprint),
+                self._format_detail('Product', device.device_prod),
+                self._format_detail('USB', device.device_usb),
+            ]
+            sections.append('📱 Device Overview\n' + '\n'.join(identity_lines))
+
+        if include_connectivity:
+            connectivity_lines = [
+                self._format_detail('WiFi', wifi_status),
+                self._format_detail('Bluetooth', bt_status),
+            ]
+            sections.append('📡 Connectivity\n' + '\n'.join(connectivity_lines))
+
+        if include_status:
+            status_lines = []
+            if operation_status:
+                status_lines.append(self._format_detail('Operation', operation_status))
+            if recording_status:
+                status_lines.append(self._format_detail('Recording', recording_status))
+            if device.audio_state:
+                status_lines.append(self._format_detail('Audio', device.audio_state))
+            if device.bluetooth_manager_state:
+                status_lines.append(self._format_detail('BT Manager', device.bluetooth_manager_state))
+            if status_lines:
+                sections.append('⚙️ Status\n' + '\n'.join(status_lines))
+            elif not include_identity and not include_connectivity and not include_additional:
+                sections.append('⚙️ Status\nNo additional status data.')
+
+        if include_additional:
+            try:
+                additional_info = self._get_additional_device_info(serial)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
+            else:
+                hardware_lines = [
+                    self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown')),
+                    self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown')),
+                    self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown')),
+                ]
+                battery_lines = [
+                    self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown')),
+                    self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown')),
+                    self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown')),
+                    self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown')),
+                ]
+                sections.append('🖥️ Hardware Information\n' + '\n'.join(hardware_lines))
+                sections.append('🔋 Battery Information\n' + '\n'.join(battery_lines))
+
+        if not sections:
+            return 'No additional details available.'
+
+        separator = '\n' + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' + '\n'
+        return separator.join(sections)
 
     # ------------------------------------------------------------------
     # Legacy compatibility helpers retained for other modules

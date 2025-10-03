@@ -235,7 +235,7 @@ class StyleManager:
                     ("font-size", "12px"),
                     ("font-weight", "bold"),
                     ("padding", "4px 0px"),
-                    ("color", "{text_secondary}"),
+                    ("color", "#1b2533"),
                 ),
             ),
         ),
@@ -273,7 +273,7 @@ class StyleManager:
             (
                 "QLabel",
                 (
-                    ("color", "{text_secondary}"),
+                    ("color", "#4b5563"),
                     ("margin", "10px 0px"),
                 ),
             ),
@@ -701,6 +701,27 @@ class StyleManager:
     def apply_label_style(cls, label, style: LabelStyle):
         """應用標籤樣式到標籤控件"""
         label.setStyleSheet(cls.get_label_style(style))
+
+    @classmethod
+    def apply_panel_frame(cls, frame, *, accent: bool = False) -> None:
+        """套用卡片式面板樣式，維持一致邊距與背景。"""
+        object_name = frame.objectName() or f'panel_{id(frame)}'
+        frame.setObjectName(object_name)
+
+        background = '#ffffff'
+        border = '#b8c4d6' if accent else '#d7dce6'
+        frame.setStyleSheet(
+            f"""
+            #{object_name} {{
+                background-color: {background};
+                border: 1px solid {border};
+                border-radius: 12px;
+            }}
+            #{object_name} QLabel {{
+                color: {cls.COLORS['text_primary']};
+            }}
+            """
+        )
 
     @classmethod
     def get_status_styles(cls) -> Dict[str, str]:

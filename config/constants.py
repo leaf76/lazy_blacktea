@@ -254,16 +254,17 @@ class ApplicationConstants:
 class PanelText:
     """Shared labels and titles for UI panels."""
 
+    TAB_DEVICE_OVERVIEW = 'Overview'
     TAB_ADB_TOOLS = 'ADB Tools'
     TAB_SHELL_COMMANDS = 'Shell Commands'
     TAB_DEVICE_FILES = 'Device Files'
     TAB_DEVICE_GROUPS = 'Device Groups'
 
     GROUP_OUTPUT_PATH = 'Output Path'
-    GROUP_LOGCAT = '📄 Logcat'
-    GROUP_DEVICE_CONTROL = '📱 Device Control'
-    GROUP_CAPTURE = '📱 Screen Capture & Recording'
-    GROUP_FILE_OPERATIONS = '🗂️ Device Reports'
+    GROUP_LOGCAT = 'Logcat'
+    GROUP_DEVICE_CONTROL = 'Device Control'
+    GROUP_CAPTURE = 'Screen Capture & Recording'
+    GROUP_FILE_OPERATIONS = 'Device Reports'
     GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_COMMAND_HISTORY = '📜 Command History'

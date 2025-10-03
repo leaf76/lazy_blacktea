@@ -69,9 +69,6 @@ class DeviceActionsController:
         copy_info_action = context_menu.addAction('📋 Copy Device Info')
         copy_info_action.triggered.connect(lambda: self.copy_single_device_info(device_serial))
 
-        details_action = context_menu.addAction('ℹ️ Device Details')
-        details_action.triggered.connect(lambda: self.window.show_device_details(device_serial))
-
         global_pos = checkbox_widget.mapToGlobal(position)
         context_menu.exec(global_pos)
 

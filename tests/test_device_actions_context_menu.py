@@ -71,9 +71,6 @@ class StubWindow:
         self.device_actions_controller = None
         self.details_called_with = None
 
-    def show_device_details(self, serial):
-        self.details_called_with = serial
-
 
 class DeviceActionsControllerContextMenuTests(unittest.TestCase):
     @classmethod
@@ -99,7 +96,7 @@ class DeviceActionsControllerContextMenuTests(unittest.TestCase):
         self.controller = DeviceActionsController(self.window)
         self.window.device_actions_controller = self.controller
 
-    def test_context_menu_contains_detail_action(self):
+    def test_context_menu_excludes_detail_action(self):
         checkbox = StubCheckbox()
         with patch('ui.device_actions_controller.QMenu', FakeMenu):
             self.controller.show_context_menu(QPoint(0, 0), self.device.device_serial_num, checkbox)
@@ -108,10 +105,7 @@ class DeviceActionsControllerContextMenuTests(unittest.TestCase):
         self.assertIsNotNone(menu)
 
         detail_actions = [a for a in menu.actions if isinstance(a, FakeAction) and a.text == 'ℹ️ Device Details']
-        self.assertEqual(len(detail_actions), 1)
-
-        detail_actions[0].triggered.emit()
-        self.assertEqual(self.window.details_called_with, self.device.device_serial_num)
+        self.assertEqual(len(detail_actions), 0)
 
 
 class DeviceDetailTextTests(unittest.TestCase):

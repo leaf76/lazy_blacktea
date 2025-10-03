@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 
 from PyQt6.QtWidgets import (
     QGroupBox,
@@ -19,12 +19,15 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QVBoxLayout,
     QWidget,
+    QToolButton,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
 
 from config.constants import PanelConfig, PanelText
 from ui.style_manager import ButtonStyle, LabelStyle, StyleManager
 from ui.ui_factory import UIFactory
+from ui.device_overview_widget import DeviceOverviewWidget
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -36,6 +39,7 @@ class ToolsPanelController:
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
         self._default_button_height = 38
+        self._icon_cache: Dict[str, QIcon] = {}
 
     def _style_button(
         self,
@@ -65,12 +69,18 @@ class ToolsPanelController:
         self.window.groups_listbox = QListWidget()
         self.window.group_name_edit = QLineEdit()
 
+        self._create_device_overview_tab(tab_widget)
         self._create_adb_tools_tab(tab_widget)
         self._create_shell_commands_tab(tab_widget)
         self._create_device_file_browser_tab(tab_widget)
         self._create_device_groups_tab(tab_widget)
 
         parent.addWidget(tools_widget)
+
+    def _create_device_overview_tab(self, tab_widget: QTabWidget) -> None:
+        widget = DeviceOverviewWidget(self.window)
+        self.window.device_overview_widget = widget
+        tab_widget.addTab(widget, PanelText.TAB_DEVICE_OVERVIEW)
 
     # ------------------------------------------------------------------
     # Individual tab creation helpers
@@ -85,14 +95,21 @@ class ToolsPanelController:
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setContentsMargins(4, 8, 4, 16)
+        content_layout.setSpacing(20)
         scroll_area.setWidget(content_widget)
 
         output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
-        output_layout = QHBoxLayout(output_group)
+        output_group.setObjectName('adb_tools_output_group')
+        StyleManager.apply_panel_frame(output_group)
+        output_layout = QVBoxLayout(output_group)
+        output_layout.setSpacing(10)
+
+        output_row = QHBoxLayout()
+        output_row.setSpacing(10)
 
         self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
-        output_layout.addWidget(self.window.output_path_edit)
+        output_row.addWidget(self.window.output_path_edit)
 
         browse_btn = UIFactory.create_standard_button(
             PanelText.BUTTON_BROWSE,
@@ -100,81 +117,273 @@ class ToolsPanelController:
             click_handler=lambda: self.window.browse_output_path(),
             tooltip='Select output directory'
         )
-        output_layout.addWidget(browse_btn)
+        output_row.addWidget(browse_btn)
+
+        output_layout.addLayout(output_row)
+
+        output_hint = QLabel('Screenshots, recordings, and quick exports will be saved here.')
+        StyleManager.apply_label_style(output_hint, LabelStyle.STATUS)
+        output_layout.addWidget(output_hint)
+
+        reports_group = QGroupBox(PanelText.GROUP_FILE_OPERATIONS)
+        reports_group.setObjectName('adb_tools_reports_group')
+        StyleManager.apply_panel_frame(reports_group)
+        reports_layout = QVBoxLayout(reports_group)
+        reports_layout.setSpacing(10)
+
+        reports_row = QHBoxLayout()
+        reports_row.setSpacing(10)
+
+        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_OUTPUT)
+        reports_row.addWidget(self.window.file_gen_output_path_edit)
+
+        reports_browse_btn = UIFactory.create_standard_button(
+            PanelText.BUTTON_BROWSE,
+            ButtonStyle.SECONDARY,
+            click_handler=lambda: self.window.browse_file_generation_output_path(),
+            tooltip='Select reports output directory'
+        )
+        reports_row.addWidget(reports_browse_btn)
+
+        reports_layout.addLayout(reports_row)
+
+        reports_hint = QLabel('Bug reports, discovery exports, and batch pulls will write to this path.')
+        StyleManager.apply_label_style(reports_hint, LabelStyle.STATUS)
+        reports_layout.addWidget(reports_hint)
 
         content_layout.addWidget(output_group)
+        content_layout.addWidget(reports_group)
+        content_layout.addSpacing(8)
 
         logcat_group = QGroupBox(PanelText.GROUP_LOGCAT)
-        logcat_layout = QGridLayout(logcat_group)
+        logcat_group.setObjectName('adb_tools_logcat_group')
+        StyleManager.apply_panel_frame(logcat_group)
+        logcat_layout = QVBoxLayout(logcat_group)
+        logcat_layout.setSpacing(10)
 
-        clear_logcat_btn = UIFactory.create_standard_button(
-            '🗑️ Clear Logcat',
-            ButtonStyle.DANGER,
-            click_handler=lambda: self.window.clear_logcat(),
-            tooltip='Clear logcat on selected devices'
-        )
-        logcat_layout.addWidget(clear_logcat_btn, 0, 0)
+        logcat_items = [
+            {'icon': 'clear_logcat', 'label': 'Clear Logcat', 'handler': self.window.clear_logcat},
+            {'icon': 'bug_report', 'label': 'Bug Report', 'handler': self.window.generate_android_bug_report},
+        ]
+        logcat_grid = QGridLayout()
+        logcat_grid.setHorizontalSpacing(16)
+        logcat_grid.setVerticalSpacing(12)
+        self._populate_icon_grid(logcat_grid, logcat_items, columns=2)
+        logcat_layout.addLayout(logcat_grid)
 
-        bug_report_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_GENERATE_BUG_REPORT,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.generate_android_bug_report(),
-            tooltip='Generate Android bug report using current selection'
-        )
-        logcat_layout.addWidget(bug_report_btn, 0, 1)
         content_layout.addWidget(logcat_group)
-
+        content_layout.addSpacing(8)
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
+        device_control_group.setObjectName('adb_tools_device_control_group')
+        StyleManager.apply_panel_frame(device_control_group)
         device_control_layout = QGridLayout(device_control_group)
+        device_control_layout.setHorizontalSpacing(16)
+        device_control_layout.setVerticalSpacing(12)
 
         device_actions = list(PanelConfig.DEVICE_ACTIONS)
         if self.window.scrcpy_available:
-            device_actions.append(('🖥️ Mirror Device (scrcpy)', 'launch_scrcpy'))
+            device_actions.append(('Mirror Device (scrcpy)', 'launch_scrcpy'))
 
-        for idx, (text, handler_name) in enumerate(device_actions):
+        device_icon_map = {
+            'reboot_device': ('reboot', 'Reboot'),
+            'install_apk': ('install_apk', 'Install APK'),
+            'enable_bluetooth': ('bt_on', 'BT On'),
+            'disable_bluetooth': ('bt_off', 'BT Off'),
+            'launch_scrcpy': ('scrcpy', 'scrcpy'),
+        }
+
+        control_items: List[Dict[str, object]] = []
+        for text, handler_name in device_actions:
             handler = getattr(self.window, handler_name)
-            btn = QPushButton(text)
-            btn.clicked.connect(lambda checked, func=handler: func())
-            style = ButtonStyle.PRIMARY if 'reboot' in handler_name else ButtonStyle.SECONDARY
-            self._style_button(btn, style, height=36, min_width=180)
-            row, col = divmod(idx, 2)
-            device_control_layout.addWidget(btn, row, col)
+            icon, label = device_icon_map.get(
+                handler_name,
+                (handler_name, text),
+            )
+            control_items.append({'icon': icon, 'label': label, 'handler': handler})
+
+        self._populate_icon_grid(device_control_layout, control_items, columns=3)
 
         content_layout.addWidget(device_control_group)
+        content_layout.addSpacing(8)
 
         capture_group = QGroupBox(PanelText.GROUP_CAPTURE)
-        capture_layout = QGridLayout(capture_group)
+        capture_group.setObjectName('adb_tools_capture_group')
+        StyleManager.apply_panel_frame(capture_group)
+        capture_layout = QVBoxLayout(capture_group)
+        capture_layout.setSpacing(10)
 
-        self.window.screenshot_btn = QPushButton('📷 Take Screenshot')
-        self.window.screenshot_btn.clicked.connect(lambda: self.window.take_screenshot())
-        self._style_button(self.window.screenshot_btn, ButtonStyle.PRIMARY, height=44, min_width=220)
-        capture_layout.addWidget(self.window.screenshot_btn, 0, 0)
+        capture_grid = QGridLayout()
+        capture_grid.setHorizontalSpacing(16)
+        capture_grid.setVerticalSpacing(12)
 
-        self.window.start_record_btn = QPushButton('🎥 Start Screen Record')
-        self.window.start_record_btn.clicked.connect(lambda: self.window.start_screen_record())
-        self._style_button(self.window.start_record_btn, ButtonStyle.SECONDARY, height=40, min_width=220)
-        capture_layout.addWidget(self.window.start_record_btn, 1, 0)
+        screenshot_btn = self._create_icon_tool_button('screenshot', 'Screenshot', self.window.take_screenshot, primary=True)
+        self.window.screenshot_btn = screenshot_btn
+        capture_grid.addWidget(screenshot_btn, 0, 0)
 
-        self.window.stop_record_btn = QPushButton('⏹️ Stop Screen Record')
-        self.window.stop_record_btn.clicked.connect(lambda: self.window.stop_screen_record())
-        self._style_button(self.window.stop_record_btn, ButtonStyle.NEUTRAL, height=40, min_width=220)
-        capture_layout.addWidget(self.window.stop_record_btn, 1, 1)
+        start_record_btn = self._create_icon_tool_button('record_start', 'Start Record', self.window.start_screen_record)
+        self.window.start_record_btn = start_record_btn
+        capture_grid.addWidget(start_record_btn, 0, 1)
+
+        stop_record_btn = self._create_icon_tool_button('record_stop', 'Stop Record', self.window.stop_screen_record)
+        self.window.stop_record_btn = stop_record_btn
+        capture_grid.addWidget(stop_record_btn, 0, 2)
+
+        capture_layout.addLayout(capture_grid)
 
         self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
         StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
-        capture_layout.addWidget(self.window.recording_status_label, 2, 0, 1, 2)
+        capture_layout.addWidget(self.window.recording_status_label)
 
         self.window.recording_timer_label = QLabel('')
         self.window.recording_timer_label.setStyleSheet(
             StyleManager.get_status_styles()['recording_active']
         )
-        capture_layout.addWidget(self.window.recording_timer_label, 3, 0, 1, 2)
-
+        capture_layout.addWidget(self.window.recording_timer_label)
         content_layout.addWidget(capture_group)
+        content_layout.addSpacing(8)
 
         content_layout.addStretch(1)
 
         tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
+
+    # ------------------------------------------------------------------
+    # Icon button helpers
+    # ------------------------------------------------------------------
+    def _populate_icon_grid(
+        self,
+        layout: QGridLayout,
+        items: List[Dict[str, object]],
+        *,
+        columns: int = 3,
+    ) -> None:
+        for index, item in enumerate(items):
+            row, column = divmod(index, columns)
+            button = self._create_icon_tool_button(
+                icon_key=str(item['icon']),
+                label=str(item['label']),
+                handler=item['handler'],
+            )
+            layout.addWidget(button, row, column)
+
+        for column in range(columns):
+            layout.setColumnStretch(column, 1)
+
+    def _create_icon_tool_button(
+        self,
+        icon_key: str,
+        label: str,
+        handler,
+        *,
+        primary: bool = False,
+    ) -> QToolButton:
+        button = QToolButton()
+        button.setObjectName('adb_tools_icon_button')
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setIcon(self._get_tool_icon(icon_key, label, primary=primary))
+        button.setIconSize(QSize(48, 48))
+        button.setText(label)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        bg_color = '#eef2ff' if primary else '#f8fafc'
+        border_color = '#a5b4fc' if primary else '#d0d7e2'
+
+        button.setStyleSheet(
+            f"""
+            QToolButton#adb_tools_icon_button {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 14px;
+                padding: 10px 12px;
+                color: #1c2a3f;
+                font-weight: 600;
+            }}
+            QToolButton#adb_tools_icon_button:hover {{
+                background-color: #e0e7ff;
+                border-color: #94a3f8;
+            }}
+            QToolButton#adb_tools_icon_button:pressed {{
+                background-color: #c7d2fe;
+                border-color: #818cf8;
+            }}
+            QToolButton#adb_tools_icon_button:disabled {{
+                color: #9ca3af;
+                border-color: #e5e7eb;
+                background-color: #f8fafc;
+            }}
+            """
+        )
+
+        button.clicked.connect(lambda checked=False, func=handler: func())
+        return button
+
+    def _get_tool_icon(self, icon_key: str, label: str, *, primary: bool = False) -> QIcon:
+        cache_key = f"{icon_key}|{primary}"
+        cached = self._icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        size = 64
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        palette = self._resolve_icon_palette(icon_key, primary)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(palette['background']))
+        painter.drawRoundedRect(pixmap.rect().adjusted(4, 4, -4, -4), 16, 16)
+
+        monogram = self._extract_monogram(label)
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(18)
+        painter.setFont(font)
+        painter.setPen(QColor(palette['foreground']))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, monogram)
+        painter.end()
+
+        icon = QIcon(pixmap)
+        self._icon_cache[cache_key] = icon
+        return icon
+
+    @staticmethod
+    def _extract_monogram(label: str) -> str:
+        tokens = [token for token in label.split() if token]
+        if not tokens:
+            return '??'
+        if len(tokens) == 1:
+            cleaned = ''.join(ch for ch in tokens[0] if ch.isalnum())
+            return cleaned[:2].upper() or tokens[0][:2].upper()
+        return (tokens[0][0] + tokens[1][0]).upper()
+
+    @staticmethod
+    def _resolve_icon_palette(icon_key: str, primary: bool) -> Dict[str, str]:
+        base_palettes: Dict[str, Dict[str, str]] = {
+            'clear_logcat': {'background': '#fef3c7', 'foreground': '#92400e'},
+            'bug_report': {'background': '#fee2e2', 'foreground': '#b91c1c'},
+            'reboot': {'background': '#dbeafe', 'foreground': '#1d4ed8'},
+            'install_apk': {'background': '#dcfce7', 'foreground': '#047857'},
+            'bt_on': {'background': '#e0f2fe', 'foreground': '#0369a1'},
+            'bt_off': {'background': '#f1f5f9', 'foreground': '#475569'},
+            'scrcpy': {'background': '#ede9fe', 'foreground': '#6d28d9'},
+            'screenshot': {'background': '#eef2ff', 'foreground': '#3730a3'},
+            'record_start': {'background': '#fee2e2', 'foreground': '#b91c1c'},
+            'record_stop': {'background': '#f1f5f9', 'foreground': '#1f2937'},
+        }
+
+        palette = base_palettes.get(icon_key, None)
+        if palette is None:
+            palette = {'background': '#f1f5f9', 'foreground': '#1f2937'}
+
+        if primary:
+            palette = {
+                'background': '#e0e7ff',
+                'foreground': '#312e81',
+            }
+
+        return palette
 
     def _create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()
