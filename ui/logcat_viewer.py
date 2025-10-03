@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Dict, List, Any, Callable
 
 from PyQt6.QtWidgets import (
@@ -82,6 +82,7 @@ class LogLine:
     tag: str
     message: str
     raw: str
+    line_no: int = 0
 
     _THREADTIME_PATTERN = re.compile(
         r'^(?P<timestamp>\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+'
@@ -126,6 +127,8 @@ class LogcatListModel(QAbstractListModel):
             return None
         log = self._logs[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
+            if log.line_no > 0:
+                return f"{log.line_no:05d} | {log.raw}"
             return log.raw
         if role == Qt.ItemDataRole.UserRole:
             return log
@@ -557,6 +560,9 @@ class LogcatWindow(QDialog):
         # Auto scroll state
         self._auto_scroll_enabled = True
         self._suppress_scroll_signal = False
+
+        # Line numbering for log display
+        self._next_line_number = 1
 
         self._apply_persisted_settings(settings or {})
 
@@ -1407,11 +1413,18 @@ class LogcatWindow(QDialog):
         lines_to_process = self.log_buffer[:self.max_lines_per_update]
         self.log_buffer = self.log_buffer[self.max_lines_per_update:]
 
-        if lines_to_process:
-            self.log_model.append_lines(lines_to_process)
+        if not lines_to_process:
+            if self.log_buffer and not self.update_timer.isActive():
+                self.update_timer.start(self.update_interval_ms)
+            return
+
+        numbered_lines = self._assign_line_numbers(lines_to_process)
+
+        if numbered_lines:
+            self.log_model.append_lines(numbered_lines)
             self.log_proxy.reset_limit_cache()
             if self._has_active_filters():
-                self._append_filtered_lines(lines_to_process)
+                self._append_filtered_lines(numbered_lines)
             self._manage_buffer_size()
             self.limit_log_lines()
             self._scroll_to_bottom()
@@ -1426,6 +1439,16 @@ class LogcatWindow(QDialog):
 
         if self.log_buffer and not self.update_timer.isActive():
             self.update_timer.start(self.update_interval_ms)
+
+    def _assign_line_numbers(self, lines: List[LogLine]) -> List[LogLine]:
+        if not lines:
+            return []
+
+        numbered: List[LogLine] = []
+        for line in lines:
+            numbered.append(replace(line, line_no=self._next_line_number))
+            self._next_line_number += 1
+        return numbered
 
     def limit_log_lines(self):
         """Limit the number of lines in the display for performance."""
@@ -1510,6 +1533,7 @@ class LogcatWindow(QDialog):
             self._handle_filters_changed()
         else:
             self._update_status_label('Logs cleared')
+        self._next_line_number = 1
 
     def set_auto_scroll_enabled(self, enabled: bool, *, from_scroll: bool = False) -> None:
         """Enable or disable automatic scrolling to the latest log entry."""

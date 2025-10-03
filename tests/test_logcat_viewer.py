@@ -159,6 +159,13 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         if guard >= 1000:
             raise AssertionError('Log buffer did not drain during test setup')
 
+    def _strip_line_number(self, text: str) -> str:
+        if ' | ' not in text:
+            return text
+        prefix, message = text.split(' | ', 1)
+        self.assertRegex(prefix, r'^\d{5}$')
+        return message
+
     def test_log_display_is_list_view(self):
         self.assertIsInstance(self.window.log_display, QListView)
 
@@ -268,14 +275,15 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             )
             self._drain_log_buffer()
 
+        visible = [
+            self.window.filtered_model.data(
+                self.window.filtered_model.index(row, 0),
+                Qt.ItemDataRole.DisplayRole,
+            )
+            for row in range(self.window.filtered_model.rowCount())
+        ]
         self.assertEqual(
-            [
-                self.window.filtered_model.data(
-                    self.window.filtered_model.index(row, 0),
-                    Qt.ItemDataRole.DisplayRole,
-                )
-                for row in range(self.window.filtered_model.rowCount())
-            ],
+            [self._strip_line_number(entry) for entry in visible],
             [line.raw for line in matching_lines],
         )
 
@@ -292,11 +300,14 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             )
             for row in range(self.window.filtered_model.rowCount())
         ]
-        self.assertEqual(latest, [
-            '09-30 12:02:00.000  123  456 I Tag: match-new 0',
-            '09-30 12:02:01.000  123  456 I Tag: match-new 1',
-            '09-30 12:02:02.000  123  456 I Tag: match-new 2',
-        ])
+        self.assertEqual(
+            [self._strip_line_number(entry) for entry in latest],
+            [
+                '09-30 12:02:00.000  123  456 I Tag: match-new 0',
+                '09-30 12:02:01.000  123  456 I Tag: match-new 1',
+                '09-30 12:02:02.000  123  456 I Tag: match-new 2',
+            ],
+        )
 
     def test_clearing_logs_does_not_disable_live_filters(self):
         initial_lines = [
@@ -321,7 +332,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         model = self.window.log_display.model()
         self.assertEqual(model.rowCount(), 1)
         visible_text = model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole)
-        self.assertIn('match new', visible_text)
+        self.assertIn('match new', self._strip_line_number(visible_text))
 
     def test_scroll_up_disables_auto_follow_and_preserves_position(self):
         self.window.max_lines = 200
