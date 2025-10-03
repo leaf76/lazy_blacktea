@@ -1,13 +1,25 @@
+import os
 import types
 import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from PyQt6.QtWidgets import QApplication, QTabWidget, QLabel
+from PyQt6.QtWidgets import (
+    QApplication,
+    QTabWidget,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QGroupBox,
+    QWidget,
+    QVBoxLayout,
+)
 
 from utils import adb_models
 from ui.device_selection_manager import DeviceSelectionManager
 from ui.tools_panel_controller import ToolsPanelController
+
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 
 class DeviceOverviewPanelTests(unittest.TestCase):
@@ -16,13 +28,139 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.stub_window = types.SimpleNamespace(
-            device_selection_manager=DeviceSelectionManager(),
-            device_dict={},
-            refresh_active_device_overview=lambda: None,
-            copy_active_device_overview=lambda: None,
-        )
+        class _StubWindow(QWidget):
+            pass
+
+        stub = _StubWindow()
+        stub.device_selection_manager = DeviceSelectionManager()
+        stub.device_dict = {}
+        stub.refresh_active_device_overview = lambda: None
+        stub.copy_active_device_overview = lambda: None
+        stub.group_name_edit = QLineEdit()
+        stub.groups_listbox = QListWidget()
+        stub.output_path_edit = QLineEdit()
+        stub.file_gen_output_path_edit = QLineEdit()
+        stub.save_group = lambda: None
+        stub.select_devices_in_group = lambda: None
+        stub.delete_group = lambda: None
+        stub.on_group_select = lambda: None
+        stub.browse_output_path = lambda: None
+        stub.take_screenshot = lambda: None
+        stub.start_screen_record = lambda: None
+        stub.stop_screen_record = lambda: None
+        stub.reboot_device = lambda: None
+        stub.install_apk = lambda: None
+        stub.enable_bluetooth = lambda: None
+        stub.disable_bluetooth = lambda: None
+        stub.scrcpy_available = False
+        stub.clear_logcat = lambda: None
+        stub.generate_android_bug_report = lambda: None
+        stub.add_template_command = lambda *_: None
+        stub.run_single_command = lambda: None
+        stub.run_batch_commands = lambda: None
+        stub.command_execution_manager = types.SimpleNamespace(cancel_all_commands=lambda: None)
+        stub.run_shell_command = lambda: None
+        stub.load_from_history = lambda *_: None
+        stub.clear_command_history = lambda: None
+        stub.export_command_history = lambda: None
+        stub.import_command_history = lambda: None
+        stub.update_history_display = lambda: None
+
+        self.stub_window = stub
         self.controller = ToolsPanelController(self.stub_window)
+
+    def test_existing_groups_panel_has_header_spacing(self):
+        tab_widget = QTabWidget()
+        self.controller._create_device_groups_tab(tab_widget)
+
+        tab = tab_widget.widget(tab_widget.count() - 1)
+        section_layout = tab.layout()
+        left_group = section_layout.itemAt(0).widget()
+        left_layout = left_group.layout()
+        left_margins = left_layout.contentsMargins()
+
+        right_group = section_layout.itemAt(1).widget()
+        right_layout = right_group.layout()
+        margins = right_layout.contentsMargins()
+
+        self.assertGreaterEqual(left_margins.top(), 20)
+        self.assertGreaterEqual(left_margins.bottom(), 20)
+        self.assertGreaterEqual(margins.top(), 16)
+        self.assertGreaterEqual(margins.left(), 12)
+
+    def test_device_control_panel_spacing_prevents_overlap(self):
+        tab_widget = QTabWidget()
+        self.controller._create_adb_tools_tab(tab_widget)
+
+        tab = tab_widget.widget(tab_widget.count() - 1)
+        content_layout = tab.layout().itemAt(0).widget().widget().layout()  # scrollarea -> widget -> layout
+
+        panel_widget: QGroupBox | None = None
+        for i in range(content_layout.count()):
+            item = content_layout.itemAt(i).widget()
+            if isinstance(item, QGroupBox) and item.title() == 'Device Control':
+                panel_widget = item
+                break
+
+        self.assertIsNotNone(panel_widget)
+        panel_layout = panel_widget.layout()
+        margins = panel_layout.contentsMargins()
+        self.assertGreaterEqual(margins.top(), 16)
+
+    def test_shell_command_groups_have_clearance(self):
+        tab_widget = QTabWidget()
+        self.controller._create_shell_commands_tab(tab_widget)
+
+        tab = tab_widget.widget(tab_widget.count() - 1)
+        main_layout = tab.layout()
+
+        template_group = main_layout.itemAt(0).widget()
+        template_margins = template_group.layout().contentsMargins()
+        self.assertGreaterEqual(template_margins.top(), 16)
+
+        batch_group = main_layout.itemAt(1).widget()
+        batch_margins = batch_group.layout().contentsMargins()
+        self.assertGreaterEqual(batch_margins.top(), 16)
+
+        history_group = main_layout.itemAt(2).widget()
+        history_margins = history_group.layout().contentsMargins()
+        self.assertGreaterEqual(history_margins.top(), 16)
+
+    def test_console_output_panel_has_padding(self):
+        from ui.console_manager import ConsoleManager
+
+        class _ConsoleStub(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.logging_manager = types.SimpleNamespace(
+                    initialize_logging=lambda *_: None
+                )
+
+            def write_to_console(self, *_):
+                return None
+
+            def show_console_context_menu(self, *_):
+                return None
+
+            def copy_console_text(self):
+                return None
+
+            def clear_console(self):
+                return None
+
+        stub = _ConsoleStub()
+        console_manager = ConsoleManager(stub)
+
+        holder = QWidget()
+        holder_layout = QVBoxLayout(holder)
+        console_manager.create_console_panel(holder_layout)
+
+        group = holder_layout.itemAt(0).widget()
+        layout = group.layout()
+        margins = layout.contentsMargins()
+
+        self.assertGreaterEqual(margins.top(), 16)
+        self.assertGreaterEqual(margins.left(), 14)
 
     def test_overview_tab_is_added_first(self):
         tab_widget = QTabWidget()
@@ -37,7 +175,10 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         from lazy_blacktea_pyqt import WindowMain
         from ui.device_overview_widget import DeviceOverviewWidget
 
+        from PyQt6.QtWidgets import QMainWindow
+
         window = WindowMain.__new__(WindowMain)
+        QMainWindow.__init__(window)
         window.device_selection_manager = DeviceSelectionManager()
         window.device_dict = {}
         window.device_list_controller = types.SimpleNamespace(

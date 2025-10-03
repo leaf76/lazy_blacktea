@@ -180,6 +180,7 @@ class ToolsPanelController:
         device_control_group.setObjectName('adb_tools_device_control_group')
         StyleManager.apply_panel_frame(device_control_group)
         device_control_layout = QGridLayout(device_control_group)
+        device_control_layout.setContentsMargins(16, 24, 16, 16)
         device_control_layout.setHorizontalSpacing(16)
         device_control_layout.setVerticalSpacing(12)
 
@@ -330,6 +331,9 @@ class ToolsPanelController:
 
         template_group = QGroupBox(PanelText.GROUP_COMMAND_TEMPLATES)
         template_layout = QGridLayout(template_group)
+        template_layout.setContentsMargins(16, 20, 16, 16)
+        template_layout.setHorizontalSpacing(14)
+        template_layout.setVerticalSpacing(12)
 
         for idx, (label, command) in enumerate(PanelConfig.SHELL_TEMPLATE_COMMANDS):
             btn = QPushButton(label)
@@ -342,6 +346,8 @@ class ToolsPanelController:
 
         batch_group = QGroupBox(PanelText.GROUP_BATCH_COMMANDS)
         batch_layout = QVBoxLayout(batch_group)
+        batch_layout.setContentsMargins(16, 24, 16, 18)
+        batch_layout.setSpacing(14)
 
         self.window.batch_commands_edit = QTextEdit()
         self.window.batch_commands_edit.setPlaceholderText(
@@ -386,6 +392,8 @@ class ToolsPanelController:
 
         history_group = QGroupBox(PanelText.GROUP_COMMAND_HISTORY)
         history_layout = QVBoxLayout(history_group)
+        history_layout.setContentsMargins(16, 20, 16, 20)
+        history_layout.setSpacing(12)
 
         self.window.command_history_list = QListWidget()
         self.window.command_history_list.setMaximumHeight(100)
@@ -517,8 +525,8 @@ class ToolsPanelController:
 
         left_group = QGroupBox(PanelText.GROUP_CREATE_UPDATE)
         left_layout = QVBoxLayout(left_group)
-        left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(10)
+        left_layout.setContentsMargins(16, 24, 16, 24)
+        left_layout.setSpacing(14)
 
         helper_label = QLabel('Create a reusable device group from the current selection.')
         helper_label.setWordWrap(True)
@@ -571,6 +579,8 @@ class ToolsPanelController:
 
         right_group = QGroupBox(PanelText.GROUP_EXISTING)
         right_layout = QVBoxLayout(right_group)
+        right_layout.setContentsMargins(12, 20, 12, 12)
+        right_layout.setSpacing(10)
 
         self.window.groups_listbox.itemSelectionChanged.connect(self.window.on_group_select)
         right_layout.addWidget(self.window.groups_listbox)

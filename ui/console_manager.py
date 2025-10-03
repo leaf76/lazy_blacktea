@@ -48,6 +48,8 @@ class ConsoleManager:
     def create_console_panel(self, parent_layout) -> None:
         console_group = QGroupBox("Console Output")
         console_layout = QVBoxLayout(console_group)
+        console_layout.setContentsMargins(16, 20, 16, 20)
+        console_layout.setSpacing(12)
 
         console_text = QTextEdit()
         console_text.setReadOnly(True)
