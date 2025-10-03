@@ -289,6 +289,31 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             '09-30 12:02:02.000  123  456 I Tag: match-new 2',
         ])
 
+    def test_clearing_logs_does_not_disable_live_filters(self):
+        initial_lines = [
+            LogLine.from_string(f'09-30 12:10:0{i}.000  123  456 I Tag: match {i}')
+            for i in range(2)
+        ]
+        self.window.log_buffer.extend(initial_lines)
+        self.window.process_buffered_logs()
+
+        self.window.apply_live_filter('match')
+        self.assertEqual(self.window.filtered_model.rowCount(), 2)
+
+        self.window.clear_logs()
+        self.assertTrue(self.window._has_active_filters())
+        self.assertEqual(self.window.log_model.rowCount(), 0)
+
+        self.window.log_buffer.append(
+            LogLine.from_string('09-30 12:11:00.000  123  456 I Tag: match new')
+        )
+        self.window.process_buffered_logs()
+
+        model = self.window.log_display.model()
+        self.assertEqual(model.rowCount(), 1)
+        visible_text = model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole)
+        self.assertIn('match new', visible_text)
+
     def test_stop_logcat_resets_state(self):
         fake_process = Mock()
         fake_process.kill = Mock()

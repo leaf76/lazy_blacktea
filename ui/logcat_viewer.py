@@ -1487,11 +1487,13 @@ class LogcatWindow(QDialog):
         """Clear the log display."""
         self.log_model.clear()
         self.filtered_model.clear()
-        self._compiled_filter_patterns = []
         self.log_buffer.clear()
         self._partial_line = ''
         self.log_proxy.reset_limit_cache()
-        self._update_status_label('Logs cleared')
+        if self._has_active_filters():
+            self._handle_filters_changed()
+        else:
+            self._update_status_label('Logs cleared')
 
     def apply_live_filter(self, pattern):
         """Apply live regex filter to logs in real-time."""
