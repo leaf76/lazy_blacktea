@@ -33,7 +33,7 @@ from utils import json_utils
 from utils import time_formatting
 
 # Import configuration and constants
-from config.config_manager import ConfigManager, LogcatSettings
+from config.config_manager import AppConfig, ConfigManager, LogcatSettings
 from config.constants import (
     UIConstants, PathConstants, ADBConstants, MessageConstants,
     LoggingConstants, ApplicationConstants, PanelText
@@ -126,6 +126,11 @@ class WindowMain(QMainWindow):
 
         # Initialize new modular components
         self.config_manager = ConfigManager()
+        self.theme_manager = ThemeManager()
+        self.theme_actions: Dict[str, QAction] = {}
+        self._current_theme = 'light'
+        initial_config = self.config_manager.load_config()
+        self._current_theme = self.theme_manager.set_theme(initial_config.ui.theme)
         self.error_handler = ErrorHandler(self)
         self.command_executor = CommandExecutor(self)
         self.device_manager = DeviceManager(self)
@@ -285,8 +290,9 @@ class WindowMain(QMainWindow):
             logger.info(f'scrcpy is available (version {getattr(self, "scrcpy_major_version", "unknown")})')
 
         self.init_ui()
+        self.apply_theme(self._current_theme, persist=False, initial=True)
         self.output_path_manager = OutputPathManager(self, self.file_dialog_manager)
-        self.load_config()
+        self.load_config(initial_config)
 
         # Initialize groups list (now that UI is created)
         self.device_group_manager.update_groups_listbox()
@@ -308,13 +314,11 @@ class WindowMain(QMainWindow):
         # Set application icon
         self.set_app_icon()
 
-        # Set global tooltip styling for better positioning and appearance
-        self.setStyleSheet(self.styleSheet() + StyleManager.get_tooltip_style())
-
         # Remove the problematic attribute setting as it's not needed for tooltip positioning
 
         # Create central widget
         central_widget = QWidget()
+        central_widget.setObjectName('mainCentralWidget')
         self.setCentralWidget(central_widget)
 
         # Create main layout
@@ -1683,13 +1687,13 @@ class WindowMain(QMainWindow):
         if in_progress:
             self.screenshot_btn.setText('📷 Taking Screenshots...')
             self.screenshot_btn.setEnabled(False)
-            self.screenshot_btn.setStyleSheet(StyleManager.get_status_styles()['screenshot_processing'])
+            StyleManager.apply_status_style(self.screenshot_btn, 'screenshot_processing')
         else:
             logger.info(f'🔧 [BUTTON STATE] Resetting screenshot button to default state')
             self.screenshot_btn.setText('📷 Take Screenshot')
             self.screenshot_btn.setEnabled(True)
             # Set proper default style
-            self.screenshot_btn.setStyleSheet(StyleManager.get_status_styles()['screenshot_ready'])
+            StyleManager.apply_status_style(self.screenshot_btn, 'screenshot_ready')
             logger.info('📷 [BUTTON STATE] Screenshot button reset to default state successfully')
 
     def _on_file_generation_completed(self, operation_name, summary_text, success_metric, icon):
@@ -2721,10 +2725,11 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             'Converted from Tkinter to PyQt6 for enhanced user experience.'
         )
 
-    def load_config(self):
+    def load_config(self, config: Optional[AppConfig] = None):
         """Load configuration from file using ConfigManager."""
         try:
-            config = self.config_manager.load_config()
+            if config is None:
+                config = self.config_manager.load_config()
 
             self.logcat_settings = config.logcat
 
@@ -2765,6 +2770,35 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         except Exception as e:
             logger.warning(f'Could not load config: {e}')
             self.error_handler.handle_error(ErrorCode.CONFIG_LOAD_FAILED, str(e))
+
+    def register_theme_actions(self, actions: Dict[str, QAction]) -> None:
+        """Register menu actions used for theme selection."""
+        self.theme_actions = actions
+        self._update_theme_actions()
+
+    def _update_theme_actions(self) -> None:
+        """Ensure theme menu reflects the currently active theme."""
+        current = getattr(self, '_current_theme', 'light')
+        for key, action in getattr(self, 'theme_actions', {}).items():
+            action.setChecked(key == current)
+
+    def handle_theme_selection(self, theme_key: str) -> None:
+        """Handle menu-triggered theme selection."""
+        self.apply_theme(theme_key, persist=True)
+
+    def apply_theme(self, theme_name: str, persist: bool = False, initial: bool = False) -> None:
+        """Apply the requested theme and refresh themed widgets."""
+        resolved = self.theme_manager.set_theme(theme_name)
+        self._current_theme = resolved
+
+        StyleManager.apply_global_stylesheet(self)
+        StyleManager.reapply_theme(self)
+
+        if not initial:
+            self._update_theme_actions()
+
+        if persist:
+            self.config_manager.update_ui_settings(theme=resolved)
 
     def save_config(self):
         """Save configuration to file using ConfigManager."""

@@ -1,6 +1,6 @@
 """UI panels manager for organizing different UI components."""
 
-from typing import Optional
+from typing import Dict, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
@@ -88,7 +88,7 @@ class PanelsManager(QObject):
 
         # Recording status
         status_label = QLabel("No active recordings")
-        status_label.setStyleSheet('color: gray; font-style: italic;')
+        StyleManager.apply_hint_label(status_label)
         layout.addWidget(status_label)
 
         # Recording timer
@@ -312,14 +312,7 @@ class PanelsManager(QObject):
         # Set size policy to allow expansion
         from PyQt6.QtWidgets import QSizePolicy
         console_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        console_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 1px solid #404040;
-                border-radius: 4px;
-            }
-        """)
+        console_text.setStyleSheet(StyleManager.get_console_style())
         console_layout.addWidget(console_text)
 
         # Console controls
@@ -359,7 +352,7 @@ class PanelsManager(QObject):
 
         # Recording status label
         widgets['recording_status'] = QLabel("No active recordings")
-        widgets['recording_status'].setStyleSheet("QLabel { margin: 2px 5px; color: gray; }")
+        StyleManager.apply_hint_label(widgets['recording_status'], margin='2px 5px')
 
         # Progress bar
         widgets['progress_bar'] = QProgressBar()
@@ -411,6 +404,23 @@ class PanelsManager(QObject):
 
         # Settings menu
         settings_menu = menubar.addMenu('Settings')
+
+        theme_menu = settings_menu.addMenu('Theme')
+        theme_group = QActionGroup(main_window)
+        theme_group.setExclusive(True)
+        theme_actions: Dict[str, QAction] = {}
+        for title, key in [('Light', 'light'), ('Dark', 'dark')]:
+            action = QAction(title, main_window, checkable=True)
+            theme_group.addAction(action)
+            action.triggered.connect(
+                lambda checked, theme_key=key: main_window.handle_theme_selection(theme_key)
+                if checked else None
+            )
+            theme_menu.addAction(action)
+            theme_actions[key] = action
+
+        if hasattr(main_window, 'register_theme_actions'):
+            main_window.register_theme_actions(theme_actions)
 
         # UI Scale submenu
         scale_menu = settings_menu.addMenu('UI Scale')

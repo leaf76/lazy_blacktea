@@ -48,8 +48,7 @@ class UIFactory:
     ) -> QPushButton:
         """創建標準按鈕"""
         button = QPushButton(text)
-        button.setStyleSheet(StyleManager.get_button_style(style, fixed_height))
-        button.setFixedHeight(fixed_height)
+        StyleManager.apply_button_style(button, style, fixed_height)
         button.setEnabled(enabled)
 
         if object_name:
@@ -505,7 +504,7 @@ class UIFactory:
 
         # 錄製狀態標籤
         widgets['recording_status'] = QLabel("No active recordings")
-        widgets['recording_status'].setStyleSheet("QLabel { margin: 2px 5px; color: gray; }")
+        StyleManager.apply_hint_label(widgets['recording_status'], margin='2px 5px')
 
         # 進度條
         widgets['progress_bar'] = QProgressBar()

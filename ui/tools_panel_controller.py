@@ -171,9 +171,7 @@ class ToolsPanelController:
         output_layout.addWidget(self.window.recording_status_label)
 
         self.window.recording_timer_label = QLabel('')
-        self.window.recording_timer_label.setStyleSheet(
-            StyleManager.get_status_styles()['recording_active']
-        )
+        StyleManager.apply_status_style(self.window.recording_timer_label, 'recording_active')
         output_layout.addWidget(self.window.recording_timer_label)
 
         content_layout.addWidget(output_group)
@@ -253,35 +251,7 @@ class ToolsPanelController:
         button.setText(label)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        bg_color = '#eef2ff' if primary else '#f8fafc'
-        border_color = '#a5b4fc' if primary else '#d0d7e2'
-
-        button.setStyleSheet(
-            f"""
-            QToolButton#adb_tools_icon_button {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 14px;
-                padding: 10px 12px;
-                color: #1c2a3f;
-                font-weight: 600;
-            }}
-            QToolButton#adb_tools_icon_button:hover {{
-                background-color: #e0e7ff;
-                border-color: #94a3f8;
-            }}
-            QToolButton#adb_tools_icon_button:pressed {{
-                background-color: #c7d2fe;
-                border-color: #818cf8;
-            }}
-            QToolButton#adb_tools_icon_button:disabled {{
-                color: #9ca3af;
-                border-color: #e5e7eb;
-                background-color: #f8fafc;
-            }}
-            """
-        )
+        StyleManager.apply_tile_button_style(button, primary=primary)
 
         button.clicked.connect(lambda checked=False, func=handler: func())
         return button

@@ -12,7 +12,114 @@
 from typing import Dict, List, Mapping, Sequence, Tuple
 from enum import Enum
 from textwrap import dedent
+from copy import deepcopy
 import platform
+
+
+_THEME_PRESETS: Dict[str, Dict[str, str]] = {
+    'light': {
+        'primary': '#4CAF50',
+        'primary_hover': '#45A049',
+        'secondary': '#1976D2',
+        'secondary_hover': '#1565C0',
+        'warning': '#FF9800',
+        'warning_hover': '#F57C00',
+        'danger': '#F44336',
+        'danger_hover': '#D32F2F',
+        'neutral': '#757575',
+        'neutral_hover': '#616161',
+        'success': '#2E7D32',
+        'error': '#C62828',
+        'info': '#1976D2',
+        'text_primary': '#212121',
+        'text_secondary': '#424242',
+        'text_hint': '#666666',
+        'border': '#D7DCE6',
+        'background': '#F3F4F6',
+        'background_hover': 'rgba(200, 220, 255, 0.45)',
+        'panel_background': '#FFFFFF',
+        'panel_border': '#D7DCE6',
+        'tile_primary_bg': '#EEF2FF',
+        'tile_primary_border': '#A5B4FC',
+        'tile_primary_hover': '#E1E7FF',
+        'tile_bg': '#F8FAFC',
+        'tile_border': '#D0D7E2',
+        'tile_hover': '#EEF2F7',
+        'tile_text': '#1F2937',
+        'tile_primary_text': '#111827',
+        'status_text_on_dark': '#FFFFFF',
+        'status_disabled_bg': '#EBEBEB',
+        'status_disabled_text': '#9A9A9A',
+        'status_disabled_border': '#D1D1D1',
+        'tooltip_background': 'rgba(45, 45, 45, 0.95)',
+        'tooltip_text': '#FFFFFF',
+        'tooltip_border': 'rgba(255, 255, 255, 0.2)',
+        'input_background': '#FFFFFF',
+        'input_border': '#CCCCCC',
+        'console_background': '#FFFFFF',
+        'console_text': '#000000',
+        'console_border': '#B0B8C2',
+        'tile_processing_bg': '#444444',
+        'tile_processing_border': '#2F2F2F',
+        'tile_processing_hover': '#3A3A3A',
+        'tile_ready_bg': '#111111',
+        'tile_ready_border': '#000000',
+        'tile_ready_hover': '#000000',
+    },
+    'dark': {
+        'primary': '#66BB6A',
+        'primary_hover': '#57A65B',
+        'secondary': '#64B5F6',
+        'secondary_hover': '#4A9DE0',
+        'warning': '#FFB74D',
+        'warning_hover': '#FFA726',
+        'danger': '#EF5350',
+        'danger_hover': '#E53935',
+        'neutral': '#9E9E9E',
+        'neutral_hover': '#BDBDBD',
+        'success': '#81C784',
+        'error': '#E57373',
+        'info': '#64B5F6',
+        'text_primary': '#EAEAEA',
+        'text_secondary': '#C8C8C8',
+        'text_hint': '#9DA5B3',
+        'border': '#3F4657',
+        'background': '#1B1E26',
+        'background_hover': 'rgba(120, 160, 255, 0.25)',
+        'panel_background': '#252A37',
+        'panel_border': '#3E4455',
+        'tile_primary_bg': '#333A56',
+        'tile_primary_border': '#55608C',
+        'tile_primary_hover': '#3F4566',
+        'tile_bg': '#2E3449',
+        'tile_border': '#454C63',
+        'tile_hover': '#3A4159',
+        'tile_text': '#E6EAF7',
+        'tile_primary_text': '#F5F7FF',
+        'status_text_on_dark': '#FFFFFF',
+        'status_disabled_bg': '#2C3143',
+        'status_disabled_text': '#8088A0',
+        'status_disabled_border': '#3F465A',
+        'tooltip_background': 'rgba(240, 240, 240, 0.95)',
+        'tooltip_text': '#111111',
+        'tooltip_border': 'rgba(0, 0, 0, 0.35)',
+        'input_background': '#2D3142',
+        'input_border': '#4A5168',
+        'console_background': '#1C2030',
+        'console_text': '#E0E6F3',
+        'console_border': '#3A4052',
+        'tile_processing_bg': '#5A6076',
+        'tile_processing_border': '#707791',
+        'tile_processing_hover': '#666D86',
+        'tile_ready_bg': '#66BB6A',
+        'tile_ready_border': '#4A9B4E',
+        'tile_ready_hover': '#57A65B',
+    },
+}
+
+_THEME_ALIASES = {
+    'default': 'light',
+}
 
 
 CSSDeclaration = Tuple[str, str]
@@ -81,28 +188,8 @@ class PanelStyle(Enum):
 class StyleManager:
     """樣式管理器類"""
 
-    # 顏色主題定義
-    COLORS = {
-        'primary': '#4CAF50',
-        'primary_hover': '#45a049',
-        'secondary': '#1976D2',
-        'secondary_hover': '#1565C0',
-        'warning': '#FF9800',
-        'warning_hover': '#F57C00',
-        'danger': '#F44336',
-        'danger_hover': '#D32F2F',
-        'neutral': '#757575',
-        'neutral_hover': '#616161',
-        'success': '#2E7D32',
-        'error': '#C62828',
-        'info': '#1976D2',
-        'text_primary': '#212121',
-        'text_secondary': '#424242',
-        'text_hint': '#666666',
-        'border': '#E0E0E0',
-        'background': '#F5F5F5',
-        'background_hover': 'rgba(200, 220, 255, 0.5)',
-    }
+    # 動態顏色表（會依主題更新）
+    COLORS: Dict[str, str] = deepcopy(_THEME_PRESETS['light'])
 
     BUTTON_STYLE_PROFILES: Dict[ButtonStyle, Dict[str, str]] = {
         ButtonStyle.PRIMARY: {
@@ -273,7 +360,7 @@ class StyleManager:
             (
                 "QLabel",
                 (
-                    ("color", "#4b5563"),
+                    ("color", "{text_secondary}"),
                     ("margin", "10px 0px"),
                 ),
             ),
@@ -282,7 +369,7 @@ class StyleManager:
             (
                 "QLabel",
                 (
-                    ("color", "gray"),
+                    ("color", "{text_hint}"),
                     ("font-style", "italic"),
                 ),
             ),
@@ -296,8 +383,10 @@ class StyleManager:
                 (
                     ("padding", "6px 8px"),
                     ("font-size", "12px"),
-                    ("border", "1px solid #CCCCCC"),
+                    ("border", "1px solid {input_border}"),
                     ("border-radius", "4px"),
+                    ("background-color", "{input_background}"),
+                    ("color", "{text_primary}"),
                 ),
             ),
             (
@@ -314,6 +403,9 @@ class StyleManager:
                     ("padding", "6px 8px"),
                     ("font-size", "12px"),
                     ("border-radius", "4px"),
+                    ("border", "1px solid {input_border}"),
+                    ("background-color", "{input_background}"),
+                    ("color", "{text_primary}"),
                 ),
             ),
         ),
@@ -345,9 +437,9 @@ class StyleManager:
             (
                 "QTextEdit",
                 (
-                    ("background-color", "white"),
-                    ("color", "black"),
-                    ("border", "2px solid {border}"),
+                    ("background-color", "{console_background}"),
+                    ("color", "{console_text}"),
+                    ("border", "2px solid {console_border}"),
                     ("padding", "5px"),
                 ),
             ),
@@ -459,9 +551,9 @@ class StyleManager:
             (
                 "QToolTip",
                 (
-                    ("background-color", "rgba(45, 45, 45, 0.95)"),
-                    ("color", "white"),
-                    ("border", "1px solid rgba(255, 255, 255, 0.2)"),
+                    ("background-color", "{tooltip_background}"),
+                    ("color", "{tooltip_text}"),
+                    ("border", "1px solid {tooltip_border}"),
                     ("border-radius", "6px"),
                     ("padding", "6px"),
                     ("font-size", "11px"),
@@ -696,11 +788,17 @@ class StyleManager:
         button.setStyleSheet(cls.get_button_style(style, fixed_height))
         if fixed_height:
             button.setFixedHeight(fixed_height)
+            button.setProperty('_lazy_button_height', fixed_height)
+        else:
+            button.setProperty('_lazy_button_height', 0)
+        button.setProperty('_lazy_button_style', style.value)
 
     @classmethod
     def apply_label_style(cls, label, style: LabelStyle):
         """應用標籤樣式到標籤控件"""
         label.setStyleSheet(cls.get_label_style(style))
+        label.setProperty('_lazy_label_style', style.value)
+        label.setProperty('_lazy_hint_label', False)
 
     @classmethod
     def apply_panel_frame(cls, frame, *, accent: bool = False) -> None:
@@ -708,8 +806,10 @@ class StyleManager:
         object_name = frame.objectName() or f'panel_{id(frame)}'
         frame.setObjectName(object_name)
 
-        background = '#ffffff'
-        border = '#b8c4d6' if accent else '#d7dce6'
+        background = cls.COLORS.get('panel_background', '#FFFFFF')
+        border = cls.COLORS.get('panel_border', '#D7DCE6')
+        if accent:
+            border = cls.COLORS.get('secondary', border)
         frame.setStyleSheet(
             f"""
             #{object_name} {{
@@ -722,39 +822,273 @@ class StyleManager:
             }}
             """
         )
+        frame.setProperty('_lazy_panel_accent', bool(accent))
+
+    @classmethod
+    def apply_hint_label(cls, label, *, margin: str | None = None) -> None:
+        """套用提示樣式標籤。"""
+        declarations: List[Tuple[str, str]] = [
+            ("color", "{text_hint}"),
+            ("font-style", "italic"),
+        ]
+        if margin:
+            declarations.append(("margin", margin))
+        css = _render_css((('QLabel', tuple(declarations)),), cls.COLORS)
+        label.setStyleSheet(css)
+        label.setProperty('_lazy_hint_label', True)
+        label.setProperty('_lazy_hint_margin', margin or '')
+        label.setProperty('_lazy_label_style', None)
+
+    @classmethod
+    def _resolve_tile_palette(cls, primary: bool, state: str) -> Dict[str, str]:
+        palette: Dict[str, str] = {}
+        if state == 'processing':
+            palette['bg'] = cls.COLORS.get('tile_processing_bg', cls.COLORS.get('tile_primary_bg', '#444444'))
+            palette['border'] = cls.COLORS.get('tile_processing_border', palette['bg'])
+            palette['hover'] = cls.COLORS.get('tile_processing_hover', palette['border'])
+            palette['pressed'] = palette['border']
+            palette['fg'] = cls.COLORS.get('status_text_on_dark', '#FFFFFF')
+        elif state == 'ready':
+            palette['bg'] = cls.COLORS.get('tile_ready_bg', cls.COLORS.get('tile_primary_bg', '#111111'))
+            palette['border'] = cls.COLORS.get('tile_ready_border', palette['bg'])
+            palette['hover'] = cls.COLORS.get('tile_ready_hover', palette['border'])
+            palette['pressed'] = palette['border']
+            palette['fg'] = cls.COLORS.get('status_text_on_dark', '#FFFFFF')
+        else:
+            if primary:
+                palette['bg'] = cls.COLORS.get('tile_primary_bg', '#EEF2FF')
+                palette['border'] = cls.COLORS.get('tile_primary_border', '#A5B4FC')
+                palette['hover'] = cls.COLORS.get('tile_primary_hover', '#E1E7FF')
+                palette['pressed'] = palette['hover']
+                palette['fg'] = cls.COLORS.get('tile_primary_text', cls.COLORS['text_primary'])
+            else:
+                palette['bg'] = cls.COLORS.get('tile_bg', '#F8FAFC')
+                palette['border'] = cls.COLORS.get('tile_border', '#D0D7E2')
+                palette['hover'] = cls.COLORS.get('tile_hover', '#EEF2F7')
+                palette['pressed'] = palette['hover']
+                palette['fg'] = cls.COLORS.get('tile_text', cls.COLORS['text_primary'])
+        return palette
+
+    @classmethod
+    def apply_tile_button_style(cls, button, *, primary: bool = False, state: str = 'default') -> None:
+        """套用格狀工具按鈕樣式。"""
+
+        palette = cls._resolve_tile_palette(primary, state)
+        selector = button.metaObject().className()
+        object_name = button.objectName()
+        if object_name:
+            selector = f"{selector}#{object_name}"
+        disabled_bg = cls.COLORS.get('status_disabled_bg', '#EBEBEB')
+        disabled_fg = cls.COLORS.get('status_disabled_text', '#9A9A9A')
+        disabled_border = cls.COLORS.get('status_disabled_border', '#D1D1D1')
+
+        css = f"""
+{selector} {{
+    background-color: {palette['bg']};
+    border: 2px solid {palette['border']};
+    border-radius: 14px;
+    padding: 12px;
+    color: {palette['fg']};
+    font-weight: 600;
+}}
+
+{selector}:hover {{
+    background-color: {palette['hover']};
+    border: 2px solid {palette['border']};
+}}
+
+{selector}:pressed {{
+    background-color: {palette['pressed']};
+    border: 2px solid {palette['border']};
+}}
+
+{selector}:disabled {{
+    background-color: {disabled_bg};
+    color: {disabled_fg};
+    border: 2px solid {disabled_border};
+}}
+"""
+        button.setStyleSheet(dedent(css).strip())
+        button.setProperty('_lazy_tile_primary', bool(primary))
+        button.setProperty('_lazy_tile_state', state)
+        button.setProperty('_lazy_status_role', None)
+
+    @classmethod
+    def apply_status_style(cls, widget, status_key: str) -> None:
+        """套用狀態樣式到元件（按鈕/標籤）。"""
+
+        styles = cls.get_status_styles()
+        status_css = styles.get(status_key)
+        if not status_css:
+            return
+
+        class_name = widget.metaObject().className()
+        object_name = widget.objectName()
+        selector = f"{class_name}#{object_name}" if object_name else class_name
+        transformed_css = status_css.replace('QPushButton', selector)
+        widget.setStyleSheet(transformed_css)
+        widget.setProperty('_lazy_status_role', status_key)
+        widget.setProperty('_lazy_hint_label', False)
+
+    @classmethod
+    def get_global_stylesheet(cls) -> str:
+        """取得應用程式全域樣式。"""
+        return dedent(f"""
+        QMainWindow {{
+            background-color: {cls.COLORS['background']};
+            color: {cls.COLORS['text_primary']};
+        }}
+
+        QWidget#mainCentralWidget {{
+            background-color: {cls.COLORS['background']};
+            color: {cls.COLORS['text_primary']};
+        }}
+
+        QLabel {{
+            color: {cls.COLORS['text_primary']};
+        }}
+        """).strip()
+
+    @classmethod
+    def apply_global_stylesheet(cls, window) -> None:
+        """套用全域樣式到主視窗。"""
+        window.setStyleSheet(
+            _combine_css(
+                cls.get_global_stylesheet(),
+                cls.get_tooltip_style(),
+            )
+        )
+
+    @classmethod
+    def reapply_theme(cls, root) -> None:
+        """重新套用主題到既有控件。"""
+        from PyQt6.QtWidgets import QLabel, QPushButton, QGroupBox, QToolButton
+
+        for frame in root.findChildren(QGroupBox):
+            accent = bool(frame.property('_lazy_panel_accent'))
+            cls.apply_panel_frame(frame, accent=accent)
+
+        for label in root.findChildren(QLabel):
+            status_role = label.property('_lazy_status_role')
+            if status_role:
+                cls.apply_status_style(label, status_role)
+                continue
+            style_name = label.property('_lazy_label_style')
+            if style_name:
+                cls.apply_label_style(label, LabelStyle(style_name))
+                continue
+            if label.property('_lazy_hint_label'):
+                margin = label.property('_lazy_hint_margin') or None
+                cls.apply_hint_label(label, margin=margin)
+
+        for button in root.findChildren(QPushButton):
+            status_role = button.property('_lazy_status_role')
+            if status_role:
+                cls.apply_status_style(button, status_role)
+                continue
+            style_name = button.property('_lazy_button_style')
+            if style_name:
+                height = button.property('_lazy_button_height') or button.height()
+                cls.apply_button_style(button, ButtonStyle(style_name), fixed_height=int(height))
+
+        for tool_button in root.findChildren(QToolButton):
+            status_role = tool_button.property('_lazy_status_role')
+            if status_role:
+                cls.apply_status_style(tool_button, status_role)
+                continue
+            primary_flag = tool_button.property('_lazy_tile_primary')
+            if primary_flag is not None:
+                state = tool_button.property('_lazy_tile_state') or 'default'
+                cls.apply_tile_button_style(tool_button, primary=bool(primary_flag), state=state)
 
     @classmethod
     def get_status_styles(cls) -> Dict[str, str]:
         """獲取各種狀態的樣式字典"""
         return {
-            'recording_active': 'color: red; font-weight: bold;',
-            'recording_inactive': 'color: gray; font-style: italic;',
-            'screenshot_ready': cls.get_button_style(ButtonStyle.PRIMARY),
-            'screenshot_processing': cls.get_button_style(ButtonStyle.WARNING),
+            'recording_active': f"color: {cls.COLORS['danger']}; font-weight: bold;",
+            'recording_inactive': f"color: {cls.COLORS['text_hint']}; font-style: italic;",
+            'screenshot_ready': cls._build_status_button_style(
+                bg=cls.COLORS['tile_ready_bg'],
+                border=cls.COLORS['tile_ready_border'],
+                fg=cls.COLORS['status_text_on_dark'],
+            ),
+            'screenshot_processing': cls._build_status_button_style(
+                bg=cls.COLORS['tile_processing_bg'],
+                border=cls.COLORS['tile_processing_border'],
+                fg=cls.COLORS['status_text_on_dark'],
+            ),
         }
+
+    @classmethod
+    def _build_status_button_style(
+        cls,
+        *,
+        bg: str,
+        border: str,
+        fg: str,
+        base_selector: str = 'QPushButton',
+    ) -> str:
+        """建構狀態按鈕樣式，支援主題色彩。"""
+
+        disabled_bg = cls.COLORS.get('status_disabled_bg', '#ebebeb')
+        disabled_fg = cls.COLORS.get('status_disabled_text', '#9a9a9a')
+        disabled_border = cls.COLORS.get('status_disabled_border', '#d1d1d1')
+
+        template = f"""
+{base_selector} {{
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.2px;
+    min-width: 92px;
+    height: 36px;
+    transition: background-color 100ms ease, color 100ms ease, border-color 100ms ease;
+    background-color: {bg};
+    color: {fg};
+    border: 2px solid {border};
+}}
+
+{base_selector}:hover {{
+    background-color: {border};
+    color: {fg};
+    border: 2px solid {border};
+}}
+
+{base_selector}:pressed {{
+    background-color: {border};
+    color: {fg};
+    border: 2px solid {border};
+}}
+
+{base_selector}:disabled {{
+    background-color: {disabled_bg};
+    color: {disabled_fg};
+    border: 2px solid {disabled_border};
+}}
+"""
+        return dedent(template).strip()
 
 
 class ThemeManager:
     """主題管理器 - 支援主題切換"""
 
     def __init__(self):
-        self.current_theme = "default"
-        self.themes = {
-            "default": StyleManager.COLORS,
-            "dark": {
-                **StyleManager.COLORS,
-                'background': '#2E2E2E',
-                'text_primary': '#FFFFFF',
-                'text_secondary': '#CCCCCC',
-                'border': '#555555',
-            }
-        }
+        self.themes = {name: deepcopy(palette) for name, palette in _THEME_PRESETS.items()}
+        self.current_theme = 'light'
+        StyleManager.COLORS = deepcopy(self.themes[self.current_theme])
 
-    def set_theme(self, theme_name: str):
-        """設置主題"""
-        if theme_name in self.themes:
-            self.current_theme = theme_name
-            StyleManager.COLORS.update(self.themes[theme_name])
+    def set_theme(self, theme_name: str) -> str:
+        """設置主題並回傳最終套用的主題名稱。"""
+
+        key = (theme_name or '').lower()
+        key = _THEME_ALIASES.get(key, key)
+        if key not in self.themes:
+            return self.current_theme
+
+        StyleManager.COLORS = deepcopy(self.themes[key])
+        self.current_theme = key
+        return self.current_theme
 
     def get_current_theme(self) -> str:
         """獲取當前主題名稱"""

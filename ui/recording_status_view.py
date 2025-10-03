@@ -91,7 +91,9 @@ def _apply_status_labels(window: "WindowMain", active_records_text: list[str]) -
     if active_count > 0:
         status_text = PanelText.LABEL_RECORDING_PREFIX.format(count=active_count)
         window.recording_status_label.setText(status_text)
-        window.recording_status_label.setStyleSheet(StyleManager.get_status_styles()["recording_active"])
+        StyleManager.apply_status_style(window.recording_status_label, "recording_active")
+
+        StyleManager.apply_status_style(window.recording_timer_label, "recording_active")
 
         if len(active_records_text) > 8:
             display_recordings = active_records_text[:8] + [
@@ -103,7 +105,8 @@ def _apply_status_labels(window: "WindowMain", active_records_text: list[str]) -
         window.recording_timer_label.setText("\n".join(display_recordings))
     else:
         window.recording_status_label.setText(PanelText.LABEL_NO_RECORDING)
-        window.recording_status_label.setStyleSheet(StyleManager.get_status_styles()["recording_inactive"])
+        StyleManager.apply_status_style(window.recording_status_label, "recording_inactive")
+        StyleManager.apply_status_style(window.recording_timer_label, "recording_inactive")
         window.recording_timer_label.setText("")
 
 

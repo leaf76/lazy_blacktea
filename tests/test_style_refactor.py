@@ -202,7 +202,7 @@ class StyleRefactorTest(unittest.TestCase):
         theme_manager = ThemeManager()
 
         # 測試預設主題
-        self.assertEqual(theme_manager.get_current_theme(), "default")
+        self.assertEqual(theme_manager.get_current_theme(), "light")
         print(f"    ✅ 預設主題: {theme_manager.get_current_theme()}")
 
         # 測試主題切換
@@ -210,11 +210,17 @@ class StyleRefactorTest(unittest.TestCase):
         theme_manager.set_theme("dark")
 
         self.assertEqual(theme_manager.get_current_theme(), "dark")
+        self.assertNotEqual(StyleManager.COLORS, original_colors)
         print(f"    ✅ 切換主題: {theme_manager.get_current_theme()}")
+
+        # 測試預設別名
+        theme_manager.set_theme("default")
+        self.assertEqual(theme_manager.get_current_theme(), "light")
+        print("    ✅ 支援 default 別名")
 
         # 測試無效主題
         theme_manager.set_theme("invalid_theme")
-        self.assertEqual(theme_manager.get_current_theme(), "dark")  # 應該保持不變
+        self.assertEqual(theme_manager.get_current_theme(), "light")  # 應該保持不變
         print(f"    ✅ 無效主題處理")
 
     def test_main_file_style_integration(self):
