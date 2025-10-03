@@ -554,6 +554,10 @@ class LogcatWindow(QDialog):
         self.last_update_time = 0
         self.history_multiplier = 5
 
+        # Auto scroll state
+        self._auto_scroll_enabled = True
+        self._suppress_scroll_signal = False
+
         self._apply_persisted_settings(settings or {})
 
         # Filtering state
@@ -745,6 +749,7 @@ class LogcatWindow(QDialog):
             }
             """
         )
+        self.log_display.verticalScrollBar().valueChanged.connect(self._on_log_view_scrolled)
 
         self.status_label = QLabel('Ready to start logcat...')
 
@@ -889,6 +894,17 @@ class LogcatWindow(QDialog):
         perf_btn = QPushButton('⚙️ Performance')
         perf_btn.clicked.connect(self.open_performance_settings)
         layout.addWidget(perf_btn)
+
+        # Auto-scroll toggle and helper
+        self.follow_latest_checkbox = QCheckBox('Follow newest')
+        self.follow_latest_checkbox.setChecked(True)
+        self.follow_latest_checkbox.toggled.connect(self.set_auto_scroll_enabled)
+        layout.addWidget(self.follow_latest_checkbox)
+
+        jump_btn = QPushButton('Jump to latest')
+        jump_btn.clicked.connect(lambda: self.set_auto_scroll_enabled(True))
+        jump_btn.setToolTip('Re-enable auto-follow and scroll to newest log entries')
+        layout.addWidget(jump_btn)
 
         # Add separator
         separator = self.create_vertical_separator()
@@ -1495,6 +1511,41 @@ class LogcatWindow(QDialog):
         else:
             self._update_status_label('Logs cleared')
 
+    def set_auto_scroll_enabled(self, enabled: bool, *, from_scroll: bool = False) -> None:
+        """Enable or disable automatic scrolling to the latest log entry."""
+        enabled = bool(enabled)
+        if enabled == self._auto_scroll_enabled and not from_scroll:
+            return
+
+        self._auto_scroll_enabled = enabled
+
+        if hasattr(self, 'follow_latest_checkbox'):
+            self.follow_latest_checkbox.blockSignals(True)
+            self.follow_latest_checkbox.setChecked(enabled)
+            self.follow_latest_checkbox.blockSignals(False)
+
+        if enabled:
+            self._scroll_to_bottom()
+
+    def _on_log_view_scrolled(self, value: int) -> None:
+        """Handle user scrolling to pause or resume auto-follow."""
+        if self._suppress_scroll_signal:
+            return
+
+        scroll_bar = self.log_display.verticalScrollBar()
+        if scroll_bar is None:
+            return
+
+        distance_to_bottom = scroll_bar.maximum() - value
+        threshold = max(2, scroll_bar.pageStep() // 4)
+
+        if distance_to_bottom <= threshold:
+            if not self._auto_scroll_enabled:
+                self.set_auto_scroll_enabled(True, from_scroll=True)
+        else:
+            if self._auto_scroll_enabled:
+                self.set_auto_scroll_enabled(False, from_scroll=True)
+
     def apply_live_filter(self, pattern):
         """Apply live regex filter to logs in real-time."""
         self.live_filter_pattern = pattern.strip() if pattern.strip() else None
@@ -1508,11 +1559,21 @@ class LogcatWindow(QDialog):
 
     def _scroll_to_bottom(self):
         """Scroll log display to bottom."""
+        if not self._auto_scroll_enabled:
+            return
+
         model = self.log_display.model()
         if model is None or model.rowCount() == 0:
             return
         last_index = model.index(model.rowCount() - 1, 0)
-        self.log_display.scrollTo(last_index, QAbstractItemView.ScrollHint.PositionAtBottom)
+        scroll_bar = self.log_display.verticalScrollBar()
+        self._suppress_scroll_signal = True
+        try:
+            if scroll_bar is not None:
+                scroll_bar.setValue(scroll_bar.maximum())
+            self.log_display.scrollTo(last_index, QAbstractItemView.ScrollHint.PositionAtBottom)
+        finally:
+            self._suppress_scroll_signal = False
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         """Ensure the logcat process stops when the window closes."""

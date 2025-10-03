@@ -150,6 +150,15 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def _drain_log_buffer(self):
+        """Ensure buffered log entries are fully processed for deterministic tests."""
+        guard = 0
+        while self.window.log_buffer and guard < 1000:
+            self.window.process_buffered_logs()
+            guard += 1
+        if guard >= 1000:
+            raise AssertionError('Log buffer did not drain during test setup')
+
     def test_log_display_is_list_view(self):
         self.assertIsInstance(self.window.log_display, QListView)
 
@@ -248,7 +257,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             for i in range(3)
         ]
         self.window.log_buffer.extend(matching_lines)
-        self.window.process_buffered_logs()
+        self._drain_log_buffer()
 
         self.window.apply_live_filter('match')
         self.assertEqual(self.window.filtered_model.rowCount(), 3)
@@ -257,7 +266,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             self.window.log_buffer.append(
                 LogLine.from_string(f'09-30 12:01:{i:02d}.000  123  456 I Tag: other {i}')
             )
-            self.window.process_buffered_logs()
+            self._drain_log_buffer()
 
         self.assertEqual(
             [
@@ -274,7 +283,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             self.window.log_buffer.append(
                 LogLine.from_string(f'09-30 12:02:0{i}.000  123  456 I Tag: match-new {i}')
             )
-            self.window.process_buffered_logs()
+            self._drain_log_buffer()
 
         latest = [
             self.window.filtered_model.data(
@@ -295,7 +304,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             for i in range(2)
         ]
         self.window.log_buffer.extend(initial_lines)
-        self.window.process_buffered_logs()
+        self._drain_log_buffer()
 
         self.window.apply_live_filter('match')
         self.assertEqual(self.window.filtered_model.rowCount(), 2)
@@ -307,12 +316,66 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.window.log_buffer.append(
             LogLine.from_string('09-30 12:11:00.000  123  456 I Tag: match new')
         )
-        self.window.process_buffered_logs()
+        self._drain_log_buffer()
 
         model = self.window.log_display.model()
         self.assertEqual(model.rowCount(), 1)
         visible_text = model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole)
         self.assertIn('match new', visible_text)
+
+    def test_scroll_up_disables_auto_follow_and_preserves_position(self):
+        self.window.max_lines = 200
+        seed_lines = [
+            LogLine.from_string(f'09-30 12:20:{i:02d}.000  123  456 I Tag: seed {i}')
+            for i in range(120)
+        ]
+        self.window.log_buffer.extend(seed_lines)
+        self._drain_log_buffer()
+
+        scroll_bar = self.window.log_display.verticalScrollBar()
+        self.window._scroll_to_bottom()
+        initial_max = scroll_bar.maximum()
+        self.assertGreater(initial_max, 0)
+
+        scroll_bar.setValue(scroll_bar.minimum())
+        self.assertFalse(self.window._auto_scroll_enabled)
+        self.assertFalse(self.window.follow_latest_checkbox.isChecked())
+        position_before = scroll_bar.value()
+
+        self.window.log_buffer.append(
+            LogLine.from_string('09-30 12:21:00.000  123  456 I Tag: latest new')
+        )
+        self._drain_log_buffer()
+
+        self.assertEqual(scroll_bar.value(), position_before)
+        self.assertLess(scroll_bar.value(), scroll_bar.maximum())
+
+    def test_scrolling_back_to_bottom_resumes_auto_follow(self):
+        self.window.max_lines = 200
+        seed_lines = [
+            LogLine.from_string(f'09-30 12:30:{i:02d}.000  123  456 I Tag: follow {i}')
+            for i in range(400)
+        ]
+        self.window.log_buffer.extend(seed_lines)
+        self._drain_log_buffer()
+
+        scroll_bar = self.window.log_display.verticalScrollBar()
+        self.window._scroll_to_bottom()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        self.window.set_auto_scroll_enabled(False, from_scroll=True)
+        scroll_bar.setValue(scroll_bar.minimum())
+        self.assertFalse(self.window._auto_scroll_enabled)
+
+        scroll_bar.setValue(scroll_bar.maximum())
+        self.assertTrue(self.window._auto_scroll_enabled)
+        self.assertTrue(self.window.follow_latest_checkbox.isChecked())
+
+        self.window.log_buffer.append(
+            LogLine.from_string('09-30 12:31:00.000  123  456 I Tag: follow latest')
+        )
+        self._drain_log_buffer()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
 
     def test_stop_logcat_resets_state(self):
         fake_process = Mock()
