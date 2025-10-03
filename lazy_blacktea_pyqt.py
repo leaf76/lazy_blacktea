@@ -72,6 +72,7 @@ from ui.file_dialog_manager import FileDialogManager
 from ui.battery_info_manager import BatteryInfoManager
 from ui.device_detail_dialog import DeviceDetailDialog
 from ui.device_selection_manager import DeviceSelectionManager
+from ui.bluetooth_monitor_window import BluetoothMonitorWindow
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -171,6 +172,7 @@ class WindowMain(QMainWindow):
         self.device_overview_widget = None
         self.ui_scale_actions: Dict[float, QAction] = {}
         self.logcat_settings: Optional[LogcatSettings] = None
+        self.bluetooth_windows: Dict[str, BluetoothMonitorWindow] = {}
 
         # Initialize device search manager
         self.device_search_manager = DeviceSearchManager(main_window=self)
@@ -1938,6 +1940,24 @@ class WindowMain(QMainWindow):
             return
 
         self._open_logcat_for_device(device)
+
+    def open_bluetooth_monitor_for_device(self, device_serial: str) -> None:
+        """Open or focus the Bluetooth monitor window for a given device."""
+        device = self.device_dict.get(device_serial)
+        if device is None:
+            self.show_error('Bluetooth Monitor', f'Device {device_serial} is no longer available.')
+            return
+
+        existing = self.bluetooth_windows.get(device_serial)
+        if existing is None or not existing.isVisible():
+            window = BluetoothMonitorWindow(device_serial, device, parent=self)
+            window.destroyed.connect(lambda _obj=None, serial=device_serial: self.bluetooth_windows.pop(serial, None))
+            self.bluetooth_windows[device_serial] = window
+            existing = window
+
+        existing.show()
+        existing.raise_()
+        existing.activateWindow()
 
     # Shell commands
     @ensure_devices_selected

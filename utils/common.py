@@ -85,7 +85,13 @@ def get_logger(name: str = 'my_logger') -> logging.Logger:
   # Avoid duplicate handlers
   if not logger.handlers:
     # File handler - detailed logging
-    file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+    try:
+      file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+    except (OSError, PermissionError):
+      fallback_dir = os.path.join(os.getcwd(), 'logs')
+      pathlib.Path(fallback_dir).mkdir(parents=True, exist_ok=True)
+      log_filepath = os.path.join(fallback_dir, log_filename)
+      file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(
         '%(asctime)s %(name)-12s %(levelname)-8s %(message)s',

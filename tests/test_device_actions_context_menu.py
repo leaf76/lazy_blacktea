@@ -70,6 +70,10 @@ class StubWindow:
         self.device_dict = {device.device_serial_num: device}
         self.device_actions_controller = None
         self.details_called_with = None
+        self.bluetooth_monitor_calls = []
+
+    def open_bluetooth_monitor_for_device(self, serial):
+        self.bluetooth_monitor_calls.append(serial)
 
 
 class DeviceActionsControllerContextMenuTests(unittest.TestCase):
@@ -106,6 +110,23 @@ class DeviceActionsControllerContextMenuTests(unittest.TestCase):
 
         detail_actions = [a for a in menu.actions if isinstance(a, FakeAction) and a.text == 'ℹ️ Device Details']
         self.assertEqual(len(detail_actions), 0)
+
+    def test_context_menu_includes_bluetooth_monitor_action(self):
+        checkbox = StubCheckbox()
+        with patch('ui.device_actions_controller.QMenu', FakeMenu):
+            self.controller.show_context_menu(QPoint(0, 0), self.device.device_serial_num, checkbox)
+
+        menu = FakeMenu.last_instance
+        self.assertIsNotNone(menu)
+
+        bluetooth_actions = [
+            a for a in menu.actions
+            if isinstance(a, FakeAction) and a.text == '📡 Monitor Bluetooth'
+        ]
+        self.assertEqual(len(bluetooth_actions), 1)
+
+        bluetooth_actions[0].triggered.emit()
+        self.assertEqual(self.window.bluetooth_monitor_calls, [self.device.device_serial_num])
 
 
 class DeviceDetailTextTests(unittest.TestCase):

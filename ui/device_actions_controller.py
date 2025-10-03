@@ -49,6 +49,11 @@ class DeviceActionsController:
         view_logcat_action = context_menu.addAction('👁️ View Logcat')
         view_logcat_action.triggered.connect(lambda: self.window.view_logcat_for_device(device_serial))
 
+        bluetooth_monitor_action = context_menu.addAction('📡 Monitor Bluetooth')
+        bluetooth_monitor_action.triggered.connect(
+            lambda: self.window.open_bluetooth_monitor_for_device(device_serial)
+        )
+
         context_menu.addSeparator()
 
         ui_inspector_action = context_menu.addAction('🔍 Launch UI Inspector')
