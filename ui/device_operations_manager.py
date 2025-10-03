@@ -14,12 +14,11 @@
 - 改善代碼組織結構
 """
 
-import concurrent.futures
 import os
 import subprocess
-import threading
 import time
 from typing import Dict, List, Any, Optional, Callable
+
 from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
@@ -37,6 +36,7 @@ from utils.recording_utils import RecordingManager
 from utils.screenshot_utils import take_screenshots_batch
 from ui.ui_inspector_dialog import UIInspectorDialog
 from utils.ui_inspector_utils import check_ui_inspector_prerequisites
+from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
 
 class DeviceOperationsManager(QObject):
@@ -52,6 +52,8 @@ class DeviceOperationsManager(QObject):
         super().__init__()
         self.parent_window = parent_window
         self.logger = common.get_logger('device_operations_manager')
+        self._dispatcher = get_task_dispatcher()
+        self._active_task_handles: List[TaskHandle] = []
 
         # 設備狀態管理
         self.device_recordings: Dict[str, Dict] = {}
@@ -81,46 +83,15 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Device Selected", "Please select at least one device to reboot.")
             return False
 
-        success_count = 0
-        success_lock = threading.Lock()
-
-        def _execute_reboot(serial: str) -> None:
-            nonlocal success_count
-            try:
-                self._log_console(f"Rebooting device {serial} to {reboot_mode}...")
-
-                if reboot_mode == "recovery":
-                    result = adb_tools.run_adb_command(f"-s {serial} reboot recovery")
-                elif reboot_mode == "bootloader":
-                    result = adb_tools.run_adb_command(f"-s {serial} reboot bootloader")
-                else:
-                    result = adb_tools.run_adb_command(f"-s {serial} reboot")
-
-                if result.returncode == 0:
-                    with success_lock:
-                        success_count += 1
-                    self._log_console(f"✅ Device {serial} reboot command sent successfully")
-                    self.operation_completed_signal.emit("reboot", serial, True, f"Reboot command sent to {reboot_mode}")
-                else:
-                    self._log_console(f"❌ Failed to reboot device {serial}: {result.stderr}")
-                    self.operation_completed_signal.emit("reboot", serial, False, result.stderr)
-
-            except Exception as e:
-                self._log_console(f"❌ Error rebooting device {serial}: {str(e)}")
-                self.operation_completed_signal.emit("reboot", serial, False, str(e))
-
-        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_execute_reboot, serial) for serial in device_serials]
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
-
-        if success_count > 0:
-            self._show_info("Reboot Initiated", f"Reboot command sent to {success_count} device(s).")
-            return True
-        else:
-            self._show_error("Reboot Failed", "Failed to send reboot command to any device.")
-            return False
+        return self._run_device_tasks(
+            'reboot',
+            device_serials,
+            lambda serial, **kwargs: self._reboot_device_task(serial, reboot_mode=reboot_mode, **kwargs),
+            summary_title='Reboot',
+            success_message_builder=lambda success, total: f'Reboot command sent to {success}/{total} device(s).',
+            failure_message='Failed to send reboot command to any device.',
+            partial_message_builder=lambda failures: f'Failed to reboot: {", ".join(failures)}',
+        )
 
     def reboot_single_device(self, device_serial: str, reboot_mode: str = "system") -> bool:
         """重啟單個設備"""
@@ -144,48 +115,18 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Device Selected", f"Please select at least one device to {action} Bluetooth.")
             return False
 
-        action_text = "enabling" if enable else "disabling"
-        command = "enable" if enable else "disable"
-        success_count = 0
-        success_lock = threading.Lock()
+        action_text = "enable" if enable else "disable"
+        status_text = "enabled" if enable else "disabled"
 
-        def _execute_toggle(serial: str) -> None:
-            nonlocal success_count
-            try:
-                self._log_console(f"{action_text.capitalize()} Bluetooth on device {serial}...")
-
-                result = adb_tools.run_adb_command(f"-s {serial} shell svc bluetooth {command}")
-
-                if result.returncode == 0:
-                    status = "enabled" if enable else "disabled"
-                    with success_lock:
-                        success_count += 1
-                    self._log_console(f"✅ Bluetooth {status} on device {serial}")
-                    self.operation_completed_signal.emit("bluetooth", serial, True, f"Bluetooth {status}")
-                else:
-                    error_msg = getattr(result, 'stderr', '') or "Bluetooth command failed"
-                    self._log_console(f"❌ Failed to {command} Bluetooth on device {serial}: {error_msg}")
-                    self.operation_completed_signal.emit("bluetooth", serial, False, error_msg)
-
-            except Exception as e:  # pragma: no cover - defensive
-                error_msg = str(e)
-                self._log_console(f"❌ Error {action_text} Bluetooth on device {serial}: {error_msg}")
-                self.operation_completed_signal.emit("bluetooth", serial, False, error_msg)
-
-        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_execute_toggle, serial) for serial in device_serials]
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
-
-        if success_count > 0:
-            action_past = "enabled" if enable else "disabled"
-            self._show_info("Bluetooth Operation", f"Bluetooth {action_past} on {success_count} device(s).")
-            return True
-        else:
-            action_text = "enable" if enable else "disable"
-            self._show_error("Bluetooth Operation Failed", f"Failed to {action_text} Bluetooth on any device.")
-            return False
+        return self._run_device_tasks(
+            'bluetooth',
+            device_serials,
+            lambda serial, **kwargs: self._toggle_bluetooth_task(serial, enable=enable, **kwargs),
+            summary_title='Bluetooth Operation',
+            success_message_builder=lambda success, total: f'Bluetooth {status_text} on {success}/{total} device(s).',
+            failure_message=f'Failed to {action_text} Bluetooth on any device.',
+            partial_message_builder=lambda failures: f'Failed to {action_text} Bluetooth on: {", ".join(failures)}',
+        )
 
     # ===== 媒體操作 =====
 
@@ -205,31 +146,30 @@ class DeviceOperationsManager(QObject):
             if not output_path:
                 return False
 
-        def screenshot_thread():
-            """截圖線程函數"""
-            try:
-                device_models = []
-                devices = self._get_devices_by_serials(device_serials)
+        context = TaskContext(name='screenshot', category='screenshot')
+        handle = self._dispatcher.submit(
+            self._screenshot_task,
+            device_serials,
+            output_path=output_path,
+            context=context,
+        )
 
-                for device in devices:
-                    device_models.append(device.device_model)
+        def _on_completed(payload: Any) -> None:
+            success, _ = self._coerce_task_result(payload)
+            device_models = payload.get('device_models', []) if isinstance(payload, dict) else []
+            if success:
+                self.screenshot_completed_signal.emit(output_path, len(device_serials), device_models)
+                if callback:
+                    callback(output_path, len(device_serials), device_models)
+            else:
+                self._log_console('❌ Screenshot operation failed')
 
-                # 使用批量截圖工具
-                success = take_screenshots_batch(device_serials, output_path)
+        def _on_failed(exc: Exception) -> None:
+            self._log_console(f"❌ Screenshot task failed: {exc}")
 
-                if success:
-                    self.screenshot_completed_signal.emit(output_path, len(device_serials), device_models)
-
-                    if callback:
-                        callback(output_path, len(device_serials), device_models)
-                else:
-                    self._log_console("❌ Screenshot operation failed")
-
-            except Exception as e:
-                self._log_console(f"❌ Error in screenshot thread: {str(e)}")
-
-        # 在後台線程中執行截圖
-        threading.Thread(target=screenshot_thread, daemon=True).start()
+        handle.completed.connect(_on_completed)
+        handle.failed.connect(_on_failed)
+        self._track_task_handle(handle)
         return True
 
     def take_screenshot_single_device(self, device_serial: str, output_path: str = None) -> bool:
@@ -252,54 +192,56 @@ class DeviceOperationsManager(QObject):
             if not output_path:
                 return False
 
-        success_count = 0
-        for serial in device_serials:
-            try:
-                # 檢查是否已在錄製
-                if serial in self.device_recordings:
-                    self._show_warning("Already Recording", f"Device {serial} is already recording.")
-                    continue
+        duplicates = [serial for serial in device_serials if serial in self.device_recordings]
+        if duplicates:
+            self._show_warning(
+                "Already Recording",
+                "\n".join([f"Device {serial} is already recording." for serial in duplicates])
+            )
 
-                # 生成文件名
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"recording_{serial}_{timestamp}.mp4"
-
-                # 開始錄製
-                success = self.recording_manager.start_recording(serial, output_path, filename, duration)
-
-                if success:
-                    # 記錄錄製狀態
-                    self.device_recordings[serial] = {
-                        'start_time': time.time(),
-                        'duration': duration,
-                        'filename': filename,
-                        'output_path': output_path
-                    }
-
-                    success_count += 1
-                    device_info = self._get_device_info(serial)
-                    device_name = device_info.device_model if device_info else serial
-
-                    self._log_console(f"🎬 Started recording on {device_name} ({serial})")
-                    self.operation_completed_signal.emit("recording_start", serial, True, "Recording started")
-
-                    if callback:
-                        callback(device_name, serial, duration, filename, output_path)
-
-                else:
-                    self._log_console(f"❌ Failed to start recording on device {serial}")
-                    self.operation_completed_signal.emit("recording_start", serial, False, "Failed to start recording")
-
-            except Exception as e:
-                self._log_console(f"❌ Error starting recording on device {serial}: {str(e)}")
-                self.operation_completed_signal.emit("recording_start", serial, False, str(e))
-
-        if success_count > 0:
-            self._show_info("Recording Started", f"Started recording on {success_count} device(s).")
-            return True
-        else:
-            self._show_error("Recording Failed", "Failed to start recording on any device.")
+        serials_to_start = [serial for serial in device_serials if serial not in self.device_recordings]
+        if not serials_to_start:
             return False
+
+        def _result_handler(serial: str, payload: Any) -> None:
+            success, _ = self._coerce_task_result(payload)
+            device_info = self._get_device_info(serial)
+            device_name = device_info.device_model if device_info else serial
+            if success and isinstance(payload, dict):
+                recording_info = {
+                    'start_time': payload.get('start_time', time.time()),
+                    'duration': payload.get('duration', duration),
+                    'filename': payload.get('filename'),
+                    'output_path': payload.get('output_path', output_path),
+                }
+                self.device_recordings[serial] = recording_info
+                self._log_console(f"🎬 Started recording on {device_name} ({serial})")
+                self.operation_completed_signal.emit("recording_start", serial, True, "Recording started")
+                if callback:
+                    callback(
+                        device_name,
+                        serial,
+                        recording_info['duration'],
+                        recording_info['filename'],
+                        recording_info['output_path'],
+                    )
+            else:
+                message = ''
+                if isinstance(payload, dict):
+                    message = payload.get('message', '')
+                self._log_console(f"❌ Failed to start recording on device {serial}: {message}")
+                self.operation_completed_signal.emit("recording_start", serial, False, message or 'Failed to start recording')
+
+        return self._run_device_tasks(
+            'recording_start',
+            serials_to_start,
+            lambda serial, **kwargs: self._start_recording_task(serial, output_path=output_path, duration=duration, **kwargs),
+            summary_title='Recording Started',
+            success_message_builder=lambda success, total: f'Started recording on {success}/{total} device(s).',
+            failure_message='Failed to start recording on any device.',
+            partial_message_builder=lambda failures: f'Failed to start recording on: {", ".join(failures)}',
+            result_handler=_result_handler,
+        )
 
     def stop_screen_record(self, device_serials: List[str] = None) -> bool:
         """停止屏幕錄製"""
@@ -311,49 +253,55 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Active Recordings", "No active recordings to stop.")
             return False
 
-        success_count = 0
-        for serial in device_serials:
-            try:
-                if serial not in self.device_recordings:
-                    self._log_console(f"⚠️ Device {serial} is not recording")
-                    continue
-
-                # 停止錄製
-                success = self.recording_manager.stop_recording(serial)
-
-                if success:
-                    recording_info = self.device_recordings[serial]
-                    duration = time.time() - recording_info['start_time']
-
-                    device_info = self._get_device_info(serial)
-                    device_name = device_info.device_model if device_info else serial
-
-                    # 發送信號
-                    self.recording_stopped_signal.emit(
-                        device_name,
-                        serial,
-                        duration,
-                        recording_info['filename'],
-                        recording_info['output_path']
-                    )
-
-                    success_count += 1
-                    self._log_console(f"⏹️ Stopped recording on {device_name} ({serial})")
-
-                else:
-                    self._log_console(f"❌ Failed to stop recording on device {serial}")
-                    self.operation_completed_signal.emit("recording_stop", serial, False, "Failed to stop recording")
-
-            except Exception as e:
-                self._log_console(f"❌ Error stopping recording on device {serial}: {str(e)}")
-                self.operation_completed_signal.emit("recording_stop", serial, False, str(e))
-
-        if success_count > 0:
-            self._show_info("Recording Stopped", f"Stopped recording on {success_count} device(s).")
-            return True
-        else:
-            self._show_error("Stop Recording Failed", "Failed to stop recording on any device.")
+        active_serials = [serial for serial in device_serials if serial in self.device_recordings]
+        if not active_serials:
+            self._show_warning("No Active Recordings", "No active recordings to stop.")
             return False
+
+        def _result_handler(serial: str, payload: Any) -> None:
+            success, _ = self._coerce_task_result(payload)
+            device_info = self._get_device_info(serial)
+            device_name = device_info.device_model if device_info else serial
+            recording_info = self.device_recordings.get(serial)
+
+            if success and isinstance(payload, dict):
+                info = payload.get('recording_info', recording_info) or {}
+                start_time = info.get('start_time', time.time())
+                duration = time.time() - start_time
+                filename = info.get('filename', '')
+                output_path = info.get('output_path', '')
+
+                self.recording_stopped_signal.emit(
+                    device_name,
+                    serial,
+                    duration,
+                    filename,
+                    output_path,
+                )
+                self.device_recordings.pop(serial, None)
+                self._log_console(f"⏹️ Stopped recording on {device_name} ({serial})")
+                self.operation_completed_signal.emit("recording_stop", serial, True, "Recording stopped")
+            else:
+                message = ''
+                if isinstance(payload, dict):
+                    message = payload.get('message', '')
+                self._log_console(f"❌ Failed to stop recording on device {serial}: {message}")
+                self.operation_completed_signal.emit("recording_stop", serial, False, message or 'Failed to stop recording')
+
+        return self._run_device_tasks(
+            'recording_stop',
+            active_serials,
+            lambda serial, **kwargs: self._stop_recording_task(
+                serial,
+                recording_info=self.device_recordings.get(serial, {}).copy(),
+                **kwargs,
+            ),
+            summary_title='Recording Stopped',
+            success_message_builder=lambda success, total: f'Stopped recording on {success}/{total} device(s).',
+            failure_message='Failed to stop recording on any device.',
+            partial_message_builder=lambda failures: f'Failed to stop recording on: {", ".join(failures)}',
+            result_handler=_result_handler,
+        )
 
     def update_recording_status(self):
         """更新錄製狀態（定時調用）"""
@@ -422,69 +370,21 @@ class DeviceOperationsManager(QObject):
             return False
 
         apk_name = os.path.basename(apk_file)
+        self._log_console(f"📱 Installing {apk_name} on {len(device_serials)} device(s)...")
 
-        def install_thread():
-            """APK安裝線程"""
-            try:
-                self._install_apk_with_progress(device_serials, apk_file, apk_name)
-            except Exception as e:
-                self._log_console(f"❌ Error in APK installation thread: {str(e)}")
-
-        # 在後台線程中執行安裝
-        threading.Thread(target=install_thread, daemon=True).start()
-        return True
-
-    def _install_apk_with_progress(self, device_serials: List[str], apk_file: str, apk_name: str):
-        """帶進度的APK安裝"""
-        success_count = 0
-        total_devices = len(device_serials)
-
-        self._log_console(f"📱 Installing {apk_name} on {total_devices} device(s)...")
-
-        success_lock = threading.Lock()
-
-        def _install_device(position: int, serial: str) -> None:
-            nonlocal success_count
-            try:
-                device_info = self._get_device_info(serial)
-                device_name = device_info.device_model if device_info else serial
-
-                self._log_console(f"📱 [{position}/{total_devices}] Installing on {device_name} ({serial})...")
-
-                result = adb_tools.run_adb_command(f"-s {serial} install -r \"{apk_file}\"")
-
-                if result.returncode == 0:
-                    with success_lock:
-                        success_count += 1
-                    self._log_console(f"✅ [{position}/{total_devices}] Successfully installed on {device_name}")
-                    self.operation_completed_signal.emit("apk_install", serial, True, f"APK installed: {apk_name}")
-                else:
-                    error_msg = getattr(result, 'stderr', '') or "Installation failed"
-                    self._log_console(f"❌ [{position}/{total_devices}] Failed to install on {device_name}: {error_msg}")
-                    self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
-
-            except Exception as e:  # pragma: no cover - defensive
-                error_msg = str(e)
-                self._log_console(f"❌ [{position}/{total_devices}] Error installing on device {serial}: {error_msg}")
-                self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
-
-        if total_devices > 0:
-            max_workers = min(total_devices, max(1, os.cpu_count() or 1))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(_install_device, index + 1, serial)
-                    for index, serial in enumerate(device_serials)
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    future.result()
-
-        # 顯示最終結果
-        if success_count > 0:
-            self._show_info("APK Installation",
-                          f"Successfully installed {apk_name} on {success_count}/{total_devices} device(s).")
-        else:
-            self._show_error("APK Installation Failed",
-                           f"Failed to install {apk_name} on any device.")
+        return self._run_device_tasks(
+            'apk_install',
+            device_serials,
+            lambda serial, **kwargs: self._install_apk_task(serial, apk_file=apk_file, apk_name=apk_name, **kwargs),
+            summary_title='APK Installation',
+            success_message_builder=lambda success, total: f'Successfully installed {apk_name} on {success}/{total} device(s).',
+            failure_message=f'Failed to install {apk_name} on any device.',
+            partial_message_builder=lambda failures: f'Failed to install {apk_name} on: {", ".join(failures)}',
+            extra_kwargs_factory=lambda serial, index, total: {
+                'position': index,
+                'total': total,
+            },
+        )
 
     def launch_scrcpy(self, device_serials: List[str] = None) -> bool:
         """啟動scrcpy工具"""
@@ -495,54 +395,22 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Device Selected", "Please select at least one device to launch scrcpy.")
             return False
 
-        success_count = 0
-        for serial in device_serials:
-            if self.launch_scrcpy_single_device(serial):
-                success_count += 1
-
-        if success_count > 0:
-            self._show_info("scrcpy Launched", f"scrcpy launched for {success_count} device(s).")
-            return True
-        else:
-            self._show_error("scrcpy Launch Failed", "Failed to launch scrcpy for any device.")
+        if not self._check_scrcpy_available():
             return False
+
+        return self._run_device_tasks(
+            'scrcpy',
+            device_serials,
+            lambda serial, **kwargs: self._scrcpy_task(serial, **kwargs),
+            summary_title='scrcpy Launch',
+            success_message_builder=lambda success, total: f'scrcpy launched for {success}/{total} device(s).',
+            failure_message='Failed to launch scrcpy for any device.',
+            partial_message_builder=lambda failures: f'Failed to launch scrcpy for: {", ".join(failures)}',
+        )
 
     def launch_scrcpy_single_device(self, device_serial: str) -> bool:
         """為單個設備啟動scrcpy"""
-        try:
-            # 檢查scrcpy是否可用
-            if not self._check_scrcpy_available():
-                return False
-
-            device_info = self._get_device_info(device_serial)
-            device_name = device_info.device_model if device_info else device_serial
-
-            self._log_console(f"🖥️ Launching scrcpy for {device_name} ({device_serial})...")
-
-            # 構建scrcpy命令
-            cmd = f"scrcpy -s {device_serial}"
-
-            # 在後台啟動scrcpy
-            def launch_scrcpy_thread():
-                try:
-                    process = subprocess.Popen(cmd.split(),
-                                             stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE)
-
-                    self._log_console(f"✅ scrcpy launched for {device_name}")
-                    self.operation_completed_signal.emit("scrcpy", device_serial, True, "scrcpy launched")
-
-                except Exception as e:
-                    self._log_console(f"❌ Failed to launch scrcpy for {device_name}: {str(e)}")
-                    self.operation_completed_signal.emit("scrcpy", device_serial, False, str(e))
-
-            threading.Thread(target=launch_scrcpy_thread, daemon=True).start()
-            return True
-
-        except Exception as e:
-            self._log_console(f"❌ Error launching scrcpy for device {device_serial}: {str(e)}")
-            self.operation_completed_signal.emit("scrcpy", device_serial, False, str(e))
-            return False
+        return self.launch_scrcpy([device_serial])
 
     def launch_ui_inspector(self, device_serials: List[str] = None) -> bool:
         """啟動UI檢查器"""
@@ -556,59 +424,15 @@ class DeviceOperationsManager(QObject):
             self._show_warning("No Device Selected", "Please select at least one device to launch UI Inspector.")
             return False
 
-        max_workers = min(len(device_serials), max(1, os.cpu_count() or 1))
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-
-        def _launch_task(serial: str) -> bool:
-            success, result = QMetaObject.invokeMethod(
-                self,
-                "_launch_ui_inspector_for_device_slot",
-                Qt.ConnectionType.BlockingQueuedConnection,
-                Q_RETURN_ARG(bool),
-                Q_ARG(str, serial)
-            )
-            if not success:
-                raise RuntimeError(f'Failed to invoke UI Inspector for {serial}')
-            return bool(result)
-
-        future_map: dict[concurrent.futures.Future[bool], str] = {}
-        for serial in device_serials:
-            future = executor.submit(_launch_task, serial)
-            future_map[future] = serial
-
-        def _finalize_results() -> None:
-            success = 0
-            failures: list[str] = []
-
-            for future, serial in future_map.items():
-                try:
-                    if future.result():
-                        success += 1
-                    else:
-                        failures.append(serial)
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    failures.append(serial)
-                    self._log_console(f"❌ Error launching UI Inspector for device {serial}: {exc}")
-
-            executor.shutdown(wait=True)
-
-            def _notify() -> None:
-                total = len(device_serials)
-                if success > 0:
-                    self._show_info("UI Inspector", f"UI Inspector launched for {success}/{total} device(s).")
-                if success == 0:
-                    self._show_error("UI Inspector Failed", "Failed to launch UI Inspector for any device.")
-                elif failures:
-                    failed_devices = ', '.join(failures)
-                    self._show_warning(
-                        "UI Inspector Partial Failure",
-                        f"Failed to launch UI Inspector for: {failed_devices}"
-                    )
-
-            QTimer.singleShot(0, _notify)
-
-        threading.Thread(target=_finalize_results, daemon=True).start()
-        return True
+        return self._run_device_tasks(
+            'ui_inspector',
+            device_serials,
+            self._ui_inspector_task,
+            summary_title='UI Inspector',
+            success_message_builder=lambda success, total: f'UI Inspector launched for {success}/{total} device(s).',
+            failure_message='Failed to launch UI Inspector for any device.',
+            partial_message_builder=lambda failures: f'Failed to launch UI Inspector for: {", ".join(failures)}',
+        )
 
     def launch_ui_inspector_for_device(self, device_serial: str) -> bool:
         if not self._ensure_ui_inspector_ready():
@@ -684,6 +508,128 @@ class DeviceOperationsManager(QObject):
             "Some operations may be unavailable during recording."
         )
 
+    # ===== 任務調度輔助方法 =====
+
+    def _track_task_handle(self, handle: TaskHandle) -> None:
+        """Keep task handles alive until completion."""
+
+        self._active_task_handles.append(handle)
+
+        def _cleanup(h=handle) -> None:
+            try:
+                self._active_task_handles.remove(h)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
+
+    @staticmethod
+    def _coerce_task_result(result: Any) -> tuple[bool, str]:
+        """Normalize worker results into (success, message)."""
+
+        if isinstance(result, dict):
+            return bool(result.get('success', False)), str(result.get('message', ''))
+        if isinstance(result, tuple) and len(result) >= 2:
+            success, message = result[0], result[1]
+            return bool(success), str(message)
+        return bool(result), str(result)
+
+    def _run_device_tasks(
+        self,
+        operation: str,
+        device_serials: List[str],
+        worker: Callable[..., Any],
+        *,
+        summary_title: Optional[str] = None,
+        success_message_builder: Optional[Callable[[int, int], str]] = None,
+        failure_message: Optional[str] = None,
+        partial_message_builder: Optional[Callable[[List[str]], str]] = None,
+        extra_kwargs_factory: Optional[Callable[[str, int, int], Dict[str, Any]]] = None,
+        result_handler: Optional[Callable[[str, Any], None]] = None,
+        failure_handler: Optional[Callable[[str, Exception], None]] = None,
+    ) -> bool:
+        """Dispatch per-device tasks and present aggregated results."""
+
+        if not device_serials:
+            self._show_warning("No Device Selected", "Please select at least one device to execute this operation.")
+            return False
+
+        total = len(device_serials)
+        pending = total
+        results: Dict[str, tuple[bool, str]] = {}
+        handles: List[TaskHandle] = []
+
+        success_serials: List[str] = []
+        failure_serials: List[str] = []
+
+        def finalize() -> None:
+            successes = len(success_serials)
+            failures = len(failure_serials)
+            title = summary_title or operation.replace('_', ' ').title()
+
+            if successes and success_message_builder:
+                self._show_info(title, success_message_builder(successes, total))
+            elif successes and successes == total:
+                self._show_info(title, f'Operation succeeded on {successes}/{total} device(s).')
+
+            if failures:
+                if successes == 0:
+                    message = failure_message or f'Operation failed on all {total} device(s).'
+                    self._show_error(title, message)
+                else:
+                    if partial_message_builder:
+                        message = partial_message_builder(failure_serials)
+                    else:
+                        message = f'Failed for: {", ".join(failure_serials)}'
+                    self._show_warning(title, message)
+
+        def on_completed(serial: str, payload: Any) -> None:
+            success, message = self._coerce_task_result(payload)
+            results[serial] = (success, message)
+            if success:
+                success_serials.append(serial)
+            else:
+                failure_serials.append(serial)
+            if result_handler:
+                result_handler(serial, payload)
+
+        def on_failed(serial: str, exc: Exception) -> None:
+            results[serial] = (False, str(exc))
+            failure_serials.append(serial)
+            if failure_handler:
+                failure_handler(serial, exc)
+            else:
+                self._log_console(f"❌ {operation} failed for {serial}: {exc}")
+
+        def on_finished(serial: str) -> None:
+            nonlocal pending
+            if serial not in results:
+                results[serial] = (False, 'Cancelled')
+                if serial not in failure_serials:
+                    failure_serials.append(serial)
+            pending -= 1
+            if pending == 0:
+                finalize()
+
+        for index, serial in enumerate(device_serials, start=1):
+            context = TaskContext(name=operation, device_serial=serial, category='device_operation')
+            extra_kwargs = extra_kwargs_factory(serial, index, total) if extra_kwargs_factory else {}
+            handle = self._dispatcher.submit(
+                worker,
+                serial,
+                position=index,
+                total=total,
+                context=context,
+                **extra_kwargs,
+            )
+            handle.completed.connect(lambda payload, s=serial: on_completed(s, payload))
+            handle.failed.connect(lambda exc, s=serial: on_failed(s, exc))
+            handle.finished.connect(lambda s=serial: on_finished(s))
+            self._track_task_handle(handle)
+            handles.append(handle)
+
+        return True
+
     # ===== 私有輔助方法 =====
 
     def _get_selected_device_serials(self) -> List[str]:
@@ -692,6 +638,192 @@ class DeviceOperationsManager(QObject):
             devices = self.parent_window.get_checked_devices()
             return [device.device_serial_num for device in devices]
         return []
+
+    # ===== 任務執行函數 =====
+
+    def _reboot_device_task(self, serial: str, *, reboot_mode: str, task_handle: Optional[TaskHandle] = None, **_: Any) -> Dict[str, Any]:
+        command = {
+            'recovery': f'-s {serial} reboot recovery',
+            'bootloader': f'-s {serial} reboot bootloader',
+        }.get(reboot_mode, f'-s {serial} reboot')
+
+        try:
+            self._log_console(f"Rebooting device {serial} to {reboot_mode}...")
+            result = adb_tools.run_adb_command(command)
+            if result.returncode == 0:
+                message = f"Reboot command sent to {reboot_mode}"
+                self.operation_completed_signal.emit("reboot", serial, True, message)
+                return {'success': True, 'message': message}
+
+            error_msg = getattr(result, 'stderr', '') or 'Reboot command failed'
+            self._log_console(f"❌ Failed to reboot device {serial}: {error_msg}")
+            self.operation_completed_signal.emit("reboot", serial, False, error_msg)
+            return {'success': False, 'message': error_msg}
+
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log_console(f"❌ Error rebooting device {serial}: {exc}")
+            self.operation_completed_signal.emit("reboot", serial, False, str(exc))
+            return {'success': False, 'message': str(exc)}
+
+    def _toggle_bluetooth_task(
+        self,
+        serial: str,
+        *,
+        enable: bool,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        command = 'shell service call bluetooth_manager 8' if enable else 'shell service call bluetooth_manager 9'
+        action_text = 'enable' if enable else 'disable'
+
+        try:
+            result = adb_tools.run_adb_command(f'-s {serial} {command}')
+            if result.returncode == 0:
+                message = f'Bluetooth {"enabled" if enable else "disabled"}'
+                self._log_console(f"✅ Bluetooth {action_text}d on device {serial}")
+                self.operation_completed_signal.emit("bluetooth", serial, True, message)
+                return {'success': True, 'message': message}
+
+            error_msg = getattr(result, 'stderr', '') or 'Bluetooth command failed'
+            self._log_console(f"❌ Failed to {action_text} Bluetooth on device {serial}: {error_msg}")
+            self.operation_completed_signal.emit("bluetooth", serial, False, error_msg)
+            return {'success': False, 'message': error_msg}
+
+        except Exception as exc:  # pragma: no cover
+            self._log_console(f"❌ Error {action_text} Bluetooth on device {serial}: {exc}")
+            self.operation_completed_signal.emit("bluetooth", serial, False, str(exc))
+            return {'success': False, 'message': str(exc)}
+
+    def _install_apk_task(
+        self,
+        serial: str,
+        *,
+        apk_file: str,
+        apk_name: str,
+        position: int,
+        total: int,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        device_info = self._get_device_info(serial)
+        device_name = device_info.device_model if device_info else serial
+        self._log_console(f"📱 [{position}/{total}] Installing on {device_name} ({serial})...")
+
+        try:
+            result = adb_tools.run_adb_command(f'-s {serial} install -r "{apk_file}"')
+            if result.returncode == 0:
+                message = f'APK installed: {apk_name}'
+                self._log_console(f"✅ [{position}/{total}] Successfully installed on {device_name}")
+                self.operation_completed_signal.emit("apk_install", serial, True, message)
+                return {
+                    'success': True,
+                    'message': message,
+                    'device_name': device_name,
+                }
+
+            error_msg = getattr(result, 'stderr', '') or 'Installation failed'
+            self._log_console(f"❌ [{position}/{total}] Failed to install on {device_name}: {error_msg}")
+            self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
+            return {'success': False, 'message': error_msg}
+
+        except Exception as exc:  # pragma: no cover
+            error_msg = str(exc)
+            self._log_console(f"❌ [{position}/{total}] Error installing on device {serial}: {error_msg}")
+            self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
+            return {'success': False, 'message': error_msg}
+
+    def _scrcpy_task(self, serial: str, *, task_handle: Optional[TaskHandle] = None, **_: Any) -> Dict[str, Any]:
+        device_info = self._get_device_info(serial)
+        device_name = device_info.device_model if device_info else serial
+        cmd = ['scrcpy', '-s', serial]
+
+        try:
+            self._log_console(f"🖥️ Launching scrcpy for {device_name} ({serial})...")
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self._log_console(f"✅ scrcpy launched for {device_name}")
+            self.operation_completed_signal.emit("scrcpy", serial, True, "scrcpy launched")
+            return {'success': True, 'message': 'scrcpy launched', 'process': process}
+        except Exception as exc:
+            self._log_console(f"❌ Failed to launch scrcpy for {device_name}: {exc}")
+            self.operation_completed_signal.emit("scrcpy", serial, False, str(exc))
+            return {'success': False, 'message': str(exc)}
+
+    def _ui_inspector_task(self, serial: str, *, task_handle: Optional[TaskHandle] = None, **_: Any) -> Dict[str, Any]:
+        success, result = QMetaObject.invokeMethod(
+            self,
+            "_launch_ui_inspector_for_device_slot",
+            Qt.ConnectionType.BlockingQueuedConnection,
+            Q_RETURN_ARG(bool),
+            Q_ARG(str, serial)
+        )
+        if not success:
+            return {'success': False, 'message': f'Failed to invoke UI Inspector for {serial}'}
+        return {'success': bool(result), 'message': ''}
+
+    def _screenshot_task(
+        self,
+        serials: List[str],
+        *,
+        output_path: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        devices = self._get_devices_by_serials(serials)
+        device_models = [device.device_model for device in devices]
+
+        try:
+            success = take_screenshots_batch(serials, output_path)
+            return {
+                'success': success,
+                'message': 'Screenshots captured' if success else 'Screenshot operation failed',
+                'device_models': device_models,
+            }
+        except Exception as exc:  # pragma: no cover
+            return {'success': False, 'message': str(exc), 'device_models': device_models}
+
+    def _start_recording_task(
+        self,
+        serial: str,
+        *,
+        output_path: str,
+        duration: int,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        filename = f'recording_{serial}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+        start_time = time.time()
+        try:
+            success = self.recording_manager.start_recording(serial, output_path, filename, duration)
+            return {
+                'success': success,
+                'message': 'Recording started' if success else 'Failed to start recording',
+                'filename': filename,
+                'output_path': output_path,
+                'start_time': start_time,
+                'duration': duration,
+            }
+        except Exception as exc:  # pragma: no cover
+            return {'success': False, 'message': str(exc)}
+
+    def _stop_recording_task(
+        self,
+        serial: str,
+        *,
+        recording_info: Optional[Dict[str, Any]] = None,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        if recording_info is None:
+            return {'success': False, 'message': 'No active recording'}
+        try:
+            success = self.recording_manager.stop_recording(serial)
+            return {
+                'success': success,
+                'message': 'Recording stopped' if success else 'Failed to stop recording',
+                'recording_info': recording_info,
+            }
+        except Exception as exc:  # pragma: no cover
+            return {'success': False, 'message': str(exc), 'recording_info': recording_info}
 
     def _get_devices_by_serials(self, serials: List[str]) -> List[adb_models.DeviceInfo]:
         """根據序列號獲取設備信息列表"""

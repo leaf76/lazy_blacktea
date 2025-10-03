@@ -11,9 +11,7 @@
 """
 
 import os
-import threading
-import concurrent.futures
-from typing import List, Callable, Optional
+from typing import Any, Dict, List, Callable, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from PyQt6.QtWidgets import QFileDialog
 
@@ -26,6 +24,7 @@ from utils.file_generation_utils import (
     is_bug_report_generation_active,
     validate_file_output_path
 )
+from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
 
 class FileOperationsManager(QObject):
@@ -42,6 +41,19 @@ class FileOperationsManager(QObject):
         self.last_generation_summary: str = ''
         self._bug_report_in_progress: bool = False
         self._active_bug_report_devices: list[str] = []
+        self._dispatcher = get_task_dispatcher()
+        self._active_handles: List[TaskHandle] = []
+
+    def _track_handle(self, handle: TaskHandle) -> None:
+        self._active_handles.append(handle)
+
+        def _cleanup() -> None:
+            try:
+                self._active_handles.remove(handle)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
 
     def _notify_bug_report_in_progress(
         self,
@@ -71,6 +83,102 @@ class FileOperationsManager(QObject):
         self.parent_window.show_warning('Bug Report In Progress', message)
         if on_failure:
             on_failure('Bug report already in progress')
+
+    def _generate_bug_report_task(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        *,
+        output_path: str,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        result_container: Dict[str, Any] = {
+            'summary': '',
+            'output_path': output_path,
+            'success_count': len(devices),
+            'icon': '🐛',
+        }
+
+        def callback(operation_name, payload, success_count, icon):
+            result_container['summary'] = payload if isinstance(payload, str) else payload.get('summary', '')
+            result_container['output_path'] = payload.get('output_path', output_path) if isinstance(payload, dict) else output_path
+            result_container['success_count'] = success_count
+            result_container['icon'] = icon
+
+        generate_bug_report_batch(
+            devices,
+            output_path,
+            callback,
+            progress_callback=progress_callback,
+        )
+
+        return result_container
+
+    def _pull_dcim_task(
+        self,
+        serials: List[str],
+        *,
+        output_path: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        from utils import adb_tools
+
+        adb_tools.pull_device_dcim_folders_with_device_folder(serials, output_path)
+        return {
+            'success': True,
+            'summary': 'DCIM folders pulled successfully',
+            'output_path': output_path,
+        }
+
+    def _generate_discovery_file_task(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        *,
+        output_path: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        result_container: Dict[str, Any] = {
+            'summary': '',
+            'output_path': output_path,
+            'device_count': len(devices),
+            'icon': '🔍',
+        }
+
+        def callback(operation_name, generated_path, device_count, icon):
+            result_container['summary'] = f'{operation_name} completed for {device_count} device(s)'
+            result_container['output_path'] = generated_path
+            result_container['device_count'] = device_count
+            result_container['icon'] = icon
+
+        generate_device_discovery_file(devices, output_path, callback)
+        if not result_container['summary']:
+            result_container['summary'] = f'Device discovery file generated for {len(devices)} device(s)'
+        return result_container
+
+    def _export_hierarchy_task(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        *,
+        output_path: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        from utils import dump_device_ui
+
+        results: Dict[str, Optional[Exception]] = {}
+        os.makedirs(output_path, exist_ok=True)
+
+        for device in devices:
+            try:
+                dump_device_ui.generate_process(device.device_serial_num, output_path)
+                results[device.device_serial_num] = None
+            except Exception as exc:  # pragma: no cover - defensive
+                results[device.device_serial_num] = exc
+
+        return {'success': True, 'results': results}
 
     def get_validated_output_path(self, path_text: str) -> Optional[str]:
         """驗證並獲取輸出路徑"""
@@ -142,27 +250,6 @@ class FileOperationsManager(QObject):
         )
         QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(0, device_count, initial_message))
 
-        completion_dispatched = {'done': False}
-
-        def bug_report_callback(operation_name, payload, success_count, icon):
-            """Bug report生成完成的回調"""
-            summary_text = ''
-            output_directory = validated_path
-
-            if isinstance(payload, dict):
-                summary_text = payload.get('summary', '')
-                output_directory = payload.get('output_path', validated_path)
-            else:
-                summary_text = str(payload)
-
-            self.last_generation_summary = summary_text
-            self.last_generation_output_path = output_directory
-            if not completion_dispatched['done']:
-                completion_dispatched['done'] = True
-                self.file_generation_completed_signal.emit(operation_name, summary_text, success_count, icon)
-                if on_complete:
-                    QTimer.singleShot(0, lambda: on_complete(summary_text))
-
         def progress_callback(payload: dict):
             """Bug report 進度更新回調"""
             status_icon = '✅' if payload.get('success') else '❌'
@@ -180,50 +267,46 @@ class FileOperationsManager(QObject):
 
             QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(current, total, base_message))
 
-        def generation_wrapper():
-            """錯誤處理包裝器"""
-            try:
-                generate_bug_report_batch(
-                    devices,
-                    validated_path,
-                    bug_report_callback,
-                    progress_callback=progress_callback
-                )
-            except BugReportInProgressError:
-                QTimer.singleShot(0, lambda: self._notify_bug_report_in_progress(
-                    serials,
-                    on_failure=on_failure,
-                ))
-            except Exception as e:
-                QTimer.singleShot(0, lambda: self.parent_window.show_error(
-                    '🐛 Bug Report Generation Failed',
-                    f'Failed to generate bug reports for some devices.\n\n'
-                    f'Error: {str(e)}\n\n'
-                    f'📱 Manufacturer-specific solutions:\n'
-                    f'• Samsung: Enable Developer Options → USB Debugging (Security)\n'
-                    f'• Huawei: Install HiSuite and grant permissions\n'
-                    f'• Xiaomi: Enable MIUI Developer Options\n'
-                    f'• OPPO/OnePlus: Enable ColorOS/OxygenOS Developer Settings\n'
-                    f'• Vivo: Enable FunTouch OS Developer Permissions\n\n'
-                    f'🔧 General troubleshooting:\n'
-                    f'1. Verify "USB Debugging" is enabled\n'
-                    f'2. Authorize this computer on device\n'
-                    f'3. Check device has sufficient storage (>100MB)\n'
-                    f'4. Ensure stable USB connection\n'
-                    f'5. Try generating reports one device at a time\n\n'
-                    f'💡 Note: Modern bug reports are saved as .zip files'
-                ))
-                if on_failure:
-                    QTimer.singleShot(0, lambda: on_failure(str(e)))
-            finally:
-                QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(
-                    device_count, device_count,
-                    '🐛 Bug report generation finished'
-                ))
-                self._bug_report_in_progress = False
-                self._active_bug_report_devices = []
+        context = TaskContext(name='bug_report_generation', category='file_generation')
 
-        threading.Thread(target=generation_wrapper, daemon=True).start()
+        handle = self._dispatcher.submit(
+            self._generate_bug_report_task,
+            devices,
+            output_path=validated_path,
+            progress_callback=progress_callback,
+            context=context,
+        )
+
+        def _on_completed(payload: Dict[str, Any]) -> None:
+            summary_text = payload.get('summary', '')
+            output_directory = payload.get('output_path', validated_path)
+            success_count = payload.get('success_count', len(devices))
+            icon = payload.get('icon', '🐛')
+            self.last_generation_summary = summary_text
+            self.last_generation_output_path = output_directory
+            self.file_generation_completed_signal.emit('Bug Report', summary_text, success_count, icon)
+            if on_complete:
+                on_complete(summary_text)
+            self._bug_report_in_progress = False
+            self._active_bug_report_devices = []
+
+        def _on_failed(exc: Exception) -> None:
+            self._bug_report_in_progress = False
+            self._active_bug_report_devices = []
+            if isinstance(exc, BugReportInProgressError):
+                self._notify_bug_report_in_progress(serials, on_failure=on_failure)
+                return
+            QTimer.singleShot(0, lambda: self.parent_window.show_error(
+                '🐛 Bug Report Generation Failed',
+                f'Failed to generate bug reports.\n\nError: {str(exc)}'
+            ))
+            if on_failure:
+                on_failure(str(exc))
+
+        handle.completed.connect(_on_completed)
+        handle.failed.connect(_on_failed)
+        handle.finished.connect(lambda: self.file_generation_progress_signal.emit(device_count, device_count, '🐛 Bug report generation finished'))
+        self._track_handle(handle)
         return True
 
     def is_bug_report_in_progress(self) -> bool:
@@ -247,14 +330,28 @@ class FileOperationsManager(QObject):
             f'📁 Saving to: {validated_path}\n\n'
             f'Please wait...'
         )
+        context = TaskContext(name='device_discovery', category='file_generation')
+        handle = self._dispatcher.submit(
+            self._generate_discovery_file_task,
+            devices,
+            output_path=validated_path,
+            context=context,
+        )
 
-        def discovery_callback(operation_name, output_path, device_count, icon):
-            """設備發現文件生成完成的回調"""
-            self.last_generation_summary = f'{operation_name} completed for {device_count} device(s)'
-            self.last_generation_output_path = output_path
-            self.file_generation_completed_signal.emit(operation_name, output_path, device_count, icon)
+        def _on_completed(payload: Dict[str, Any]) -> None:
+            summary = payload.get('summary', 'Device discovery file generated')
+            self.last_generation_summary = summary
+            self.last_generation_output_path = payload.get('output_path', validated_path)
+            device_count = payload.get('device_count', len(devices))
+            icon = payload.get('icon', '🔍')
+            self.file_generation_completed_signal.emit('Device Discovery File', self.last_generation_output_path, device_count, icon)
 
-        generate_device_discovery_file(devices, validated_path, discovery_callback)
+        def _on_failed(exc: Exception) -> None:
+            QTimer.singleShot(0, lambda: self.parent_window.show_error('Discovery File Failed', str(exc)))
+
+        handle.completed.connect(_on_completed)
+        handle.failed.connect(_on_failed)
+        self._track_handle(handle)
 
     def pull_device_dcim_folder(self, devices: List[adb_models.DeviceInfo], output_path: str):
         """拉取設備DCIM文件夾"""
@@ -281,21 +378,26 @@ class FileOperationsManager(QObject):
             f'This may take a while depending on the number of photos/videos...'
         )
 
-        def dcim_wrapper():
-            """DCIM拉取包裝器"""
-            from utils import adb_tools
-            adb_tools.pull_device_dcim_folders_with_device_folder(serials, output_path)
+        context = TaskContext(name='dcim_pull', category='file_generation')
+        handle = self._dispatcher.submit(
+            self._pull_dcim_task,
+            serials,
+            output_path=output_path,
+            context=context,
+        )
 
-            def emit_completion():
-                self.last_generation_summary = 'DCIM folders pulled successfully'
-                self.last_generation_output_path = output_path
-                self.file_generation_completed_signal.emit(
-                    'DCIM Folder Pull', output_path, device_count, '📷'
-                )
+        def _on_completed(payload: Dict[str, Any]) -> None:
+            summary = payload.get('summary', 'DCIM folders pulled successfully')
+            self.last_generation_summary = summary
+            self.last_generation_output_path = payload.get('output_path', output_path)
+            self.file_generation_completed_signal.emit('DCIM Folder Pull', self.last_generation_output_path, device_count, '📷')
 
-            QTimer.singleShot(0, emit_completion)
+        def _on_failed(exc: Exception) -> None:
+            QTimer.singleShot(0, lambda: self.parent_window.show_error('DCIM Pull Failed', str(exc)))
 
-        threading.Thread(target=dcim_wrapper, daemon=True).start()
+        handle.completed.connect(_on_completed)
+        handle.failed.connect(_on_failed)
+        self._track_handle(handle)
 
 
 class CommandHistoryManager:
@@ -304,7 +406,20 @@ class CommandHistoryManager:
     def __init__(self, parent_window):
         self.parent_window = parent_window
         self.command_history = []
+        self._dispatcher = get_task_dispatcher()
+        self._active_handles: List[TaskHandle] = []
         self.load_command_history_from_config()
+
+    def _track_handle(self, handle: TaskHandle) -> None:
+        self._active_handles.append(handle)
+
+        def _cleanup() -> None:
+            try:
+                self._active_handles.remove(handle)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
 
     def _can_update_ui(self) -> bool:
         """Return True when parent can safely refresh the history list."""
@@ -356,16 +471,23 @@ class CommandHistoryManager:
         )
 
         if filename:
-            try:
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write('# ADB Command History\n')
-                    f.write(f'# Generated: {common.timestamp_time()}\n\n')
-                    for command in self.command_history:
-                        f.write(f'{command}\n')
+            context = TaskContext(name='export_history', category='file_generation')
+            handle = self._dispatcher.submit(
+                self._export_history_task,
+                filename,
+                commands=list(self.command_history),
+                context=context,
+            )
 
+            def _on_completed(_: Dict[str, Any]) -> None:
                 self.parent_window.show_info('Export History', f'Command history exported to:\n{filename}')
-            except Exception as e:
-                self.parent_window.show_error('Export Error', f'Failed to export history:\n{e}')
+
+            def _on_failed(exc: Exception) -> None:
+                self.parent_window.show_error('Export Error', f'Failed to export history:\n{exc}')
+
+            handle.completed.connect(_on_completed)
+            handle.failed.connect(_on_failed)
+            self._track_handle(handle)
 
     def import_command_history(self):
         """從文件導入命令歷史"""
@@ -375,16 +497,15 @@ class CommandHistoryManager:
         )
 
         if filename:
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
+            context = TaskContext(name='import_history', category='file_generation')
+            handle = self._dispatcher.submit(
+                self._import_history_task,
+                filename,
+                context=context,
+            )
 
-                loaded_commands = []
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        loaded_commands.append(line)
-
+            def _on_completed(payload: Dict[str, Any]) -> None:
+                loaded_commands = payload.get('commands', [])
                 if loaded_commands:
                     merged_commands = self.command_history + loaded_commands
                     seen = set()
@@ -394,8 +515,40 @@ class CommandHistoryManager:
                 else:
                     self.parent_window.show_info('Import History', 'No valid commands found in file.')
 
-            except Exception as e:
-                self.parent_window.show_error('Import Error', f'Failed to import history:\n{e}')
+            def _on_failed(exc: Exception) -> None:
+                self.parent_window.show_error('Import Error', f'Failed to import history:\n{exc}')
+
+            handle.completed.connect(_on_completed)
+            handle.failed.connect(_on_failed)
+            self._track_handle(handle)
+
+    def _export_history_task(
+        self,
+        filename: str,
+        *,
+        commands: List[str],
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write('# ADB Command History\n')
+            f.write(f'# Generated: {common.timestamp_time()}\n\n')
+            for command in commands:
+                f.write(f'{command}\n')
+        return {'success': True}
+
+    def _import_history_task(
+        self,
+        filename: str,
+        *,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        with open(filename, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        loaded_commands = [line.strip() for line in lines if line.strip() and not line.startswith('#')]
+        return {'success': True, 'commands': loaded_commands}
 
     def load_command_history_from_config(self):
         """從配置文件加載命令歷史"""
@@ -428,6 +581,19 @@ class UIHierarchyManager:
 
     def __init__(self, parent_window):
         self.parent_window = parent_window
+        self._dispatcher = get_task_dispatcher()
+        self._active_handles: List[TaskHandle] = []
+
+    def _track_handle(self, handle: TaskHandle) -> None:
+        self._active_handles.append(handle)
+
+        def _cleanup() -> None:
+            try:
+                self._active_handles.remove(handle)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
 
     def export_hierarchy(self, output_path: str):
         """導出UI層級結構"""
@@ -441,33 +607,34 @@ class UIHierarchyManager:
                 self.parent_window.show_error('Error', 'No devices selected.')
                 return
 
-            results: dict[str, Exception | None] = {}
-            max_workers = min(len(devices), max(1, os.cpu_count() or 1))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_map = {
-                    executor.submit(dump_device_ui.generate_process, device.device_serial_num, output_path): device
-                    for device in devices
-                }
+            context = TaskContext(name='ui_hierarchy_export', category='file_generation')
+            handle = self._dispatcher.submit(
+                self._export_hierarchy_task,
+                devices,
+                output_path=output_path,
+                context=context,
+            )
 
-                for future in concurrent.futures.as_completed(future_map):
-                    device = future_map[future]
-                    try:
-                        future.result()
-                        results[device.device_serial_num] = None
-                    except Exception as exc:  # pragma: no cover - defensive
-                        results[device.device_serial_num] = exc
+            def _on_completed(payload: Dict[str, Any]) -> None:
+                results: Dict[str, Optional[Exception]] = payload.get('results', {})
+                for device in devices:
+                    error = results.get(device.device_serial_num)
+                    if error is None:
+                        self.parent_window.show_info(
+                            'UI Export',
+                            f'UI hierarchy exported for device: {device.device_serial_num}'
+                        )
+                    else:
+                        self.parent_window.show_error(
+                            'UI Export Error',
+                            f'Failed to export UI for {device.device_serial_num}:\n{error}'
+                        )
 
-            for device in devices:
-                error = results.get(device.device_serial_num)
-                if error is None:
-                    self.parent_window.show_info(
-                        'UI Export',
-                        f'UI hierarchy exported for device: {device.device_serial_num}'
-                    )
-                else:
-                    self.parent_window.show_error(
-                        'UI Export Error',
-                        f'Failed to export UI for {device.device_serial_num}:\n{error}'
-                    )
+            def _on_failed(exc: Exception) -> None:
+                self.parent_window.show_error('UI Export Error', str(exc))
+
+            handle.completed.connect(_on_completed)
+            handle.failed.connect(_on_failed)
+            self._track_handle(handle)
         else:
             self.parent_window.show_error('Error', 'Please select a valid output directory first.')

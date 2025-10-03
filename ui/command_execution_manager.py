@@ -10,11 +10,13 @@
 5. 命令結果的控制台輸出
 """
 
+import subprocess
 import threading
-from typing import List, Callable, Optional
+from typing import Any, Dict, List, Callable, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from utils import adb_models, adb_tools
+from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
 
 class CommandExecutionManager(QObject):
@@ -27,8 +29,10 @@ class CommandExecutionManager(QObject):
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
-        self.active_processes = []
+        self._dispatcher = get_task_dispatcher()
         self.process_lock = threading.Lock()
+        self._active_handles: List[TaskHandle] = []
+        self._handle_processes: dict[TaskHandle, List[subprocess.Popen]] = {}
         self._console_connected = False
         # 連接信號到父視窗的處理方法
         if hasattr(parent_window, '_write_to_console_safe'):
@@ -39,50 +43,39 @@ class CommandExecutionManager(QObject):
     def cancel_all_commands(self):
         """Cancel all currently running commands."""
         with self.process_lock:
-            if not self.active_processes:
+            if not self._active_handles:
                 self.write_to_console("No active commands to cancel.")
                 return
 
-            self.write_to_console(f"Attempting to cancel {len(self.active_processes)} running command(s)...")
-            for process in self.active_processes:
-                try:
-                    process.terminate()  # Send SIGTERM
-                    self.write_to_console(f"Sent cancel signal to process {process.pid}.")
-                except Exception as e:
-                    self.write_to_console(f"Error cancelling process {process.pid}: {e}")
-            self.active_processes.clear()
+            self.write_to_console(f"Attempting to cancel {len(self._active_handles)} running command(s)...")
+            handles = list(self._active_handles)
+            for handle in handles:
+                handle.cancel()
+                processes = self._handle_processes.get(handle, [])
+                for process in processes:
+                    try:
+                        process.terminate()
+                        self.write_to_console(f"Sent cancel signal to process {process.pid}.")
+                    except Exception as exc:
+                        self.write_to_console(f"Error cancelling process {getattr(process, 'pid', '?')}: {exc}")
 
-    def _monitor_processes(self, processes: list, command: str, serials: list):
-        """Monitor running processes, collect output, and log results."""
-        try:
-            for i, process in enumerate(processes):
-                serial = serials[i]
-                # The communicate() method will block until the process finishes.
-                stdout, stderr = process.communicate()
+    def _track_handle(self, handle: TaskHandle) -> None:
+        with self.process_lock:
+            self._active_handles.append(handle)
 
-                # After communicate(), the process is done. Check if it was cancelled.
-                with self.process_lock:
-                    # Check if the process is still in the list. If not, it was cancelled.
-                    if process in self.active_processes:
-                        self.active_processes.remove(process)
-                    else:
-                        # If it's not in the list, it means cancel_all_commands was called.
-                        self.write_to_console(f"Process {process.pid} for device {serial} was cancelled. Output might be incomplete.")
-                        # Continue to the next process
-                        continue
-                
-                # Combine stdout and stderr for logging
-                full_output = []
-                if stdout:
-                    full_output.extend(stdout.splitlines())
-                if stderr:
-                    full_output.extend(stderr.splitlines())
+        def _cleanup() -> None:
+            with self.process_lock:
+                if handle in self._active_handles:
+                    self._active_handles.remove(handle)
+                self._handle_processes.pop(handle, None)
 
-                self.command_results_ready.emit(command, [serial], [full_output])
+        handle.finished.connect(_cleanup)
 
-            QTimer.singleShot(0, lambda: self._log_completion(f'All monitored processes for command "{command}" have completed.'))
-        except Exception as e:
-            QTimer.singleShot(0, lambda: self._log_error(f"Error in process monitor thread: {e}"))
+    def _register_processes_for_handle(self, handle: Optional[TaskHandle], processes: List[subprocess.Popen]) -> None:
+        if handle is None:
+            return
+        with self.process_lock:
+            self._handle_processes[handle] = processes
 
 
     def run_shell_command(self, command: str, devices: List[adb_models.DeviceInfo]):
@@ -108,19 +101,17 @@ class CommandExecutionManager(QObject):
             f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.'
         )
 
-        # This function remains non-cancellable for now to maintain original behavior
-        def shell_wrapper():
-            """Shell命令執行包裝器"""
-            try:
-                def _handle_results(results):
-                    self.command_results_ready.emit(command, serials, results)
+        context = TaskContext(name='shell_command', category='command')
+        handle = self._dispatcher.submit(
+            self._run_shell_command_task,
+            serials,
+            command=command,
+            context=context,
+        )
 
-                adb_tools.run_adb_shell_command(serials, command, callback=_handle_results)
-                QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
-            except Exception as e:
-                self._log_error(f"Error executing shell command: {e}")
-
-        self._run_in_thread(shell_wrapper)
+        handle.completed.connect(lambda payload: self._on_shell_command_completed(command, serials, payload))
+        handle.failed.connect(lambda exc: self._log_error(f"Error executing shell command: {exc}"))
+        self._track_handle(handle)
 
     def execute_single_command(self, command: str, devices: List[adb_models.DeviceInfo]):
         """執行單個命令並添加到歷史記錄 (Cancellable)"""
@@ -144,20 +135,17 @@ class CommandExecutionManager(QObject):
         if hasattr(self.parent_window, 'command_history_manager'):
             self.parent_window.command_history_manager.add_to_history(command)
 
-        def cancellable_shell_wrapper():
-            processes = adb_tools.run_cancellable_adb_shell_command(serials, command)
-            if not processes:
-                self._log_error(f"Failed to start command '{command}'.")
-                return
+        context = TaskContext(name='single_command', category='command')
+        handle = self._dispatcher.submit(
+            self._run_cancellable_command_task,
+            serials,
+            command=command,
+            context=context,
+        )
 
-            with self.process_lock:
-                self.active_processes.extend(processes)
-
-            monitor_thread = threading.Thread(target=self._monitor_processes, args=(processes, command, serials))
-            monitor_thread.daemon = True
-            monitor_thread.start()
-
-        self._run_in_thread(cancellable_shell_wrapper)
+        handle.completed.connect(lambda payload: self._on_cancellable_command_completed(command, serials, payload))
+        handle.failed.connect(lambda exc: self._log_error(f"Error executing command '{command}': {exc}"))
+        self._track_handle(handle)
 
 
     def execute_batch_commands(self, commands: List[str], devices: List[adb_models.DeviceInfo]):
@@ -184,24 +172,20 @@ class CommandExecutionManager(QObject):
             f'🚀 Running {len(commands)} batch command(s) on {device_count} device(s)...'
         )
 
-        for command in commands:
+        for cmd in commands:
             if hasattr(self.parent_window, 'command_history_manager'):
-                self.parent_window.command_history_manager.add_to_history(command)
+                self.parent_window.command_history_manager.add_to_history(cmd)
 
-            def cancellable_batch_wrapper(cmd=command):
-                processes = adb_tools.run_cancellable_adb_shell_command(serials, cmd)
-                if not processes:
-                    self._log_error(f"Failed to start batch command '{cmd}'.")
-                    return
-
-                with self.process_lock:
-                    self.active_processes.extend(processes)
-
-                monitor_thread = threading.Thread(target=self._monitor_processes, args=(processes, cmd, serials))
-                monitor_thread.daemon = True
-                monitor_thread.start()
-
-            self._run_in_thread(cancellable_batch_wrapper)
+            context = TaskContext(name='batch_command', category='command')
+            handle = self._dispatcher.submit(
+                self._run_cancellable_command_task,
+                serials,
+                command=cmd,
+                context=context,
+            )
+            handle.completed.connect(lambda payload, c=cmd: self._on_cancellable_command_completed(c, serials, payload))
+            handle.failed.connect(lambda exc, c=cmd: self._log_error(f"Error executing batch command '{c}': {exc}"))
+            self._track_handle(handle)
 
     def log_command_results(self, command: str, serials: List[str], results):
         """Record command execution results in the console."""
@@ -295,13 +279,6 @@ class CommandExecutionManager(QObject):
                 new_text = command
             self.parent_window.batch_commands_edit.setPlainText(new_text)
 
-    def _run_in_thread(self, func: Callable):
-        """在線程中運行函數"""
-        if hasattr(self.parent_window, 'run_in_thread'):
-            self.parent_window.run_in_thread(func)
-        else:
-            threading.Thread(target=func, daemon=True).start()
-
     def _log_completion(self, message: str):
         """記錄完成消息"""
         if hasattr(self.parent_window, 'logger'):
@@ -316,6 +293,74 @@ class CommandExecutionManager(QObject):
         """記錄錯誤消息"""
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.error(message)
+
+    def _on_shell_command_completed(self, command: str, serials: List[str], payload: Any) -> None:
+        results = []
+        if isinstance(payload, dict):
+            results = payload.get('results', [])
+        self.command_results_ready.emit(command, serials, results)
+        QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
+
+    def _on_cancellable_command_completed(self, command: str, serials: List[str], payload: Any) -> None:
+        results = []
+        if isinstance(payload, dict):
+            results = payload.get('results', [])
+        self.command_results_ready.emit(command, serials, results)
+        QTimer.singleShot(0, lambda: self._log_completion(f'Command "{command}" completed on {len(serials)} device(s)'))
+
+    def _run_shell_command_task(
+        self,
+        serials: List[str],
+        *,
+        command: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        result_container: Dict[str, Any] = {}
+
+        def _handle_results(results):
+            result_container['results'] = results
+
+        adb_tools.run_adb_shell_command(serials, command, callback=_handle_results)
+        return {
+            'success': True,
+            'results': result_container.get('results', []),
+        }
+
+    def _run_cancellable_command_task(
+        self,
+        serials: List[str],
+        *,
+        command: str,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        processes = adb_tools.run_cancellable_adb_shell_command(serials, command)
+        if not processes:
+            raise RuntimeError(f"Failed to start command '{command}'.")
+
+        self._register_processes_for_handle(task_handle, processes)
+
+        results: List[List[str]] = []
+        for serial, process in zip(serials, processes):
+            stdout, stderr = process.communicate()
+            lines: List[str] = []
+            if stdout:
+                if isinstance(stdout, bytes):
+                    lines.extend(stdout.decode('utf-8', errors='ignore').splitlines())
+                else:
+                    lines.extend(str(stdout).splitlines())
+            if stderr:
+                if isinstance(stderr, bytes):
+                    lines.extend(stderr.decode('utf-8', errors='ignore').splitlines())
+                else:
+                    lines.extend(str(stderr).splitlines())
+            results.append(lines)
+
+        return {
+            'success': True,
+            'results': results,
+        }
 
     @staticmethod
     def _normalize_results(results, expected_length: int) -> List[List[str]]:

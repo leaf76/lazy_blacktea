@@ -12,8 +12,7 @@
 
 import logging
 import subprocess
-import threading
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from PyQt6.QtCore import QObject, pyqtSignal, QMutex, QMutexLocker, QTimer
 from PyQt6.QtGui import QTextCursor, QFont
 from PyQt6.QtCore import Qt
@@ -21,6 +20,7 @@ from PyQt6.QtWidgets import QTextEdit
 
 from config.constants import LoggingConstants
 from utils import adb_tools, common
+from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
 
 diagnostics_logger = common.get_logger('diagnostics_manager')
@@ -267,25 +267,47 @@ class LogcatManager:
 
     def __init__(self, parent_window):
         self.parent_window = parent_window
+        self._dispatcher = get_task_dispatcher()
+        self._active_handles: List[TaskHandle] = []
+
+    def _track_handle(self, handle: TaskHandle) -> None:
+        self._active_handles.append(handle)
+
+        def _cleanup() -> None:
+            try:
+                self._active_handles.remove(handle)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
 
     def clear_logcat_on_devices(self, device_serials: List[str]):
         """清除指定設備的logcat"""
-        def logcat_wrapper():
-            for serial in device_serials:
-                try:
-                    adb_tools.clear_device_logcat(serial)
-                    if hasattr(self.parent_window, 'logging_manager'):
-                        self.parent_window.logging_manager.log_device_operation(
-                            serial, 'Logcat cleared', 'success'
-                        )
-                except Exception as e:
-                    if hasattr(self.parent_window, 'logging_manager'):
-                        self.parent_window.logging_manager.log_device_operation(
-                            serial, 'Logcat cleared', f'failed: {e}'
-                        )
+        context = TaskContext(name='clear_logcat', category='logcat')
+        handle = self._dispatcher.submit(
+            self._clear_logcat_task,
+            device_serials,
+            context=context,
+        )
 
-        # 在背景線程執行
-        threading.Thread(target=logcat_wrapper, daemon=True).start()
+        def _on_completed(payload: Dict[str, str]) -> None:
+            results = payload.get('results', {}) if isinstance(payload, dict) else {}
+            for serial in device_serials:
+                outcome = results.get(serial, 'success')
+                if hasattr(self.parent_window, 'logging_manager'):
+                    self.parent_window.logging_manager.log_device_operation(
+                        serial,
+                        'Logcat cleared',
+                        outcome,
+                    )
+
+        def _on_failed(exc: Exception) -> None:
+            if hasattr(self.parent_window, 'logging_manager'):
+                self.parent_window.logging_manager.error(f'Logcat clear failed: {exc}')
+
+        handle.completed.connect(_on_completed)
+        handle.failed.connect(_on_failed)
+        self._track_handle(handle)
 
     def clear_logcat_selected_devices(self):
         """清除選中設備的logcat"""
@@ -302,6 +324,24 @@ class LogcatManager:
             self.parent_window.logging_manager.info(
                 f'Starting logcat clear for {len(devices)} device(s)'
             )
+
+    def _clear_logcat_task(
+        self,
+        device_serials: List[str],
+        *,
+        task_handle: Optional[TaskHandle] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        results: Dict[str, str] = {}
+
+        for serial in device_serials:
+            try:
+                adb_tools.clear_device_logcat(serial)
+                results[serial] = 'success'
+            except Exception as exc:
+                results[serial] = f'failed: {exc}'
+
+        return {'success': True, 'results': results}
 
 
 class DiagnosticsManager:
