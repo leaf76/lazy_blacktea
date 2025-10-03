@@ -9,7 +9,7 @@
 
 Lazy Blacktea is a PyQt-based Android ADB cockpit for power-users. It streamlines multi-device automation—batch APK installs, bug reports, screen capture, recording, log streaming—while packaging cleanly for macOS and Linux.
 
-> Current release: v0.0.33
+> Current release: v0.0.34
 
 ## Table of Contents
 - [Overview](#overview)
