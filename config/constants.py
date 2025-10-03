@@ -264,7 +264,6 @@ class PanelText:
     GROUP_LOGCAT = 'Logcat'
     GROUP_DEVICE_CONTROL = 'Device Control'
     GROUP_CAPTURE = 'Screen Capture & Recording'
-    GROUP_FILE_OPERATIONS = 'Device Reports'
     GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_COMMAND_HISTORY = '📜 Command History'

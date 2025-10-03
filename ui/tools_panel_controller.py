@@ -125,34 +125,7 @@ class ToolsPanelController:
         StyleManager.apply_label_style(output_hint, LabelStyle.STATUS)
         output_layout.addWidget(output_hint)
 
-        reports_group = QGroupBox(PanelText.GROUP_FILE_OPERATIONS)
-        reports_group.setObjectName('adb_tools_reports_group')
-        StyleManager.apply_panel_frame(reports_group)
-        reports_layout = QVBoxLayout(reports_group)
-        reports_layout.setSpacing(10)
-
-        reports_row = QHBoxLayout()
-        reports_row.setSpacing(10)
-
-        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_OUTPUT)
-        reports_row.addWidget(self.window.file_gen_output_path_edit)
-
-        reports_browse_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_BROWSE,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.browse_file_generation_output_path(),
-            tooltip='Select reports output directory'
-        )
-        reports_row.addWidget(reports_browse_btn)
-
-        reports_layout.addLayout(reports_row)
-
-        reports_hint = QLabel('Bug reports, discovery exports, and batch pulls will write to this path.')
-        StyleManager.apply_label_style(reports_hint, LabelStyle.STATUS)
-        reports_layout.addWidget(reports_hint)
-
         content_layout.addWidget(output_group)
-        content_layout.addWidget(reports_group)
         content_layout.addSpacing(8)
 
         logcat_group = QGroupBox(PanelText.GROUP_LOGCAT)

@@ -11,6 +11,7 @@
 """
 
 import os
+import threading
 from typing import Any, Dict, List, Callable, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from PyQt6.QtWidgets import QFileDialog
@@ -106,12 +107,17 @@ class FileOperationsManager(QObject):
             result_container['success_count'] = success_count
             result_container['icon'] = icon
 
+        completion_event = threading.Event()
+
         generate_bug_report_batch(
             devices,
             output_path,
             callback,
             progress_callback=progress_callback,
+            completion_event=completion_event,
         )
+
+        completion_event.wait()
 
         return result_container
 

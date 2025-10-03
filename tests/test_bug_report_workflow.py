@@ -44,27 +44,127 @@ def _dummy_pyqt_signal(*_args, **_kwargs):
     return _DummySignalDescriptor()
 
 
+def _dummy_pyqt_slot(*_args, **_kwargs):
+    def _decorator(func):
+        return func
+
+    return _decorator
+
+
 class _DummyQTimer:
     @staticmethod
     def singleShot(_msec, callback):
         callback()
 
 
-dummy_qtcore = types.ModuleType("PyQt6.QtCore")
-dummy_qtcore.QObject = object
-dummy_qtcore.pyqtSignal = _dummy_pyqt_signal
-dummy_qtcore.QTimer = _DummyQTimer
+class _DummyQObject:
+    def __init__(self, *_args, **_kwargs):
+        return None
 
-dummy_qtwidgets = types.ModuleType("PyQt6.QtWidgets")
+
+class _DummyMutex:
+    def lock(self):
+        return None
+
+    def unlock(self):
+        return None
+
+
+class _DummyMutexLocker:
+    def __init__(self, mutex):
+        self._mutex = mutex
+        self._mutex.lock()
+
+    def __enter__(self):  # pragma: no cover - context manager compatibility
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self._mutex.unlock()
+        return False
+
+
+class _DummyQRunnable:
+    def __init__(self, *args, **_kwargs):
+        self._auto_delete = False
+
+    def setAutoDelete(self, value):  # pragma: no cover - compatibility shim
+        self._auto_delete = bool(value)
+
+    def run(self):  # pragma: no cover - override in subclasses
+        return None
+
+
+class _DummyThreadPool:
+    _instance = None
+
+    def __init__(self):
+        self._max_thread_count = None
+
+    @classmethod
+    def globalInstance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def setMaxThreadCount(self, count):  # pragma: no cover - configuration helper
+        self._max_thread_count = count
+
+    def start(self, runnable):
+        runnable.run()
+
+
+dummy_qtcore = types.ModuleType("PyQt6.QtCore")
+dummy_qtcore.QObject = _DummyQObject
+dummy_qtcore.pyqtSignal = _dummy_pyqt_signal
+dummy_qtcore.pyqtSlot = _dummy_pyqt_slot
+dummy_qtcore.QTimer = _DummyQTimer
+dummy_qtcore.QMutex = _DummyMutex
+dummy_qtcore.QMutexLocker = _DummyMutexLocker
+dummy_qtcore.QRunnable = _DummyQRunnable
+dummy_qtcore.QThreadPool = _DummyThreadPool
+dummy_qtcore.Qt = types.SimpleNamespace(
+    Orientation=types.SimpleNamespace(Horizontal=1, Vertical=2),
+    ItemDataRole=types.SimpleNamespace(UserRole=32, DisplayRole=0, DecorationRole=1),
+    AlignmentFlag=types.SimpleNamespace(AlignLeft=1, AlignVCenter=2),
+    CheckState=types.SimpleNamespace(Checked=2, PartiallyChecked=1, Unchecked=0),
+    SortOrder=types.SimpleNamespace(AscendingOrder=0, DescendingOrder=1),
+)
+
+
+def _core_getattr(name):
+    value = type(name, (), {})
+    setattr(dummy_qtcore, name, value)
+    return value
+
+
+dummy_qtcore.__getattr__ = _core_getattr
+
+class _WidgetModule(types.ModuleType):
+    def __getattr__(self, name):
+        value = type(name, (), {})
+        setattr(self, name, value)
+        return value
+
+dummy_qtwidgets = _WidgetModule("PyQt6.QtWidgets")
 dummy_qtwidgets.QFileDialog = object
+
+class _GuiModule(types.ModuleType):
+    def __getattr__(self, name):
+        value = type(name, (), {})
+        setattr(self, name, value)
+        return value
+
+dummy_qtgui = _GuiModule("PyQt6.QtGui")
 
 dummy_pyqt6 = types.ModuleType("PyQt6")
 dummy_pyqt6.QtCore = dummy_qtcore
 dummy_pyqt6.QtWidgets = dummy_qtwidgets
+dummy_pyqt6.QtGui = dummy_qtgui
 
-sys.modules.setdefault("PyQt6", dummy_pyqt6)
-sys.modules.setdefault("PyQt6.QtCore", dummy_qtcore)
-sys.modules.setdefault("PyQt6.QtWidgets", dummy_qtwidgets)
+sys.modules["PyQt6"] = dummy_pyqt6
+sys.modules["PyQt6.QtCore"] = dummy_qtcore
+sys.modules["PyQt6.QtWidgets"] = dummy_qtwidgets
+sys.modules["PyQt6.QtGui"] = dummy_qtgui
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -312,6 +412,52 @@ class BugReportWorkflowTests(unittest.TestCase):
         self.assertIn("Bug report already in progress", failures[0])
         self.assertTrue(window.warned)
         mock_generate.assert_not_called()
+
+    def test_file_operations_manager_waits_for_bug_report_completion(self):
+        """Manager should emit completion only after bug report workers finish."""
+
+        window = types.SimpleNamespace(
+            show_warning=lambda *_args, **_kwargs: None,
+            show_error=lambda *_args, **_kwargs: None,
+        )
+        manager = file_operations_manager.FileOperationsManager(window)
+
+        devices = [self.success_device]
+        start_event = threading.Event()
+        release_event = threading.Event()
+        self.addCleanup(release_event.set)
+
+        def fake_batch(_devices, _output_path, callback, progress_callback=None, completion_event=None):
+            start_event.set()
+            if not release_event.wait(timeout=1.0):
+                raise TimeoutError('Release signal not received in time')
+            callback(
+                'Bug Report Complete',
+                {'summary': 'done', 'output_path': _output_path},
+                len(_devices),
+                '🐛'
+            )
+            if completion_event is not None:
+                completion_event.set()
+
+        with patch('ui.file_operations_manager.validate_file_output_path', return_value='/tmp/output'), \
+             patch('ui.file_operations_manager.generate_bug_report_batch', side_effect=fake_batch), \
+             patch('utils.file_generation_utils.os.makedirs'), \
+             patch('utils.file_generation_utils.common.current_format_time_utc', return_value='20250101_000000'):
+
+            def release_worker():
+                self.assertTrue(start_event.wait(timeout=0.2), 'Bug report worker did not start in time')
+                time.sleep(0.05)
+                release_event.set()
+
+            threading.Thread(target=release_worker, daemon=True).start()
+
+            start = time.perf_counter()
+            result = manager._generate_bug_report_task(devices, output_path='/tmp/output')
+            elapsed = time.perf_counter() - start
+
+        self.assertGreaterEqual(elapsed, 0.05)
+        self.assertEqual(result['success_count'], len(devices))
 
     def test_device_availability_check(self):
         """確認 get-state 輸出 device 時視為連線"""

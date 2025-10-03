@@ -1,5 +1,6 @@
 """File generation utilities for creating device reports and files."""
 
+import asyncio
 import concurrent.futures
 import os
 import re
@@ -90,10 +91,13 @@ def _parallel_fetch(devices: List[adb_models.DeviceInfo], fetcher, logger, error
     return results
 
 
-def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
-                             output_path: str,
-                             callback: Optional[Callable] = None,
-                             progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+def generate_bug_report_batch(
+    devices: List[adb_models.DeviceInfo],
+    output_path: str,
+    callback: Optional[Callable] = None,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    completion_event: Optional[threading.Event] = None,
+) -> None:
     """Generate Android bug reports for multiple devices.
 
     Args:
@@ -111,52 +115,49 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
         logger.warning(f'Bug report generation request rejected: {exc}')
         raise
 
-    def report_worker():
+
+    async def _run_bug_report_batch() -> None:
         try:
             timestamp = common.current_format_time_utc()
             device_count = len(devices)
 
-            logger.info(f'Starting bug report generation for {device_count} devices')
+            logger.info('Starting bug report generation for %s devices', device_count)
 
             os.makedirs(output_path, exist_ok=True)
 
             successes = 0
             failures: List[Dict[str, str]] = []
             progress_count = 0
-            progress_lock = threading.Lock()
+            progress_lock = asyncio.Lock()
 
             def _emit_progress(payload: Dict[str, Any]) -> None:
                 if progress_callback:
                     try:
                         progress_callback(payload)
                     except Exception as callback_error:  # pragma: no cover - defensive
-                        logger.warning(f'Progress callback failed: {callback_error}')
+                        logger.warning('Progress callback failed: %s', callback_error)
 
             def _record_failure(device, error_message: str) -> Dict[str, str]:
-                failure_entry = {
+                return {
                     'device_serial': device.device_serial_num,
                     'device_model': device.device_model,
                     'error': error_message,
                 }
-                return failure_entry
 
             def _log_manufacturer_guidance(device_model: str) -> None:
                 device_model_lower = (device_model or '').lower()
                 if 'samsung' in device_model_lower:
-                    logger.warning(f'Samsung device {device_model} may require:')
-                    logger.info('  - Developer options enabled')
-                    logger.info('  - USB debugging authorized for this computer')
-                    logger.info('  - "Disable permission monitoring" enabled (if available)')
+                    logger.warning('Samsung device %s may require additional permissions', device_model)
                 elif any(brand in device_model_lower for brand in ['huawei', 'honor']):
-                    logger.warning(f'Huawei device {device_model} may require HiSuite permissions')
+                    logger.warning('Huawei device %s may require HiSuite permissions', device_model)
                 elif 'xiaomi' in device_model_lower or 'redmi' in device_model_lower:
-                    logger.warning(f'Xiaomi device {device_model} may require MIUI developer options')
+                    logger.warning('Xiaomi device %s may require MIUI developer options', device_model)
                 elif any(brand in device_model_lower for brand in ['oppo', 'realme', 'oneplus']):
-                    logger.warning(f'OPPO/OnePlus device {device_model} may require ColorOS/OxygenOS developer settings')
+                    logger.warning('OPPO/OnePlus device %s may require ColorOS/OxygenOS developer settings', device_model)
                 elif 'vivo' in device_model_lower:
-                    logger.warning(f'Vivo device {device_model} may require FunTouch OS developer permissions')
+                    logger.warning('Vivo device %s may require FunTouch OS developer permissions', device_model)
 
-            def _process_device(index: int, device: adb_models.DeviceInfo) -> None:
+            async def _process_device(index: int, device: adb_models.DeviceInfo) -> None:
                 nonlocal successes, progress_count
 
                 sanitized_model = _sanitize_fragment(device.device_model)
@@ -165,67 +166,65 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                 filepath = os.path.join(output_path, filename)
 
                 logger.info(
-                    f'Generating bug report {index}/{device_count} for '
-                    f'{device.device_model} ({device.device_serial_num})'
+                    'Generating bug report %s/%s for %s (%s)',
+                    index,
+                    device_count,
+                    device.device_model,
+                    device.device_serial_num,
                 )
 
                 success = False
-                result: Optional[Dict[str, Any]] = None
                 failure_entry: Optional[Dict[str, str]] = None
+                payload_output_path = f'{filepath}.zip'
+                error_message = ''
+                details = ''
 
                 try:
-                    result = adb_tools.generate_bug_report_device(
+                    result = await asyncio.to_thread(
+                        adb_tools.generate_bug_report_device,
                         device.device_serial_num,
                         filepath,
-                        timeout=300
+                        300,
                     )
                     success = bool(result.get('success'))
-
+                    payload_output_path = result.get('output_path', payload_output_path)
+                    error_message = result.get('error', '')
+                    details = result.get('details', '')
+                    file_size = result.get('file_size', 'unknown')
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    error_message = str(exc)
+                    _log_manufacturer_guidance(device.device_model)
+                    failure_entry = _record_failure(device, error_message)
+                else:
                     if success:
                         logger.info(
                             'Bug report generated for %s (%s): %s bytes',
                             device.device_model,
                             device.device_serial_num,
-                            result.get('file_size', 'unknown')
+                            file_size,
                         )
                     else:
-                        error_msg = result.get('error', 'Unknown error')
-                        failure_entry = _record_failure(device, error_msg)
+                        if not error_message:
+                            error_message = 'Unknown error'
                         logger.error(
                             'Bug report failed for %s (%s): %s',
                             device.device_model,
                             device.device_serial_num,
-                            error_msg
+                            error_message,
                         )
-
-                except Exception as exc:  # pragma: no cover - handled in tests via failure path
-                    error_msg = str(exc)
-                    logger.error(
-                        'Bug report failed for %s (%s): %s',
-                        device.device_model,
-                        device.device_serial_num,
-                        error_msg
-                    )
-                    failure_entry = _record_failure(device, error_msg)
-                    _log_manufacturer_guidance(device.device_model)
-                    result = {
-                        'success': False,
-                        'error': error_msg,
-                        'output_path': f'{filepath}.zip',
-                        'details': '',
-                    }
+                        failure_entry = _record_failure(device, error_message)
 
                 payload = {
                     'success': success,
                     'total': device_count,
                     'device_serial': device.device_serial_num,
                     'device_model': device.device_model,
-                    'output_path': (result or {}).get('output_path', f'{filepath}.zip'),
-                    'error_message': (result or {}).get('error', ''),
-                    'details': (result or {}).get('details', ''),
+                    'output_path': payload_output_path,
+                    'error_message': error_message,
+                    'details': details,
                 }
 
-                with progress_lock:
+                async with progress_lock:
                     progress_count += 1
                     payload['current'] = progress_count
                     if success:
@@ -236,18 +235,10 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                 _emit_progress(payload)
 
             if device_count > 0:
-                max_workers = min(device_count, max(1, os.cpu_count() or 1))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = [
-                        executor.submit(_process_device, index, device)
-                        for index, device in enumerate(devices, 1)
-                    ]
+                await asyncio.gather(
+                    *(_process_device(index, device) for index, device in enumerate(devices, 1))
+                )
 
-                    for future in concurrent.futures.as_completed(futures):
-                        # Propagate unexpected errors
-                        future.result()
-
-            # Single completion callback to avoid multiple dialogs
             if callback:
                 failure_count = len(failures)
                 summary_lines = [
@@ -255,7 +246,7 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                     f'📁 Output directory: {output_path}',
                     '',
                     f'✅ Success: {successes} device(s)',
-                    f'❌ Failed: {failure_count} device(s)'
+                    f'❌ Failed: {failure_count} device(s)',
                 ]
 
                 if failures:
@@ -263,7 +254,7 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                     summary_lines.append('Failed devices:')
                     for failure in failures:
                         summary_lines.append(
-                            f'• {failure["device_model"]} ({failure["device_serial"]}) — {failure["error"]}'
+                            f"• {failure['device_model']} ({failure['device_serial']}) — {failure['error']}"
                         )
 
                 completion_message = '\n'.join(summary_lines)
@@ -272,27 +263,35 @@ def generate_bug_report_batch(devices: List[adb_models.DeviceInfo],
                     'output_path': output_path,
                     'successes': successes,
                     'failures': failures,
-                    'timestamp': timestamp
+                    'timestamp': timestamp,
                 }
 
                 try:
                     callback('Bug Report Complete', completion_payload, successes, '🐛')
                 except Exception as callback_error:
-                    logger.warning(f'Completion callback failed: {callback_error}')
+                    logger.warning('Completion callback failed: %s', callback_error)
 
-        except Exception as e:
-            logger.error(f'Bug report batch operation failed: {e}')
+        except Exception as exc:
+            logger.error('Bug report batch operation failed: %s', exc)
         finally:
             _release_bug_report_run()
 
-    # Run in background thread
+    # Run in background thread with asyncio event loop
     try:
-        thread = threading.Thread(target=report_worker, daemon=True)
+        def _thread_target() -> None:
+            try:
+                asyncio.run(_run_bug_report_batch())
+            finally:
+                if completion_event is not None:
+                    completion_event.set()
+
+        thread = threading.Thread(target=_thread_target, daemon=True)
         thread.start()
     except Exception:
         _release_bug_report_run()
+        if completion_event is not None:
+            completion_event.set()
         raise
-
 
 def generate_device_discovery_file(devices: List[adb_models.DeviceInfo],
                                   output_path: str,

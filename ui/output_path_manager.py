@@ -132,8 +132,7 @@ class OutputPathManager:
 
     def get_adb_tools_output_path(self) -> str:
         """Return the output path used by ADB tools features."""
-        primary_edit = getattr(self._window, 'output_path_edit', None)
-        return primary_edit.text().strip() if primary_edit is not None else ''
+        return self.ensure_primary_output_path()
 
     # ------------------------------------------------------------------
     # Configuration helpers

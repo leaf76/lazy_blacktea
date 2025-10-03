@@ -2147,10 +2147,14 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     def _get_adb_tools_output_path(self) -> str:
         """Return the output directory configured in the ADB Tools tab."""
         if hasattr(self, 'output_path_manager'):
-            return self.output_path_manager.get_adb_tools_output_path()
+            return self.output_path_manager.ensure_primary_output_path()
 
         if hasattr(self, 'output_path_edit'):
-            return self.output_path_edit.text().strip()
+            path = self.output_path_edit.text().strip()
+            if path:
+                return path
+            return self._ensure_output_path_initialized()
+
         return ''
 
     @staticmethod
@@ -2533,7 +2537,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         """Generate device discovery file using file operations manager."""
         def action():
             devices = self.get_checked_devices()
-            output_path = self._get_file_generation_output_path()
+            output_path = self._get_adb_tools_output_path()
             self.file_operations_manager.generate_device_discovery_file(devices, output_path)
 
         self._execute_with_operation_logging('Generate Device Discovery File', action)
@@ -2543,7 +2547,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         """Pull DCIM folder from devices using file operations manager."""
         def action():
             devices = self.get_checked_devices()
-            output_path = self._get_file_generation_output_path()
+            output_path = self._get_adb_tools_output_path()
             self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
 
         self._execute_with_operation_logging('Pull Device DCIM Folder', action)
@@ -2552,7 +2556,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     def dump_device_hsv(self):
         """Dump device UI hierarchy using UI hierarchy manager."""
         def action():
-            output_path = self._get_file_generation_output_path()
+            output_path = self._get_adb_tools_output_path()
             self.ui_hierarchy_manager.export_hierarchy(output_path)
 
         self._execute_with_operation_logging('Export Device UI Hierarchy', action)
