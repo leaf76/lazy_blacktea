@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from typing import Optional
 
-from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
@@ -54,8 +55,8 @@ from ui.ui_factory import UIInspectorFactory
 logger = common.get_logger('lazy_blacktea')
 
 
-class UIInspectorWorker(QObject):
-    """Background worker for capturing screenshot and hierarchy data."""
+class UIInspectorWorkerThread(QThread):
+    """Dedicated QThread for capturing screenshot and hierarchy data."""
 
     progress_updated = pyqtSignal(int, str)
     completed = pyqtSignal(dict)
@@ -66,14 +67,24 @@ class UIInspectorWorker(QObject):
         self.device_serial = device_serial
 
     def _check_interruption(self) -> None:
-        thread = QThread.currentThread()
-        if thread and thread.isInterruptionRequested():  # pragma: no cover - defensive
+        if self.isInterruptionRequested():  # pragma: no cover - defensive
             raise RuntimeError('Operation cancelled')
 
-    def run(self) -> None:
+    def run(self) -> None:  # type: ignore[override]
         temp_dir: Optional[str] = None
         try:
             temp_dir, screenshot_path, xml_path = create_temp_files()
+            logger.info(
+                'UI Inspector worker started on thread %s for device %s',
+                threading.get_ident(),
+                self.device_serial,
+            )
+            logger.info(
+                'UI Inspector artifacts at %s (screenshot=%s, xml=%s)',
+                temp_dir,
+                screenshot_path,
+                xml_path,
+            )
             self.progress_updated.emit(15, '📸 Capturing screenshot...')
             self._check_interruption()
 
@@ -93,16 +104,27 @@ class UIInspectorWorker(QObject):
             ui_elements = parse_ui_elements_cached(xml_path)
             self.progress_updated.emit(90, '🎨 Preparing interface...')
 
-            self.completed.emit({
+            payload = {
                 'temp_dir': temp_dir,
                 'screenshot_path': screenshot_path,
                 'xml_path': xml_path,
                 'ui_elements': ui_elements,
-            })
+            }
+            self.completed.emit(payload)
+            logger.info(
+                'UI Inspector worker finished on thread %s for %s, elements=%d',
+                threading.get_ident(),
+                self.device_serial,
+                len(ui_elements),
+            )
 
         except Exception as exc:  # pragma: no cover - defensive path
             if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
+            if self.isInterruptionRequested():
+                logger.info('UI Inspector worker interrupted for %s', self.device_serial)
+                return
+            logger.exception('UI Inspector worker failed for %s', self.device_serial)
             self.failed.emit(str(exc))
 
 
@@ -126,8 +148,7 @@ class UIInspectorDialog(QDialog):
         self.setModal(True)
         self.resize(1200, 800)
 
-        self._worker_thread: Optional[QThread] = None
-        self._worker: Optional[UIInspectorWorker] = None
+        self._worker_thread: Optional[UIInspectorWorkerThread] = None
         self._current_temp_dir: Optional[str] = None
 
         self.setup_ui()
@@ -418,17 +439,19 @@ class UIInspectorDialog(QDialog):
 
     def _start_worker(self) -> None:
         self._worker_start_scheduled = False
-        self._worker_thread = QThread(self)
+        self._worker_thread = UIInspectorWorkerThread(self.device_serial)
         self._worker_thread.setObjectName(f'UIInspectorWorker-{self.device_serial}')
-        self._worker = UIInspectorWorker(self.device_serial)
-        self._worker.moveToThread(self._worker_thread)
-
-        self._worker_thread.started.connect(self._worker.run)
-        self._worker.progress_updated.connect(self._on_worker_progress)  # type: ignore[arg-type]
-        self._worker.completed.connect(self._on_worker_completed)  # type: ignore[arg-type]
-        self._worker.failed.connect(self._on_worker_failed)  # type: ignore[arg-type]
+        self._worker_thread.progress_updated.connect(self._on_worker_progress)  # type: ignore[arg-type]
+        self._worker_thread.completed.connect(self._on_worker_completed)  # type: ignore[arg-type]
+        self._worker_thread.failed.connect(self._on_worker_failed)  # type: ignore[arg-type]
 
         self._worker_thread.start()
+        logger.debug(
+            'Spawning UIInspectorWorker thread name=%s object_id=%s for %s',
+            self._worker_thread.objectName(),
+            id(self._worker_thread),
+            self.device_serial,
+        )
 
     def _cleanup_worker(self) -> None:
         if self._worker_thread is None:
@@ -439,16 +462,13 @@ class UIInspectorDialog(QDialog):
         except RuntimeError:  # pragma: no cover - thread already gone
             pass
 
-        self._worker_thread.quit()
-        self._worker_thread.wait()
+        if not self._worker_thread.wait(5000):  # pragma: no cover - defensive timeout
+            logger.warning('Timed out waiting for UIInspectorWorker thread to finish for %s', self.device_serial)
         self._worker_thread.deleteLater()
 
-        if self._worker:
-            self._worker.deleteLater()
-
         self._worker_thread = None
-        self._worker = None
         self._worker_start_scheduled = False
+        logger.debug('UIInspectorWorker thread cleaned for %s', self.device_serial)
 
     def _on_worker_progress(self, value: int, label: str) -> None:
         self._ensure_progress_determinate()
@@ -488,6 +508,8 @@ class UIInspectorDialog(QDialog):
         self.update_hierarchy_tree()
         self.show_success_message(len(ui_elements))
 
+        logger.debug('UI Inspector temp dir active: %s', self._current_temp_dir)
+
         self._ensure_progress_determinate()
         self.progress_bar.setValue(100)
         self.progress_bar.setFormat('✅ Complete!')
@@ -519,9 +541,11 @@ class UIInspectorDialog(QDialog):
         if not self._current_temp_dir:
             return
         try:
+            logger.debug('UI Inspector temp dir cleanup start: %s', self._current_temp_dir)
             shutil.rmtree(self._current_temp_dir, ignore_errors=True)
         finally:
             self._current_temp_dir = None
+            logger.debug('UI Inspector temp dir cleanup done')
 
 
     def update_hierarchy_tree(self):
