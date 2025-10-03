@@ -125,14 +125,11 @@ class ToolsPanelController:
         StyleManager.apply_label_style(output_hint, LabelStyle.STATUS)
         output_layout.addWidget(output_hint)
 
-        content_layout.addWidget(output_group)
-        content_layout.addSpacing(8)
+        output_layout.addSpacing(12)
 
-        logcat_group = QGroupBox(PanelText.GROUP_LOGCAT)
-        logcat_group.setObjectName('adb_tools_logcat_group')
-        StyleManager.apply_panel_frame(logcat_group)
-        logcat_layout = QVBoxLayout(logcat_group)
-        logcat_layout.setSpacing(10)
+        quick_actions_label = QLabel(PanelText.GROUP_LOGCAT)
+        StyleManager.apply_label_style(quick_actions_label, LabelStyle.SUBHEADER)
+        output_layout.addWidget(quick_actions_label)
 
         logcat_items = [
             {'icon': 'clear_logcat', 'label': 'Clear Logcat', 'handler': self.window.clear_logcat},
@@ -142,9 +139,9 @@ class ToolsPanelController:
         logcat_grid.setHorizontalSpacing(16)
         logcat_grid.setVerticalSpacing(12)
         self._populate_icon_grid(logcat_grid, logcat_items, columns=2)
-        logcat_layout.addLayout(logcat_grid)
+        output_layout.addLayout(logcat_grid)
 
-        content_layout.addWidget(logcat_group)
+        content_layout.addWidget(output_group)
         content_layout.addSpacing(8)
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
         device_control_group.setObjectName('adb_tools_device_control_group')
