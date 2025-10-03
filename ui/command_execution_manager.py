@@ -343,7 +343,7 @@ class CommandExecutionManager(QObject):
 
         results: List[List[str]] = []
         for serial, process in zip(serials, processes):
-            stdout, stderr = process.communicate()
+            stdout, stderr = self._collect_process_output(process, task_handle)
             lines: List[str] = []
             if stdout:
                 if isinstance(stdout, bytes):
@@ -361,6 +361,55 @@ class CommandExecutionManager(QObject):
             'success': True,
             'results': results,
         }
+
+    def _collect_process_output(
+        self,
+        process: subprocess.Popen,
+        task_handle: Optional[TaskHandle],
+        *,
+        poll_interval: float = 0.2,
+        kill_timeout: float = 0.5,
+    ) -> tuple[Any, Any]:
+        """Wait for process completion while honouring task cancellation."""
+
+        while True:
+            if task_handle and task_handle.is_cancelled():
+                self._request_process_termination(process)
+
+            try:
+                return process.communicate(timeout=poll_interval)
+            except subprocess.TimeoutExpired:
+                if task_handle and task_handle.is_cancelled():
+                    self._force_kill_process(process, timeout=kill_timeout)
+                continue
+
+    @staticmethod
+    def _request_process_termination(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _force_kill_process(process: subprocess.Popen, *, timeout: float) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+        try:
+            process.kill()
+        except Exception:
+            pass
 
     @staticmethod
     def _normalize_results(results, expected_length: int) -> List[List[str]]:

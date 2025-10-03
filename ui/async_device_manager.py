@@ -312,40 +312,53 @@ class TrackDevicesWorker(QThread):
                 self.error_occurred.emit(f'track-devices error: {exc}')
                 self._wait_before_retry(2)
             finally:
-                if self._process and self._process.stderr is not None:
-                    try:
-                        stderr_output = self._process.stderr.read()
-                        if stderr_output:
-                            if isinstance(stderr_output, bytes):
-                                stderr_text = stderr_output.decode('utf-8', errors='replace').strip()
-                            else:
-                                stderr_text = stderr_output.strip()
-                            if stderr_text:
-                                logger.warning('track-devices stderr: %s', stderr_text)
-                    except Exception:
-                        pass
-                if self._process:
-                    try:
-                        if self._process.poll() is None:
-                            self._process.terminate()
-                        self._process.wait(timeout=1)
-                    except Exception:
-                        pass
-                self._process = None
+                self._finalize_process()
 
     def stop(self):
         self._stop_event.set()
         self.requestInterruption()
-        if self._process and self._process.poll() is None:
-            try:
-                self._process.terminate()
-                self._process.wait(timeout=1)
-            except Exception:
+        self._finalize_process()
+
+    def _finalize_process(self) -> None:
+        """Terminate the adb process safely and drain remaining stderr output."""
+        process = self._process
+        self._process = None
+
+        if process is None:
+            return
+
+        stderr_output = None
+
+        try:
+            if process.poll() is None:
                 try:
-                    self._process.kill()
+                    process.terminate()
                 except Exception:
                     pass
-        self._process = None
+
+            try:
+                _stdout_unused, stderr_output = process.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                try:
+                    _stdout_unused, stderr_output = process.communicate(timeout=1)
+                except Exception:
+                    stderr_output = None
+            except Exception:
+                stderr_output = None
+        except Exception:
+            stderr_output = None
+
+        if stderr_output:
+            if isinstance(stderr_output, bytes):
+                stderr_text = stderr_output.decode('utf-8', errors='replace').strip()
+            else:
+                stderr_text = str(stderr_output).strip()
+            if stderr_text:
+                logger.warning('track-devices stderr: %s', stderr_text)
 
     @staticmethod
     def _consume_track_stream(stream: IO[bytes], stop_event: Optional[threading.Event] = None):

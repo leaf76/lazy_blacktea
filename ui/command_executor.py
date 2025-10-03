@@ -2,7 +2,7 @@
 
 import logging
 import threading
-from typing import List, Callable, Dict
+from typing import List, Callable, Dict, Optional
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 
 from utils import adb_models, adb_tools, common
@@ -53,7 +53,7 @@ class CommandExecutor(QObject):
             try:
                 def log_results(results):
                     if callback:
-                        callback(command, serials, results)
+                        self._dispatch_callback(callback, command, serials, results)
                     self.command_completed.emit(command, serials, results)
 
                 adb_tools.run_adb_shell_command(serials, command, callback=log_results)
@@ -83,7 +83,7 @@ class CommandExecutor(QObject):
                 try:
                     def log_results(results):
                         if callback:
-                            callback(cmd, serials, results)
+                            self._dispatch_callback(callback, cmd, serials, results)
                         self.command_completed.emit(cmd, serials, results)
 
                     adb_tools.run_adb_shell_command(serials, cmd, callback=log_results)
@@ -98,6 +98,13 @@ class CommandExecutor(QObject):
         """Execute function in a separate thread."""
         thread = threading.Thread(target=func, daemon=True)
         thread.start()
+
+    @staticmethod
+    def _dispatch_callback(callback: Optional[Callable], *args) -> None:
+        """Invoke callback on the Qt main thread via single-shot timer."""
+        if not callback:
+            return
+        QTimer.singleShot(0, lambda: callback(*args))
 
     def add_to_history(self, command: str):
         """Add command to history."""

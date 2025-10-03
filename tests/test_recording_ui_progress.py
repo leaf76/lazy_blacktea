@@ -5,6 +5,7 @@ import datetime
 import sys
 import types
 from types import SimpleNamespace
+from typing import Dict, List, Optional, Set
 import unittest
 
 
@@ -95,6 +96,7 @@ if 'PyQt6' not in sys.modules:
 
 
 from lazy_blacktea_pyqt import WindowMain
+from utils.recording_utils import RecordingOperationInProgressError
 
 
 class RecordingProgressUITest(unittest.TestCase):
@@ -175,6 +177,78 @@ class RecordingProgressUITest(unittest.TestCase):
         self.assertEqual(self.status_updates, 1)
         self.assertEqual(len(self.warning_messages), 1)
         self.assertIn('ADB disconnected', self.warning_messages[0][1])
+
+
+class RecordingAsyncTaskTest(unittest.TestCase):
+    """Validate helper task methods for asynchronous recording control."""
+
+    class _FakeRecordingManager:
+        def __init__(self):
+            self.start_calls: List[tuple] = []
+            self.stop_calls: List[Optional[str]] = []
+            self.start_result: bool | Exception = True
+            self.stop_result_map: Dict[Optional[str], List[str]] = {}
+            self.is_recording_serials: Set[str] = set()
+
+        def start_recording(self, devices, output_path, completion_callback=None, progress_callback=None):
+            if isinstance(self.start_result, Exception):
+                raise self.start_result
+            serials = tuple(getattr(d, 'device_serial_num', None) for d in devices)
+            self.start_calls.append((serials, output_path))
+            return self.start_result
+
+        def stop_recording(self, device_serial: Optional[str] = None):
+            result_key = device_serial if device_serial is not None else None
+            if result_key in self.stop_result_map and isinstance(self.stop_result_map[result_key], Exception):
+                raise self.stop_result_map[result_key]
+            self.stop_calls.append(device_serial)
+            if device_serial is None:
+                return list(self.stop_result_map.get(None, []))
+            return list(self.stop_result_map.get(device_serial, [device_serial] if device_serial else []))
+
+        def is_recording(self, device_serial: str) -> bool:
+            return device_serial in self.is_recording_serials
+
+    def setUp(self):
+        self.window = WindowMain.__new__(WindowMain)
+        self.window.device_recordings = {}
+        self.window.device_operations = {}
+        self.window.device_dict = {}
+        self.window.write_to_console = lambda *_args, **_kwargs: None
+        self.window.update_recording_status = lambda: None
+        self.fake_manager = self._FakeRecordingManager()
+        self.window.recording_manager = self.fake_manager
+
+    def test_start_screen_record_task_success(self):
+        devices = [SimpleNamespace(device_serial_num='SER1', device_model='Model-1')]
+        result = self.window._start_screen_record_task(devices, output_path='/tmp/out')
+        self.assertEqual(result, {'success': True})
+        self.assertEqual(self.fake_manager.start_calls, [(('SER1',), '/tmp/out')])
+
+    def test_start_screen_record_task_propagates_error(self):
+        self.fake_manager.start_result = RecordingOperationInProgressError('busy')
+        devices = [SimpleNamespace(device_serial_num='SER2', device_model='Model-2')]
+        with self.assertRaises(RecordingOperationInProgressError):
+            self.window._start_screen_record_task(devices, output_path='/tmp/out')
+
+    def test_stop_screen_record_task_collects_serials(self):
+        self.fake_manager.stop_result_map['SER3'] = ['SER3']
+        self.fake_manager.stop_result_map['SER4'] = ['SER4']
+        result = self.window._stop_screen_record_task(('SER3', 'SER4'))
+        self.assertEqual(sorted(result['stopped']), ['SER3', 'SER4'])
+        self.assertEqual(self.fake_manager.stop_calls, ['SER3', 'SER4'])
+
+    def test_on_start_task_completed_updates_state(self):
+        devices = [SimpleNamespace(device_serial_num='SER5', device_model='Model-5')]
+        self.fake_manager.is_recording_serials.add('SER5')
+        payload = {'success': True}
+        self.window._on_start_screen_record_task_completed(payload, devices, '/tmp/out')
+        self.assertIn('SER5', self.window.device_recordings)
+        record = self.window.device_recordings['SER5']
+        self.assertTrue(record['active'])
+        self.assertEqual(record['output_path'], '/tmp/out')
+        self.assertEqual(record['device_name'], 'Model-5')
+        self.assertEqual(self.window.device_operations['SER5'], 'Recording')
 
 
 if __name__ == '__main__':

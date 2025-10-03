@@ -91,6 +91,7 @@ from utils.debounced_refresh import (
 )
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 from utils.icon_resolver import iter_icon_paths
+from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
 logger = common.get_logger('lazy_blacktea')
 
@@ -131,6 +132,10 @@ class WindowMain(QMainWindow):
         self.panels_manager = PanelsManager(self)
         self.device_file_browser_manager = DeviceFileBrowserManager(self)
         self.device_selection_manager = DeviceSelectionManager()
+
+        # Background task dispatcher
+        self._task_dispatcher = get_task_dispatcher()
+        self._background_task_handles: List[TaskHandle] = []
 
         # Connect device manager signals to main UI update
         self.device_manager.device_found.connect(self._on_device_found_from_manager)
@@ -1040,6 +1045,19 @@ class WindowMain(QMainWindow):
         thread = threading.Thread(target=wrapper, daemon=True, name=f'BG-{func.__name__}')
         thread.start()
 
+    def _register_background_handle(self, handle: TaskHandle) -> None:
+        """Track TaskHandle lifetimes to prevent premature GC."""
+
+        self._background_task_handles.append(handle)
+
+        def _cleanup() -> None:
+            try:
+                self._background_task_handles.remove(handle)
+            except ValueError:
+                pass
+
+        handle.finished.connect(_cleanup)
+
     def _run_adb_tool_on_selected_devices(
         self,
         tool_func,
@@ -1314,43 +1332,145 @@ class WindowMain(QMainWindow):
         def recording_progress(event_payload: dict):
             self.recording_progress_signal.emit(event_payload)
 
-        try:
-            success = self.recording_manager.start_recording(
-                devices,
-                validated_path,
-                completion_callback=recording_callback,
-                progress_callback=recording_progress,
+        devices_snapshot = list(devices)
+
+        context = TaskContext(name='start_screen_record', category='recording')
+        handle = self._task_dispatcher.submit(
+            self._start_screen_record_task,
+            devices_snapshot,
+            output_path=validated_path,
+            completion_callback=recording_callback,
+            progress_callback=recording_progress,
+            context=context,
+        )
+        handle.completed.connect(
+            lambda payload, ds=devices_snapshot, path=validated_path: self._on_start_screen_record_task_completed(payload, ds, path)
+        )
+        handle.failed.connect(self._on_start_screen_record_task_failed)
+        self._register_background_handle(handle)
+
+    def _start_screen_record_task(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        *,
+        output_path: str,
+        completion_callback: Optional[Callable] = None,
+        progress_callback: Optional[Callable] = None,
+        task_handle: Optional[TaskHandle] = None,
+    ) -> Dict[str, Any]:
+        success = self.recording_manager.start_recording(
+            devices,
+            output_path,
+            completion_callback=completion_callback,
+            progress_callback=progress_callback,
+        )
+        return {'success': bool(success)}
+
+    def _on_start_screen_record_task_completed(
+        self,
+        payload: Dict[str, Any],
+        devices: List[adb_models.DeviceInfo],
+        output_path: str,
+    ) -> None:
+        if not payload.get('success'):
+            self.error_handler.handle_error(ErrorCode.COMMAND_FAILED, 'Failed to start recording')
+            return
+
+        for device in devices:
+            serial = device.device_serial_num
+            if not self.recording_manager.is_recording(serial):
+                continue
+            self.device_recordings[serial] = {
+                'active': True,
+                'output_path': output_path,
+                'device_name': device.device_model,
+                'segments': [],
+                'elapsed_before_current': 0.0,
+                'ongoing_start': datetime.datetime.now(),
+                'display_seconds': 0,
+            }
+            self.device_operations[serial] = 'Recording'
+            self.write_to_console(
+                f"🎬 Recording started for {device.device_model} ({serial[:8]}...)"
             )
-        except RecordingOperationInProgressError:
+
+        self.update_recording_status()
+
+    def _on_start_screen_record_task_failed(self, exc: Exception) -> None:
+        if isinstance(exc, RecordingOperationInProgressError):
             self._show_recording_operation_warning(
                 'Screen Recording In Progress',
                 'Another screen recording start request is already running.\nPlease wait for it to finish before starting a new one.',
                 get_active_start_recording_serials(),
             )
             return
-        if not success:
-            self.error_handler.handle_error(ErrorCode.COMMAND_FAILED, 'Failed to start recording')
+
+        logger.error('Asynchronous screen recording start failed: %s', exc, exc_info=True)
+        self.error_handler.handle_error(
+            ErrorCode.COMMAND_FAILED,
+            f'Failed to start recording: {exc}',
+        )
+
+    def _enqueue_stop_screen_record(self, serials: Optional[List[str]]) -> None:
+        context = TaskContext(name='stop_screen_record', category='recording')
+        serials_snapshot = tuple(serials) if serials is not None else None
+        handle = self._task_dispatcher.submit(
+            self._stop_screen_record_task,
+            serials_snapshot,
+            context=context,
+        )
+        handle.completed.connect(
+            lambda payload, requested=serials_snapshot: self._on_stop_screen_record_task_completed(payload, requested)
+        )
+        handle.failed.connect(self._on_stop_screen_record_task_failed)
+        self._register_background_handle(handle)
+
+    def _stop_screen_record_task(
+        self,
+        serials: Optional[Iterable[str]],
+        *,
+        task_handle: Optional[TaskHandle] = None,
+    ) -> Dict[str, Any]:
+        if serials is None:
+            stopped = self.recording_manager.stop_recording()
+        else:
+            stopped: List[str] = []
+            for serial in serials:
+                stopped.extend(self.recording_manager.stop_recording(serial))
+        return {'stopped': stopped}
+
+    def _on_stop_screen_record_task_completed(
+        self,
+        payload: Dict[str, Any],
+        requested_serials: Optional[Iterable[str]],
+    ) -> None:
+        stopped = list(payload.get('stopped') or [])
+        if not stopped:
+            logger.info('Stop recording request completed with no active sessions to stop')
             return
 
-        # Track active recordings locally for UI updates
-        for device in devices:
-            serial = device.device_serial_num
-            if self.recording_manager.is_recording(serial):
-                self.device_recordings[serial] = {
-                    'active': True,
-                    'output_path': validated_path,
-                    'device_name': device.device_model,
-                    'segments': [],
-                    'elapsed_before_current': 0.0,
-                    'ongoing_start': datetime.datetime.now(),
-                    'display_seconds': 0,
-                }
-                self.device_operations[serial] = 'Recording'
-                self.write_to_console(
-                    f"🎬 Recording started for {device.device_model} ({serial[:8]}...)"
-                )
+        logger.info('Stopped recording on %s device(s): %s', len(stopped), stopped)
+        for serial in stopped:
+            device_info = self.device_dict.get(serial) if hasattr(self, 'device_dict') else None
+            device_name = getattr(device_info, 'device_model', serial)
+            self.write_to_console(
+                f"🛑 Stop recording request completed for {device_name} ({serial[:8]}...)"
+            )
 
-        self.update_recording_status()
+    def _on_stop_screen_record_task_failed(self, exc: Exception) -> None:
+        if isinstance(exc, RecordingOperationInProgressError):
+            self._show_recording_operation_warning(
+                'Stop Recording In Progress',
+                'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
+                get_active_stop_recording_serials(),
+            )
+            return
+
+        logger.error('Asynchronous stop recording failed: %s', exc, exc_info=True)
+        self.error_handler.handle_error(
+            ErrorCode.COMMAND_FAILED,
+            f'Failed to stop recording: {exc}',
+        )
 
     def _on_recording_stopped(self, device_name, device_serial, duration, filename, output_path):
         """Handle recording stopped signal in main thread."""
@@ -1721,30 +1841,9 @@ class WindowMain(QMainWindow):
                 )
                 return
 
-            # Stop recording on specific devices
-            for serial in devices_to_stop:
-                try:
-                    self.recording_manager.stop_recording(serial)
-                except RecordingOperationInProgressError:
-                    self._show_recording_operation_warning(
-                        'Stop Recording In Progress',
-                        'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
-                        get_active_stop_recording_serials(),
-                    )
-                    return
-                logger.info(f'Stopped recording for device: {serial}')
+            self._enqueue_stop_screen_record(devices_to_stop)
         else:
-            # Stop all recordings if no devices are selected
-            try:
-                stopped_devices = self.recording_manager.stop_recording()
-            except RecordingOperationInProgressError:
-                self._show_recording_operation_warning(
-                    'Stop Recording In Progress',
-                    'Another stop recording request is already running.\nPlease wait for it to finish before issuing a new stop request.',
-                    get_active_stop_recording_serials(),
-                )
-                return
-            logger.info(f'Stopped all recordings on {len(stopped_devices)} devices')
+            self._enqueue_stop_screen_record(None)
 
     @ensure_devices_selected
     def enable_bluetooth(self):
