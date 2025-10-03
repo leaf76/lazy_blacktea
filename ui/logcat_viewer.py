@@ -878,80 +878,112 @@ class LogcatWindow(QDialog):
         self.log_display.selectAll()
 
     def create_control_panel(self):
-        """Create the control panel with start/stop buttons."""
-        layout = QHBoxLayout()
+        """Create a structured control panel for logcat actions and filters."""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        primary_row = QHBoxLayout()
+        primary_row.setContentsMargins(0, 0, 0, 0)
+        primary_row.setSpacing(8)
 
         # Start/Stop buttons
         self.start_btn = QPushButton('▶️ Start Logcat')
         self.start_btn.clicked.connect(self.start_logcat)
-        layout.addWidget(self.start_btn)
+        primary_row.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton('⏹️ Stop')
         self.stop_btn.clicked.connect(self.stop_logcat)
         self.stop_btn.setEnabled(False)
-        layout.addWidget(self.stop_btn)
+        primary_row.addWidget(self.stop_btn)
 
-        # Clear button
         clear_btn = QPushButton('🗑️ Clear')
         clear_btn.clicked.connect(self.clear_logs)
-        layout.addWidget(clear_btn)
+        primary_row.addWidget(clear_btn)
 
-        # Performance settings button
         perf_btn = QPushButton('⚙️ Performance')
         perf_btn.clicked.connect(self.open_performance_settings)
-        layout.addWidget(perf_btn)
+        primary_row.addWidget(perf_btn)
 
-        # Auto-scroll toggle and helper
+        primary_row.addWidget(self.create_vertical_separator())
+
         self.follow_latest_checkbox = QCheckBox('Follow newest')
         self.follow_latest_checkbox.setChecked(True)
         self.follow_latest_checkbox.toggled.connect(self.set_auto_scroll_enabled)
-        layout.addWidget(self.follow_latest_checkbox)
+        primary_row.addWidget(self.follow_latest_checkbox)
 
         jump_btn = QPushButton('Jump to latest')
         jump_btn.clicked.connect(lambda: self.set_auto_scroll_enabled(True))
         jump_btn.setToolTip('Re-enable auto-follow and scroll to newest log entries')
-        layout.addWidget(jump_btn)
+        primary_row.addWidget(jump_btn)
 
-        # Add separator
-        separator = self.create_vertical_separator()
-        layout.addWidget(separator)
+        primary_row.addStretch(1)
+        layout.addLayout(primary_row)
 
-        # Log level checkboxes
+        # ------------------------------------------------------------------
+        # Secondary row: log levels and source filter
+        # ------------------------------------------------------------------
+        secondary_row = QHBoxLayout()
+        secondary_row.setContentsMargins(0, 0, 0, 0)
+        secondary_row.setSpacing(12)
+
+        levels_container = QWidget()
+        levels_container.setObjectName('logcat_levels_container')
+        levels_container.setStyleSheet(
+            'QWidget#logcat_levels_container {'
+            ' background-color: #2c2c2c;'
+            ' border: 1px solid #3e3e3e;'
+            ' border-radius: 6px;'
+            ' padding: 4px 8px;'
+            '}'
+        )
+        levels_layout = QHBoxLayout(levels_container)
+        levels_layout.setContentsMargins(4, 0, 4, 0)
+        levels_layout.setSpacing(8)
+
         self.log_levels = {
             'V': QCheckBox('Verbose'),
             'D': QCheckBox('Debug'),
             'I': QCheckBox('Info'),
             'W': QCheckBox('Warn'),
             'E': QCheckBox('Error'),
-            'F': QCheckBox('Fatal')
+            'F': QCheckBox('Fatal'),
         }
 
         for level in self.log_levels_order:
             checkbox = self.log_levels[level]
             checkbox.setChecked(True)
             checkbox.stateChanged.connect(self.update_log_levels)
-            layout.addWidget(checkbox)
+            levels_layout.addWidget(checkbox)
 
-        # Source filter controls for tag/package filtering
-        layout.addWidget(self.create_vertical_separator())
+        secondary_row.addWidget(levels_container, stretch=1)
+        secondary_row.addWidget(self.create_vertical_separator())
+
+        source_cluster = QWidget()
+        source_layout = QHBoxLayout(source_cluster)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(6)
 
         source_label = QLabel('Source')
         source_label.setStyleSheet('font-weight: bold;')
-        layout.addWidget(source_label)
+        source_layout.addWidget(source_label)
 
         self.log_source_mode = QComboBox()
         self.log_source_mode.addItem('Tag', 'tag')
         self.log_source_mode.addItem('Package', 'package')
         self.log_source_mode.addItem('Raw', 'raw')
         self.log_source_mode.setCurrentIndex(0)
-        layout.addWidget(self.log_source_mode)
+        self.log_source_mode.setFixedWidth(110)
+        source_layout.addWidget(self.log_source_mode)
 
         self.log_source_input = QLineEdit()
         self.log_source_input.setPlaceholderText('Tag or package filter (optional)')
-        self.log_source_input.setMinimumWidth(200)
-        layout.addWidget(self.log_source_input)
+        self.log_source_input.setMinimumWidth(220)
+        source_layout.addWidget(self.log_source_input, stretch=1)
 
-        layout.addStretch()
+        secondary_row.addWidget(source_cluster, stretch=2)
+
+        layout.addLayout(secondary_row)
         return layout
 
     def create_filter_panel(self) -> QWidget:
