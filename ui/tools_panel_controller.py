@@ -141,6 +141,41 @@ class ToolsPanelController:
         self._populate_icon_grid(logcat_grid, logcat_items, columns=2)
         output_layout.addLayout(logcat_grid)
 
+        output_layout.addSpacing(16)
+
+        capture_label = QLabel(PanelText.GROUP_CAPTURE)
+        StyleManager.apply_label_style(capture_label, LabelStyle.SUBHEADER)
+        output_layout.addWidget(capture_label)
+
+        capture_grid = QGridLayout()
+        capture_grid.setHorizontalSpacing(16)
+        capture_grid.setVerticalSpacing(12)
+
+        screenshot_btn = self._create_icon_tool_button('screenshot', 'Screenshot', self.window.take_screenshot, primary=True)
+        self.window.screenshot_btn = screenshot_btn
+        capture_grid.addWidget(screenshot_btn, 0, 0)
+
+        start_record_btn = self._create_icon_tool_button('record_start', 'Start Record', self.window.start_screen_record)
+        self.window.start_record_btn = start_record_btn
+        capture_grid.addWidget(start_record_btn, 0, 1)
+
+        stop_record_btn = self._create_icon_tool_button('record_stop', 'Stop Record', self.window.stop_screen_record)
+        self.window.stop_record_btn = stop_record_btn
+        capture_grid.addWidget(stop_record_btn, 0, 2)
+
+        capture_grid.setColumnStretch(3, 1)
+        output_layout.addLayout(capture_grid)
+
+        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
+        StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
+        output_layout.addWidget(self.window.recording_status_label)
+
+        self.window.recording_timer_label = QLabel('')
+        self.window.recording_timer_label.setStyleSheet(
+            StyleManager.get_status_styles()['recording_active']
+        )
+        output_layout.addWidget(self.window.recording_timer_label)
+
         content_layout.addWidget(output_group)
         content_layout.addSpacing(8)
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
@@ -174,42 +209,6 @@ class ToolsPanelController:
         self._populate_icon_grid(device_control_layout, control_items, columns=3)
 
         content_layout.addWidget(device_control_group)
-        content_layout.addSpacing(8)
-
-        capture_group = QGroupBox(PanelText.GROUP_CAPTURE)
-        capture_group.setObjectName('adb_tools_capture_group')
-        StyleManager.apply_panel_frame(capture_group)
-        capture_layout = QVBoxLayout(capture_group)
-        capture_layout.setSpacing(10)
-
-        capture_grid = QGridLayout()
-        capture_grid.setHorizontalSpacing(16)
-        capture_grid.setVerticalSpacing(12)
-
-        screenshot_btn = self._create_icon_tool_button('screenshot', 'Screenshot', self.window.take_screenshot, primary=True)
-        self.window.screenshot_btn = screenshot_btn
-        capture_grid.addWidget(screenshot_btn, 0, 0)
-
-        start_record_btn = self._create_icon_tool_button('record_start', 'Start Record', self.window.start_screen_record)
-        self.window.start_record_btn = start_record_btn
-        capture_grid.addWidget(start_record_btn, 0, 1)
-
-        stop_record_btn = self._create_icon_tool_button('record_stop', 'Stop Record', self.window.stop_screen_record)
-        self.window.stop_record_btn = stop_record_btn
-        capture_grid.addWidget(stop_record_btn, 0, 2)
-
-        capture_layout.addLayout(capture_grid)
-
-        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
-        StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
-        capture_layout.addWidget(self.window.recording_status_label)
-
-        self.window.recording_timer_label = QLabel('')
-        self.window.recording_timer_label.setStyleSheet(
-            StyleManager.get_status_styles()['recording_active']
-        )
-        capture_layout.addWidget(self.window.recording_timer_label)
-        content_layout.addWidget(capture_group)
         content_layout.addSpacing(8)
 
         content_layout.addStretch(1)
