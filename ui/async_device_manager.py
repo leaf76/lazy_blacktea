@@ -17,10 +17,11 @@ from typing import Callable, Dict, IO, List, Optional, Set
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer, QRunnable, QThreadPool
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, QMutex, QMutexLocker, QTimer
 
 from config.constants import ADBConstants
 from utils import adb_tools, common, adb_models, adb_commands
+from utils.task_dispatcher import TaskHandle, TaskContext, get_task_dispatcher
 
 logger = common.get_logger('async_device_manager')
 
@@ -85,6 +86,7 @@ class AsyncDeviceWorker(QObject):
         self.mutex = QMutex()
         self.status_checker: Optional[Callable[[str], bool]] = status_checker
         self.refresh_only: bool = False
+        self._task_handle: Optional[TaskHandle] = None
 
     def set_devices(self, device_serials: List[str], load_detailed: bool = True, refresh_only: bool = False):
         """設置要加載的設備列表"""
@@ -105,6 +107,10 @@ class AsyncDeviceWorker(QObject):
         with QMutexLocker(self.mutex):
             self.stop_requested = True
             self.is_running = False
+            handle = self._task_handle
+
+        if handle:
+            handle.cancel()
 
     def isRunning(self) -> bool:
         """檢查是否正在運行"""
@@ -112,11 +118,26 @@ class AsyncDeviceWorker(QObject):
             return self.is_running
 
     def start_loading(self):
-        """開始異步加載 - 使用QRunnable"""
+        """開始異步加載 - 透過共用 QThreadPool 執行"""
         with QMutexLocker(self.mutex):
             self.is_running = True
-        runnable = DeviceLoadingRunnable(self)
-        QThreadPool.globalInstance().start(runnable)
+            # 任何既有任務需要先取消
+            if self._task_handle:
+                self._task_handle.cancel()
+                self._task_handle = None
+
+        dispatcher = get_task_dispatcher()
+        context = TaskContext(
+            name='async_device_load',
+            category='device_discovery',
+        )
+        handle = dispatcher.submit(self._load_devices_efficiently, context=context)
+        handle.completed.connect(lambda _: self._on_task_completed())
+        handle.failed.connect(self._on_task_failed)
+        handle.finished.connect(self._on_task_finished)
+
+        with QMutexLocker(self.mutex):
+            self._task_handle = handle
 
     def _load_devices_efficiently(self):
         """漸進式設備加載：先顯示基本信息，再異步補充詳細信息"""
@@ -148,6 +169,16 @@ class AsyncDeviceWorker(QObject):
         # 設置運行狀態為完成
         with QMutexLocker(self.mutex):
             self.is_running = False
+
+    def _on_task_completed(self) -> None:
+        logger.debug('Async device load task completed')
+
+    def _on_task_failed(self, exc: Exception) -> None:
+        logger.error('Async device load task failed: %s', exc)
+
+    def _on_task_finished(self) -> None:
+        with QMutexLocker(self.mutex):
+            self._task_handle = None
 
     def _load_basic_info_immediately(self):
         """立即加載所有設備的基本信息（僅基本信息，不執行耗時檢查）"""
@@ -232,27 +263,11 @@ class AsyncDeviceWorker(QObject):
             logger.info(f'Detailed information loaded for {loaded_count} device(s)')
 
 
-class DeviceLoadingRunnable(QRunnable):
-    """設備加載任務 - 在線程池中運行"""
-
-    def __init__(self, worker: AsyncDeviceWorker):
-        super().__init__()
-        self.worker = worker
-        self.setAutoDelete(True)
-
-    def run(self):
-        """執行異步設備加載"""
-        try:
-            self.worker._load_devices_efficiently()
-        except Exception as e:
-            logger.error(f'Async device loading error: {e}')
 
 
 
-
-
-class TrackDevicesWorker(QObject):
-    """Background worker that follows `adb track-devices` output."""
+class TrackDevicesWorker(QThread):
+    """Background thread that follows `adb track-devices` output."""
 
     device_list_changed = pyqtSignal(list)  # List[Tuple[str, str]] -> (serial, status)
     error_occurred = pyqtSignal(str)
@@ -264,9 +279,9 @@ class TrackDevicesWorker(QObject):
         self._process: Optional[subprocess.Popen] = None
         self._last_emitted_entries: tuple[tuple[str, str], ...] = ()
 
-    def run(self):
-        """Main loop executed within a dedicated QThread."""
-        while not self._stop_event.is_set():
+    def run(self) -> None:  # type: ignore[override]
+        self._stop_event.clear()
+        while not self.isInterruptionRequested():
             try:
                 command = self._command_factory()
                 logger.info('Starting adb track-devices listener: %s', command)
@@ -283,7 +298,7 @@ class TrackDevicesWorker(QObject):
                     continue
 
                 for snapshot in self._consume_track_stream(stdout_pipe, self._stop_event):
-                    if self._stop_event.is_set():
+                    if self._stop_event.is_set() or self.isInterruptionRequested():
                         break
                     self._emit_snapshot(snapshot)
 
@@ -320,6 +335,7 @@ class TrackDevicesWorker(QObject):
 
     def stop(self):
         self._stop_event.set()
+        self.requestInterruption()
         if self._process and self._process.poll() is None:
             try:
                 self._process.terminate()
@@ -449,9 +465,8 @@ class AsyncDeviceManager(QObject):
         self.device_progress: Dict[str, DeviceLoadProgress] = {}
         self.last_discovered_serials: Optional[Set[str]] = None
         self.worker: Optional[AsyncDeviceWorker] = None
-        self.device_tracker_thread: Optional[QThread] = None
-        self.device_tracker_worker: Optional[TrackDevicesWorker] = None
-        self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker())
+        self.device_tracker_thread: Optional[TrackDevicesWorker] = None
+        self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker(parent=self))
         self.tracked_device_statuses: Dict[str, str] = {}
         self._serial_aliases: Dict[str, str] = {}
         self._shutting_down = False
@@ -475,25 +490,24 @@ class AsyncDeviceManager(QObject):
 
     def _initialize_device_tracker(self):
         """Set up adb track-devices monitoring in background."""
-        tracker_instance: Optional[TrackDevicesWorker] = None
+        tracker_thread: Optional[TrackDevicesWorker] = None
 
         if self._tracker_factory:
             try:
-                tracker_instance = self._tracker_factory()
+                tracker_thread = self._tracker_factory()
             except Exception as exc:
                 logger.error(f'Failed to create device tracker worker: {exc}')
-                tracker_instance = None
+                tracker_thread = None
 
-        if tracker_instance is None:
+        if tracker_thread is None:
             logger.info('Device tracker not started (factory returned None)')
             return
 
-        self.device_tracker_worker = tracker_instance
-        self.device_tracker_thread = QThread(self)
-        self.device_tracker_worker.moveToThread(self.device_tracker_thread)
-        self.device_tracker_thread.started.connect(self.device_tracker_worker.run)
-        self.device_tracker_worker.device_list_changed.connect(self._on_tracked_devices_changed)
-        self.device_tracker_worker.error_occurred.connect(lambda msg: logger.warning(f'Device tracker warning: {msg}'))
+        self.device_tracker_thread = tracker_thread
+        self.device_tracker_thread.device_list_changed.connect(self._on_tracked_devices_changed)
+        self.device_tracker_thread.error_occurred.connect(
+            lambda msg: logger.warning(f'Device tracker warning: {msg}')
+        )
         self.device_tracker_thread.start()
 
     @staticmethod
@@ -566,7 +580,6 @@ class AsyncDeviceManager(QObject):
         if self.worker:
             logger.info('Stopping current device loading process')
             self.worker.request_stop()
-            # 對於QRunnable，我們只能請求停止，無法強制終止
 
     def _run_adb_devices_command(self) -> subprocess.CompletedProcess[str]:
         """Execute `adb devices -l` and bubble up detailed failures."""
@@ -928,13 +941,11 @@ class AsyncDeviceManager(QObject):
         self.stop_periodic_refresh()
         self.stop_current_loading()
         self.clear_cache()
-        if self.device_tracker_worker:
-            self.device_tracker_worker.stop()
         if self.device_tracker_thread:
-            self.device_tracker_thread.quit()
-            self.device_tracker_thread.wait(1000)
+            self.device_tracker_thread.stop()
+            if not self.device_tracker_thread.wait(1000):
+                logger.warning('Timed out waiting for device tracker thread to stop')
         self.device_tracker_thread = None
-        self.device_tracker_worker = None
         self.worker = None
 
     def _process_pending_discovery(self):
