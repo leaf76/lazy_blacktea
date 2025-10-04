@@ -292,6 +292,41 @@ class BluetoothMonitorWindowTests(unittest.TestCase):
 
         self.assertEqual(scrollbar.value(), scrollbar.maximum())
 
+    def test_snapshot_search_highlights_matches(self):
+        from modules.bluetooth.models import ParsedSnapshot
+
+        snapshot_text = 'Power: HIGH\nSignal power level low\nAdapter Power state: ON'
+        snapshot = ParsedSnapshot(
+            serial='SERIAL_BT_UI',
+            timestamp=1.0,
+            adapter_enabled=True,
+            raw_text=snapshot_text,
+        )
+
+        self.window.handle_snapshot(snapshot)
+        self._app.processEvents()
+
+        self.window.snapshot_search_input.setText('power')
+        self._app.processEvents()
+
+        self.assertTrue(self.window.snapshot_next_btn.isEnabled())
+        self.assertTrue(self.window.snapshot_prev_btn.isEnabled())
+
+        selections = self.window.snapshot_view.extraSelections()
+        self.assertGreaterEqual(len(selections), 3)
+        for selection in selections:
+            self.assertEqual(selection.cursor.selectedText().lower(), 'power')
+
+        initial_cursor = selections[0].cursor.selectionStart()
+        self.window.snapshot_next_btn.click()
+        self._app.processEvents()
+        next_cursor = self.window.snapshot_view.textCursor().selectionStart()
+        self.assertNotEqual(next_cursor, initial_cursor)
+        self.window.snapshot_prev_btn.click()
+        self._app.processEvents()
+        prev_cursor = self.window.snapshot_view.textCursor().selectionStart()
+        self.assertEqual(prev_cursor, initial_cursor)
+
 
 if __name__ == '__main__':
     unittest.main()

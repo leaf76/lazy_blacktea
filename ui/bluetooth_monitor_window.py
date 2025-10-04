@@ -6,6 +6,7 @@ import functools
 from typing import Iterable, List, Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -79,9 +80,34 @@ class BluetoothMonitorWindow(QDialog):
         self.event_view = QPlainTextEdit()
         self.event_view.setReadOnly(True)
         self.event_view.setPlaceholderText('Bluetooth events will appear here.')
-        self._auto_follow_events = True
-        self._event_view_updating = False
-        self.event_view.verticalScrollBar().valueChanged.connect(self._handle_event_scroll)
+
+        self._snapshot_text = ''
+        self._snapshot_matches: list[tuple[int, int]] = []
+        self._snapshot_match_index: int = -1
+        self.snapshot_search_input = QLineEdit()
+        self.snapshot_search_input.setPlaceholderText('Search snapshot (case-insensitive)...')
+        self.snapshot_search_input.textChanged.connect(self._on_snapshot_search_changed)
+        self.snapshot_prev_btn = QPushButton('◀')
+        self.snapshot_prev_btn.setFixedWidth(32)
+        self.snapshot_prev_btn.setEnabled(False)
+        self.snapshot_prev_btn.clicked.connect(lambda: self._navigate_snapshot(-1))
+        self.snapshot_next_btn = QPushButton('▶')
+        self.snapshot_next_btn.setFixedWidth(32)
+        self.snapshot_next_btn.setEnabled(False)
+        self.snapshot_next_btn.clicked.connect(lambda: self._navigate_snapshot(1))
+
+        self._scroll_state = {}
+        for name, widget in (
+            ('metrics', self.metrics_view),
+            ('snapshot', self.snapshot_view),
+            ('events', self.event_view),
+        ):
+            default_auto = name == 'events'
+            state = {'widget': widget, 'auto': default_auto, 'updating': False}
+            self._scroll_state[name] = state
+            widget.verticalScrollBar().valueChanged.connect(
+                functools.partial(self._handle_scroll_change, name)
+            )
 
         self._build_layout()
         self._wire_service()
@@ -106,6 +132,11 @@ class BluetoothMonitorWindow(QDialog):
 
         snapshot_box = QGroupBox('Latest Snapshot')
         snapshot_layout = QVBoxLayout(snapshot_box)
+        snapshot_controls = QHBoxLayout()
+        snapshot_controls.addWidget(self.snapshot_search_input)
+        snapshot_controls.addWidget(self.snapshot_prev_btn)
+        snapshot_controls.addWidget(self.snapshot_next_btn)
+        snapshot_layout.addLayout(snapshot_controls)
         snapshot_layout.addWidget(self.snapshot_view)
 
         event_box = QGroupBox('Event Stream')
@@ -148,7 +179,9 @@ class BluetoothMonitorWindow(QDialog):
         if self._service is not None:
             self._connect_service(self._service, autostart=True)
         else:
-            self.metrics_view.setPlainText('Monitoring idle. Click "Start Monitoring" to begin.')
+            self._update_scrollable_text('metrics', 'Monitoring idle. Click "Start Monitoring" to begin.')
+            self._update_scrollable_text('snapshot', '')
+            self._run_snapshot_search(reset_index=True, jump=False)
             self._refresh_event_view()
 
     def _connect_service(self, service: BluetoothMonitorService, autostart: bool = False) -> None:
@@ -165,12 +198,19 @@ class BluetoothMonitorWindow(QDialog):
                 logger.error('Failed to start Bluetooth monitor service: %s', exc)
                 self.handle_error(str(exc))
                 self._service = None
+        else:
+            self._update_scrollable_text('metrics', 'Monitoring idle. Click "Start Monitoring" to begin.')
+            self._update_scrollable_text('snapshot', '')
+            self._run_snapshot_search(reset_index=True, jump=False)
+            self._refresh_event_view()
 
     # ------------------------------------------------------------------
     # Event handlers (slots)
     # ------------------------------------------------------------------
     def handle_snapshot(self, snapshot) -> None:
-        self.snapshot_view.setPlainText(snapshot.raw_text)
+        self._snapshot_text = snapshot.raw_text
+        self._update_scrollable_text('snapshot', snapshot.raw_text)
+        self._run_snapshot_search(reset_index=False, jump=False)
 
     def handle_event(self, event) -> None:
         line = f"[{event.timestamp:.1f}] {event.event_type.value}: {event.message}"
@@ -184,7 +224,7 @@ class BluetoothMonitorWindow(QDialog):
         self.state_badge.setText(states_text)
 
         metrics_lines = [f'{key}: {value}' for key, value in summary.metrics.items()]
-        self.metrics_view.setPlainText('\n'.join(metrics_lines))
+        self._update_scrollable_text('metrics', '\n'.join(metrics_lines))
 
     def handle_error(self, message: str) -> None:
         logger.error('Bluetooth monitor error: %s', message)
@@ -252,7 +292,7 @@ class BluetoothMonitorWindow(QDialog):
             self._service.deleteLater()
             self._service = None
             self._set_monitoring_active(False)
-            self.metrics_view.setPlainText('Monitoring stopped. Click "Start Monitoring" to resume.')
+            self._update_scrollable_text('metrics', 'Monitoring stopped. Click "Start Monitoring" to resume.')
 
     def _set_monitoring_active(self, active: bool) -> None:
         self.start_button.setEnabled(not active)
@@ -269,21 +309,7 @@ class BluetoothMonitorWindow(QDialog):
             filtered = self._events_history
 
         trimmed = list(filtered[-200:])
-        scrollbar = self.event_view.verticalScrollBar()
-        previous_value = scrollbar.value()
-
-        self._event_view_updating = True
-        try:
-            self.event_view.setPlainText('\n'.join(trimmed))
-        finally:
-            self._event_view_updating = False
-
-        if self._auto_follow_events:
-            scrollbar.setValue(scrollbar.maximum())
-        else:
-            updated_max = scrollbar.maximum()
-            target = min(previous_value, updated_max)
-            scrollbar.setValue(max(0, target))
+        self._update_scrollable_text('events', '\n'.join(trimmed))
 
     def _run_dump_commands(self, commands: Iterable[str]) -> str:
         output_lines = []
@@ -304,10 +330,111 @@ class BluetoothMonitorWindow(QDialog):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _handle_event_scroll(self, value: int) -> None:
-        if self._event_view_updating:
+    def _handle_scroll_change(self, name: str, value: int) -> None:
+        state = self._scroll_state.get(name)
+        if not state or state['updating']:
             return
 
-        scrollbar = self.event_view.verticalScrollBar()
-        at_bottom = value >= scrollbar.maximum()
-        self._auto_follow_events = at_bottom
+        widget = state['widget']
+        scrollbar = widget.verticalScrollBar()
+        state['auto'] = value >= scrollbar.maximum()
+
+    def _update_scrollable_text(self, name: str, text: str) -> None:
+        state = self._scroll_state.get(name)
+        if not state:
+            return
+
+        widget = state['widget']
+        scrollbar = widget.verticalScrollBar()
+        previous_value = scrollbar.value()
+
+        state['updating'] = True
+        try:
+            widget.setPlainText(text)
+        finally:
+            state['updating'] = False
+
+        if state['auto']:
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            scrollbar.setValue(min(previous_value, scrollbar.maximum()))
+
+        if name == 'snapshot':
+            self._run_snapshot_search(reset_index=False, jump=False)
+
+    def _on_snapshot_search_changed(self) -> None:
+        self._run_snapshot_search(reset_index=True, jump=False)
+
+    def _run_snapshot_search(self, *, reset_index: bool, jump: bool) -> None:
+        term = self.snapshot_search_input.text().strip()
+        text = self.snapshot_view.toPlainText()
+
+        matches: list[tuple[int, int]] = []
+        if term:
+            lowered = text.lower()
+            term_lower = term.lower()
+            term_len = len(term)
+            start = 0
+            while True:
+                idx = lowered.find(term_lower, start)
+                if idx == -1:
+                    break
+                matches.append((idx, term_len))
+                start = idx + term_len
+
+        self._snapshot_matches = matches
+
+        if matches:
+            if reset_index or self._snapshot_match_index < 0:
+                self._snapshot_match_index = 0
+            else:
+                self._snapshot_match_index = min(self._snapshot_match_index, len(matches) - 1)
+        else:
+            self._snapshot_match_index = -1
+
+        has_matches = bool(matches)
+        self.snapshot_prev_btn.setEnabled(has_matches)
+        self.snapshot_next_btn.setEnabled(has_matches)
+
+        self._update_snapshot_highlights(jump=jump)
+
+    def _navigate_snapshot(self, direction: int) -> None:
+        if not self._snapshot_matches:
+            return
+        self._snapshot_match_index = (self._snapshot_match_index + direction) % len(self._snapshot_matches)
+        self._update_snapshot_highlights(jump=True)
+
+    def _update_snapshot_highlights(self, *, jump: bool) -> None:
+        selections: list[QTextEdit.ExtraSelection] = []
+
+        if not self._snapshot_matches:
+            self.snapshot_view.setExtraSelections(selections)
+            return
+
+        base_format = QTextCharFormat()
+        base_format.setBackground(QColor(245, 203, 66, 110))
+        base_format.setForeground(QColor(0, 0, 0))
+
+        active_format = QTextCharFormat(base_format)
+        active_format.setBackground(QColor(255, 214, 0, 190))
+
+        active_cursor: Optional[QTextCursor] = None
+
+        for idx, (start, length) in enumerate(self._snapshot_matches):
+            cursor = QTextCursor(self.snapshot_view.document())
+            cursor.setPosition(start)
+            cursor.setPosition(start + length, QTextCursor.MoveMode.KeepAnchor)
+
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format = active_format if idx == self._snapshot_match_index else base_format
+            selections.append(selection)
+
+            if idx == self._snapshot_match_index:
+                active_cursor = QTextCursor(cursor)
+
+        self.snapshot_view.setExtraSelections(selections)
+
+        if jump and active_cursor is not None:
+            self.snapshot_view.setTextCursor(active_cursor)
+            self.snapshot_view.ensureCursorVisible()
