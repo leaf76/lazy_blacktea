@@ -1934,28 +1934,18 @@ def _is_screenrecord_running(serial: str) -> bool:
 
 
 def _verify_recording_stopped(serial_num: str) -> bool:
-  """Verify that screen recording has stopped on a device.
+  """Verify that screen recording has stopped on a device."""
 
-  Args:
-    serial_num: Device serial number
-
-  Returns:
-    bool: True if recording stopped
-  """
-  max_attempts = 30  # Up to 3 seconds
-  for attempt in range(max_attempts):
+  max_attempts = 30  # Up to ~1.5s with 50ms polling
+  for _ in range(max_attempts):
     try:
-      # Check if screenrecord process is still running
-      cmd = adb_commands._build_adb_shell_command(serial_num, 'ps | grep screenrecord')
-      result = common.run_command(cmd, 3)
-      if not result or not any('screenrecord' in str(r) for r in result):
+      if not _is_screenrecord_running(serial_num):
         logger.info(f'Screen recording stopped on device {serial_num}')
         return True
-    except Exception as e:
-      logger.debug(f'Failed to verify recording stopped on {serial_num}: {e}')
+    except Exception as exc:
+      logger.debug(f'Failed to verify recording stopped on {serial_num}: {exc}')
 
-    # Minimal wait before retry (non-blocking)
-    time.sleep(0.01)  # Reduced from 0.1s to 0.01s
+    time.sleep(0.05)
 
   logger.warning(f'Could not verify recording stopped on {serial_num} after {max_attempts} attempts')
   return False
