@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QMutex, QMutexLocker, QRunnable, QThreadPool, pyqtSignal
@@ -24,6 +24,11 @@ class TaskContext:
     name: str
     device_serial: Optional[str] = None
     category: Optional[str] = None
+    trace_id: str = field(default_factory=common.generate_trace_id)
+
+    def __post_init__(self) -> None:
+        if not self.trace_id or not str(self.trace_id).strip():
+            object.__setattr__(self, "trace_id", common.generate_trace_id())
 
 
 class TaskHandle(QObject):
@@ -43,6 +48,10 @@ class TaskHandle(QObject):
     @property
     def context(self) -> TaskContext:
         return self._context
+
+    @property
+    def trace_id(self) -> str:
+        return self._context.trace_id
 
     def cancel(self) -> None:
         with QMutexLocker(self._mutex):
@@ -89,15 +98,16 @@ class _TaskRunnable(QRunnable):
         if self.inject_progress and 'progress_callback' not in kwargs:
             kwargs['progress_callback'] = self.handle.report_progress
 
-        try:
-            result = self.fn(*self.args, **kwargs)
-        except Exception as exc:  # pragma: no cover - defensive path
-            logger.exception('Task %s failed: %s', self.handle.context, exc)
-            self.handle.failed.emit(exc)
-        else:
-            self.handle.completed.emit(result)
-        finally:
-            self.handle.finished.emit()
+        with common.trace_id_scope(self.handle.trace_id):
+            try:
+                result = self.fn(*self.args, **kwargs)
+            except Exception as exc:  # pragma: no cover - defensive path
+                logger.exception('Task %s failed: %s', self.handle.context, exc)
+                self.handle.failed.emit(exc)
+            else:
+                self.handle.completed.emit(result)
+            finally:
+                self.handle.finished.emit()
 
 
 class TaskDispatcher(QObject):

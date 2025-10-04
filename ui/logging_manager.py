@@ -69,8 +69,8 @@ class ConsoleHandler(logging.Handler):
                 self.text_widget.setCurrentFont(font)
                 self.text_widget.setTextColor(Qt.GlobalColor.black)
 
-        except Exception as e:
-            print(f'Error updating console widget: {e}')
+        except Exception:
+            diagnostics_logger.exception('Error updating console widget')
 
     def emit(self, record):
         """發送日誌記錄到控制台"""
@@ -80,8 +80,8 @@ class ConsoleHandler(logging.Handler):
 
             # 使用QTimer確保在主線程中執行UI更新
             QTimer.singleShot(0, lambda: self._update_widget(msg, levelname))
-        except Exception as e:
-            print(f'Error in ConsoleHandler.emit: {e}')
+        except Exception:
+            diagnostics_logger.exception('Error in ConsoleHandler.emit')
 
 
 class LoggingManager(QObject):

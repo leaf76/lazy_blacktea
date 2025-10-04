@@ -15,8 +15,11 @@ import threading
 from typing import Any, Dict, List, Callable, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
-from utils import adb_models, adb_tools
+from utils import adb_models, adb_tools, common
 from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
+
+
+_fallback_logger = common.get_logger('ui_console_fallback')
 
 
 class CommandExecutionManager(QObject):
@@ -250,9 +253,9 @@ class CommandExecutionManager(QObject):
             elif hasattr(self.parent_window, 'write_to_console'):
                 self.parent_window.write_to_console(message)
             else:
-                print(message)
-        except Exception as e:
-            print(f'Error emitting console signal: {e}')
+                _fallback_logger.error(message)
+        except Exception:
+            _fallback_logger.exception('Error emitting console signal')
 
     def get_valid_commands_from_text(self, text: str) -> List[str]:
         """從文本中提取有效命令"""

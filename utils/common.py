@@ -1,322 +1,364 @@
-"""This is utils."""
+"""Common utilities for Lazy Blacktea.
 
-import datetime
+This module centralises logging setup, filesystem helpers, timestamp helpers,
+command execution helpers, and trace identifier management used across the
+application.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
 import logging
 import os
-import pathlib
+import platform
 import shlex
 import subprocess
-from typing import Optional
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
+from pathlib import Path
+from typing import Iterator, List, Optional, Sequence, Union
 
+
+_TRACE_ID_DEFAULT = "-"
+_TRACE_ID_VAR: ContextVar[str] = ContextVar("lazy_blacktea_trace_id", default=_TRACE_ID_DEFAULT)
 
 # Track whether log cleanup has already run for the current day.
 _logs_cleaned_today = False
 
 
-def _cleanup_old_logs(logs_dir: str):
-  """Remove log files that do not belong to today (runs at most once per day)."""
-  global _logs_cleaned_today
+class TraceIdFilter(logging.Filter):
+    """Augment log records with their active trace identifier."""
 
-  # Skip if cleanup already ran today.
-  if _logs_cleaned_today:
-    return 0
-
-  try:
-    today = datetime.date.today().strftime('%Y%m%d')
-    cleaned_count = 0
-
-    for filename in os.listdir(logs_dir):
-      if filename.startswith('lazy_blacktea_') and filename.endswith('.log'):
-        # Extract date segment (lazy_blacktea_20250924_123456.log -> 20250924)
-        try:
-          date_part = filename[14:22]
-          if len(date_part) == 8 and date_part.isdigit():
-            if date_part != today:
-              old_log_path = os.path.join(logs_dir, filename)
-              os.remove(old_log_path)
-              cleaned_count += 1
-        except (IndexError, ValueError):
-          # Skip unexpected filename formats.
-          continue
-
-    # Mark cleanup as done.
-    _logs_cleaned_today = True
-
-    return cleaned_count
-  except Exception as e:
-    # Cleanup failures should not interrupt the main application.
-    return 0
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.trace_id = get_trace_id()
+        return True
 
 
-def get_logger(name: str = 'my_logger') -> logging.Logger:
-  """Set the logger with simplified output."""
-  # Create logs directory in appropriate location based on platform
-  import platform
-  system = platform.system().lower()
+def generate_trace_id() -> str:
+    """Return a new random trace identifier."""
+    return uuid.uuid4().hex
 
-  if system == 'darwin':  # macOS
-    home_dir = os.path.expanduser('~')
-    logs_dir = os.path.join(home_dir, '.lazy_blacktea_logs')
-  elif system == 'linux':  # Linux
-    # Use XDG Base Directory Specification
-    xdg_data_home = os.environ.get('XDG_DATA_HOME')
-    if xdg_data_home:
-      logs_dir = os.path.join(xdg_data_home, 'lazy_blacktea', 'logs')
-    else:
-      home_dir = os.path.expanduser('~')
-      logs_dir = os.path.join(home_dir, '.local', 'share', 'lazy_blacktea', 'logs')
-  else:  # Fallback for other systems
-    home_dir = os.path.expanduser('~')
-    logs_dir = os.path.join(home_dir, '.lazy_blacktea_logs')
-  pathlib.Path(logs_dir).mkdir(parents=True, exist_ok=True)
 
-  # Clean up old log files (keep only today's logs)
-  cleaned_count = _cleanup_old_logs(logs_dir)
+def get_trace_id() -> str:
+    """Return the current trace identifier ("-" when unset)."""
+    return _TRACE_ID_VAR.get()
 
-  # Create log filename with timestamp
-  current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-  log_filename = f'lazy_blacktea_{current_time}.log'
-  log_filepath = os.path.join(logs_dir, log_filename)
 
-  # Configure logging with file handler only for detailed logs
-  # Console handler only shows WARNING and above
-  logger = logging.getLogger(name)
+def set_trace_id(trace_id: Optional[str]) -> Token[str]:
+    """Set the active trace identifier and return the context token."""
+    value = trace_id or _TRACE_ID_DEFAULT
+    return _TRACE_ID_VAR.set(value)
 
-  # Avoid duplicate handlers
-  if not logger.handlers:
-    # File handler - detailed logging
+
+def reset_trace_id(token: Token[str]) -> None:
+    """Reset the trace identifier to the previous context."""
+    _TRACE_ID_VAR.reset(token)
+
+
+@contextmanager
+def trace_id_scope(trace_id: Optional[str]) -> Iterator[None]:
+    """Context manager that temporarily sets the trace identifier."""
+    token = set_trace_id(trace_id)
     try:
-      file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
-    except (OSError, PermissionError):
-      fallback_dir = os.path.join(os.getcwd(), 'logs')
-      pathlib.Path(fallback_dir).mkdir(parents=True, exist_ok=True)
-      log_filepath = os.path.join(fallback_dir, log_filename)
-      file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
-    file_formatter = logging.Formatter(
-        '%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
+        yield
+    finally:
+        reset_trace_id(token)
 
-    # Console handler - allow all levels for debugging
+
+def _resolve_logs_dir() -> Path:
+    """Return the directory path where log files should be stored."""
+    system = platform.system().lower()
+    home_dir = Path.home()
+
+    if system == "darwin":
+        return home_dir / ".lazy_blacktea_logs"
+
+    if system == "linux":
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_home:
+            return Path(xdg_data_home) / "lazy_blacktea" / "logs"
+        return home_dir / ".local" / "share" / "lazy_blacktea" / "logs"
+
+    return home_dir / ".lazy_blacktea_logs"
+
+
+def _cleanup_old_logs(logs_dir: Path, bootstrap_logger: logging.Logger) -> int:
+    """Remove log files that do not belong to today (runs at most once per day)."""
+    global _logs_cleaned_today
+
+    if _logs_cleaned_today:
+        return 0
+
+    try:
+        today = dt.date.today().strftime("%Y%m%d")
+        cleaned_count = 0
+
+        for filename in os.listdir(logs_dir):
+            if not (filename.startswith("lazy_blacktea_") and filename.endswith(".log")):
+                continue
+
+            date_part = filename[14:22]
+            if len(date_part) != 8 or not date_part.isdigit():
+                continue
+
+            if date_part == today:
+                continue
+
+            old_log_path = logs_dir / filename
+            try:
+                old_log_path.unlink()
+                cleaned_count += 1
+            except OSError:
+                bootstrap_logger.exception("Error removing stale log file", extra={"stale_log": str(old_log_path)})
+
+        _logs_cleaned_today = True
+        return cleaned_count
+    except Exception:  # pragma: no cover - defensive safeguard
+        bootstrap_logger.exception(
+            "Unexpected failure while cleaning logs directory", extra={"logs_dir": str(logs_dir)}
+        )
+        return 0
+
+
+def _ensure_logger_filters(logger: logging.Logger) -> None:
+    """Attach the TraceIdFilter to the logger if not already present."""
+    if any(isinstance(item, TraceIdFilter) for item in logger.filters):
+        return
+    logger.addFilter(TraceIdFilter())
+
+
+def get_logger(name: str = "lazy_blacktea") -> logging.Logger:
+    """Return a configured logger augmented with trace identifiers."""
+    logs_dir = _resolve_logs_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    bootstrap_logger = logging.getLogger("lazy_blacktea.bootstrap")
+    if not any(isinstance(handler, logging.NullHandler) for handler in bootstrap_logger.handlers):
+        bootstrap_logger.addHandler(logging.NullHandler())
+
+    cleaned_count = _cleanup_old_logs(logs_dir, bootstrap_logger)
+
+    current_time = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"lazy_blacktea_{current_time}.log"
+    log_filepath = logs_dir / log_filename
+
+    logger = logging.getLogger(name)
+    _ensure_logger_filters(logger)
+
+    if logger.handlers:
+        return logger
+
+    try:
+        file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+    except (OSError, PermissionError):
+        fallback_dir = Path.cwd() / "logs"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        log_filepath = fallback_dir / log_filename
+        file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+
+    file_formatter = logging.Formatter(
+        "%(asctime)s %(trace_id)s %(name)-20s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(file_formatter)
+    file_handler.addFilter(TraceIdFilter())
+
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)  # Changed from WARNING to INFO
-    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter("%(levelname)s [%(trace_id)s] %(message)s")
     console_handler.setFormatter(console_formatter)
+    console_handler.addFilter(TraceIdFilter())
 
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     logger.setLevel(logging.INFO)
 
     if cleaned_count > 0:
-      logger.info('Removed %s old log file(s)', cleaned_count)
+        logger.info("Removed %s old log file(s)", cleaned_count)
 
-    # Only log file creation once
-    if name == 'lazy_blacktea':
-      logger.info(f"Log file created: {log_filepath}")
+    if name == "lazy_blacktea":
+        logger.info("Log file created: %s", log_filepath)
 
-  return logger
-
-
-_logger = get_logger('common')
+    return logger
 
 
-def read_file(path) -> []:
-  check_file = os.path.isfile(path)
-  if not check_file:
-    return ''
-  result = []
-  with open(path, encoding='utf-8') as f:
-    read_data = f.readlines()
-  for line in read_data:
-    result.append(line.strip())
-  return result
+# Module-level logger for common utilities (defined after get_logger).
+_LOGGER = get_logger("common")
+
+
+def read_file(path: str) -> List[str]:
+    """Return a list of stripped lines from the given file path."""
+    file_path = Path(path).expanduser()
+    if not file_path.is_file():
+        _LOGGER.warning("Requested file does not exist", extra={"path": str(file_path)})
+        return []
+
+    try:
+        with file_path.open(encoding="utf-8") as handle:
+            return [line.strip() for line in handle.readlines()]
+    except Exception:  # pragma: no cover - defensive path
+        _LOGGER.exception("Failed to read file", extra={"path": str(file_path)})
+        return []
 
 
 def timestamp_time() -> str:
-  time_now = datetime.datetime.now().timestamp()
-  return timestamp_to_format_time(time_now)
+    """Return the current time formatted as YYYYMMDD_HHMMSS."""
+    return timestamp_to_format_time(dt.datetime.now().timestamp())
 
 
-def timestamp_to_format_time(timestamp) -> str:
-  """Convert the timestamp to format time.
+def timestamp_to_format_time(timestamp: Union[int, float, str]) -> str:
+    """Convert the timestamp to a formatted string (YYYYMMDD_HHMMSS)."""
+    try:
+        ts_float = float(timestamp)
+    except (TypeError, ValueError):
+        _LOGGER.error("Invalid timestamp provided", extra={"timestamp": timestamp})
+        return "0000000000"
 
-  Args:
-    timestamp: timestamp
+    if len(str(int(ts_float))) > 10:
+        ts_float = ts_float / 1000
 
-  Returns:
-    format time
-  """
-  try:
-    timestamp = float(timestamp)
-  except ValueError:
-    return '0000000000'
-  if len(str(timestamp)) > 10:
-    timestamp = timestamp / 1000
-  dt_object = datetime.datetime.fromtimestamp(timestamp)
-  formatted_time = dt_object.strftime('%Y%m%d_%H%M%S')
-  return formatted_time
+    dt_object = dt.datetime.fromtimestamp(ts_float)
+    return dt_object.strftime("%Y%m%d_%H%M%S")
 
 
 def current_format_time_utc() -> str:
-  # Get the current time with timestamp in utc
-  current_utc_time = datetime.datetime.now()
-  # utc_timestamp = current_utc_time.timestamp()
-  # Format the time to 'yyyy_MM_dd_HH_mm_ss'
-  formatted_time = current_utc_time.strftime('%Y%m%d_%H%M%S')
-  return formatted_time
+    """Return the current UTC time formatted as YYYYMMDD_HHMMSS."""
+    return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def make_gen_dir_path(folder_path: str) -> str:
-  # process the path
-  folder_path = folder_path.strip()
-  if not folder_path:
-    return ''
+    """Create the directory (including parents) and return its POSIX path."""
+    cleaned = folder_path.strip()
+    if not cleaned:
+        _LOGGER.error("Empty folder path provided to make_gen_dir_path")
+        return ""
 
-  # If the folder not exists that it to generate the full path folder.
-  full_path = get_full_path(folder_path)
-  pathlib.Path(full_path).mkdir(parents=True, exist_ok=True)
-  # return folder full path
-  return pathlib.Path(full_path).as_posix()
-
-
-def check_exists_dir(path) -> bool:
-  return os.path.exists(get_full_path(path))
+    full_path = Path(get_full_path(cleaned))
+    full_path.mkdir(parents=True, exist_ok=True)
+    return full_path.as_posix()
 
 
-def get_full_path(path):
-  # Get the full path
-  return os.path.expanduser(path)
+def check_exists_dir(path: str) -> bool:
+    """Return True when the given path (expanded) exists."""
+    return Path(get_full_path(path)).exists()
+
+
+def get_full_path(path: str) -> str:
+    """Return the expanded absolute path for the given path string."""
+    return os.path.expanduser(path)
 
 
 def make_full_path(root_path: str, *paths: str) -> str:
-  """Make the full path."""
-  if not paths:
-    return root_path
-  return pathlib.Path(root_path).joinpath(*paths).as_posix()
+    """Join paths and return the POSIX representation."""
+    if not paths:
+        return root_path
+    return Path(root_path).joinpath(*paths).as_posix()
 
 
 def make_file_extension(file_path: str, extension: str) -> str:
-  return pathlib.Path(file_path).with_suffix(extension)
+    """Return the file path with the given extension."""
+    return str(Path(file_path).with_suffix(extension))
 
 
-def sp_run_command(command, ignore_index=0) -> list[str]:
-  """This is for the sync process will be stuck the main process."""
-  # start to run the command line
-  _logger.debug('Run command: %s', command)
-  listing_result = []
+CommandType = Union[str, Sequence[str]]
 
-  # Convert string command to list for security
-  if isinstance(command, str):
-    command_list = shlex.split(command)
-  else:
-    command_list = command
 
-  try:
-    result = subprocess.run(
-        command_list, check=True, capture_output=True, shell=False,
-        text=True, encoding='utf-8'
-    )
-    if result.returncode == 0:
-      output = result.stdout.splitlines()
-      for line in output[ignore_index:]:
-        listing_result.append(line)
+def sp_run_command(command: CommandType, ignore_index: int = 0) -> List[str]:
+    """Run a synchronous subprocess command and return its output lines."""
+    _LOGGER.debug("Run command synchronously", extra={"command": command})
+    listing_result: List[str] = []
+
+    command_list: Sequence[str]
+    if isinstance(command, str):
+        command_list = shlex.split(command)
     else:
-      err_msg = result.stderr
-      _logger.warning('Command error: %s', err_msg)
-  except subprocess.CalledProcessError as e:
-    _logger.warning('Command process error: %s', e.stderr if e.stderr else str(e))
-  except Exception as e:
-    _logger.error('Unexpected error running command: %s', str(e))
-  _logger.debug('Command result: %s', listing_result)
-  return listing_result
+        command_list = command
+
+    try:
+        result = subprocess.run(
+            command_list,
+            check=True,
+            capture_output=True,
+            shell=False,
+            text=True,
+            encoding="utf-8",
+        )
+        if result.returncode == 0:
+            output = result.stdout.splitlines()
+            listing_result.extend(output[ignore_index:])
+        else:
+            _LOGGER.error("Command returned non-zero exit", extra={"stderr": result.stderr})
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - defensive path
+        _LOGGER.exception("Command process error", extra={"stderr": exc.stderr})
+    except Exception:  # pragma: no cover - defensive path
+        _LOGGER.exception("Unexpected error running command", extra={"command": command_list})
+
+    _LOGGER.debug("Command result", extra={"result": listing_result})
+    return listing_result
 
 
 def validate_and_create_output_path(output_path: str) -> Optional[str]:
-  """Validate and normalize output path, creating it if necessary.
+    """Validate and normalize output path, creating it if necessary."""
+    if not output_path or not output_path.strip():
+        return None
 
-  Args:
-    output_path: Path to validate and potentially create
+    if not check_exists_dir(output_path):
+        normalized_path = make_gen_dir_path(output_path)
+        if not normalized_path:
+            return None
+        return normalized_path
 
-  Returns:
-    Normalized path if valid, None if invalid
-  """
-  if not output_path or not output_path.strip():
-    return None
-
-  # Validate and normalize using common utilities
-  if not check_exists_dir(output_path):
-    normalized_path = make_gen_dir_path(output_path)
-    if not normalized_path:
-      return None
-    return normalized_path
-
-  return output_path
+    return output_path
 
 
-def run_command(command, ignore_index=0) -> list[str]:
-  """This is for the sync process will be stuck the main process."""
-  # start to run the command line
-  _logger.debug('Run command: %s', command)
-  return mp_run_command(command, ignore_index)
+def run_command(command: CommandType, ignore_index: int = 0) -> List[str]:
+    """Backwards compatible alias that delegates to mp_run_command."""
+    _LOGGER.debug("Run command (alias)", extra={"command": command})
+    return mp_run_command(command, ignore_index)
 
 
-# This is for the non-sync process.
-def mp_run_command(cmd: str, ignore_index=0) -> list[str]:
-  """Run the command in non-sync process.
+def mp_run_command(cmd: CommandType, ignore_index: int = 0) -> List[str]:
+    """Run the command using subprocess.Popen and return its output lines."""
+    _LOGGER.debug("Execute command asynchronously", extra={"command": cmd})
+    listing_result: List[str] = []
 
-  Args:
-    cmd: command
-    ignore_index: ignore the first index
-
-  Returns:
-    list of string
-  """
-  # start to run the command line
-  _logger.debug('Execute command: %s', cmd)
-  listing_result = []
-  # Convert string command to list for security
-  if isinstance(cmd, str):
-    command_list = shlex.split(cmd)
-  else:
-    command_list = cmd
-
-  try:
-    result = subprocess.Popen(
-        command_list, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding='utf-8'
-    )
-    stdout, stderr = result.communicate()
-    _logger.debug('Command stdout: %s', stdout)
-    _logger.debug('Command stderr: %s', stderr)
-    if result.returncode == 0:
-      output = stdout.splitlines()
-      for line in output[ignore_index:]:
-        listing_result.append(line)
+    if isinstance(cmd, str):
+        command_list: Sequence[str] = shlex.split(cmd)
     else:
-      if stderr and stderr.strip():  # Only log if there's actual error content
-        _logger.warning('Command error: %s', stderr)
-  except Exception as e:
-    _logger.warning('Command process error: %s', str(e))
-  _logger.debug('Command result: %s', listing_result)
-  return listing_result
+        command_list = cmd
 
-def create_cancellable_process(cmd: str) -> Optional[subprocess.Popen]:
-    """Creates and returns a subprocess.Popen object for a command that can be cancelled.
+    try:
+        process = subprocess.Popen(
+            command_list,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        stdout, stderr = process.communicate()
+        _LOGGER.debug("Command stdout", extra={"stdout": stdout})
+        _LOGGER.debug("Command stderr", extra={"stderr": stderr})
+        if process.returncode == 0:
+            output = stdout.splitlines()
+            listing_result.extend(output[ignore_index:])
+        elif stderr and stderr.strip():
+            _LOGGER.error("Command error", extra={"stderr": stderr})
+    except Exception:  # pragma: no cover - defensive path
+        _LOGGER.exception("Command process error", extra={"command": command_list})
 
-    This function does not wait for the command to complete.
+    _LOGGER.debug("Command result", extra={"result": listing_result})
+    return listing_result
 
-    Args:
-        cmd: The command to execute.
 
-    Returns:
-        A subprocess.Popen object if successful, otherwise None.
-    """
-    _logger.debug('Creating cancellable process for command: %s', cmd)
+def create_cancellable_process(cmd: CommandType) -> Optional[subprocess.Popen]:
+    """Create and return a subprocess.Popen object for a cancellable command."""
+    _LOGGER.debug("Creating cancellable process", extra={"command": cmd})
     try:
         if isinstance(cmd, str):
-            command_list = shlex.split(cmd)
+            command_list: Sequence[str] = shlex.split(cmd)
         else:
             command_list = cmd
 
@@ -326,9 +368,33 @@ def create_cancellable_process(cmd: str) -> Optional[subprocess.Popen]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            encoding='utf-8'
+            encoding="utf-8",
         )
         return process
-    except Exception as e:
-        _logger.error('Failed to create cancellable process: %s', str(e))
+    except Exception:  # pragma: no cover - defensive path
+        _LOGGER.exception("Failed to create cancellable process", extra={"command": cmd})
         return None
+
+
+__all__ = [
+    "TraceIdFilter",
+    "create_cancellable_process",
+    "current_format_time_utc",
+    "generate_trace_id",
+    "get_full_path",
+    "get_logger",
+    "get_trace_id",
+    "make_file_extension",
+    "make_full_path",
+    "make_gen_dir_path",
+    "mp_run_command",
+    "read_file",
+    "reset_trace_id",
+    "run_command",
+    "set_trace_id",
+    "sp_run_command",
+    "timestamp_time",
+    "timestamp_to_format_time",
+    "trace_id_scope",
+    "validate_and_create_output_path",
+]
