@@ -1712,6 +1712,14 @@ class WindowMain(QMainWindow):
 
         self._open_logcat_for_device(device)
 
+    def monitor_bluetooth(self) -> None:
+        """Open Bluetooth monitor for the active device selection."""
+        device = self.require_single_device_selection('Bluetooth monitor')
+        if device is None:
+            return
+
+        self.open_bluetooth_monitor_for_device(device.device_serial_num)
+
     def open_bluetooth_monitor_for_device(self, device_serial: str) -> None:
         """Open or focus the Bluetooth monitor window for a given device."""
         device = self.device_dict.get(device_serial)

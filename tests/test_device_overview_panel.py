@@ -36,6 +36,9 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         stub.device_dict = {}
         stub.refresh_active_device_overview = lambda: None
         stub.copy_active_device_overview = lambda: None
+        stub.show_logcat = lambda: None
+        stub.launch_ui_inspector = lambda: None
+        stub.monitor_bluetooth = lambda: None
         stub.group_name_edit = QLineEdit()
         stub.groups_listbox = QListWidget()
         stub.output_path_edit = QLineEdit()
@@ -112,7 +115,8 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         self.controller._create_shell_commands_tab(tab_widget)
 
         tab = tab_widget.widget(tab_widget.count() - 1)
-        main_layout = tab.layout()
+        scroll_widget = tab.widget()
+        main_layout = scroll_widget.layout()
 
         template_group = main_layout.itemAt(0).widget()
         template_margins = template_group.layout().contentsMargins()
@@ -181,6 +185,9 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         QMainWindow.__init__(window)
         window.device_selection_manager = DeviceSelectionManager()
         window.device_dict = {}
+        window.show_logcat = Mock()
+        window.launch_ui_inspector = Mock()
+        window.monitor_bluetooth = Mock()
         window.device_list_controller = types.SimpleNamespace(
             get_device_detail_text=Mock(return_value='basic detail'),
             get_on_off_status=lambda value: 'On' if value else 'Off',
@@ -247,10 +254,19 @@ class DeviceOverviewPanelTests(unittest.TestCase):
         self.assertNotIn('Model:', condensed_text)
         self.assertNotIn('Serial:', condensed_text)
 
+        self.assertTrue(window.device_overview_widget.refresh_button.isEnabled())
+        self.assertTrue(window.device_overview_widget.copy_button.isEnabled())
+        self.assertTrue(window.device_overview_widget.logcat_button.isEnabled())
+        self.assertTrue(window.device_overview_widget.ui_inspector_button.isEnabled())
+        self.assertTrue(window.device_overview_widget.bluetooth_button.isEnabled())
+
         # Clear selection should reset the widget state
         window.device_selection_manager.clear()
         window.update_device_overview()
         self.assertFalse(window.device_overview_widget.refresh_button.isEnabled())
+        self.assertFalse(window.device_overview_widget.logcat_button.isEnabled())
+        self.assertFalse(window.device_overview_widget.ui_inspector_button.isEnabled())
+        self.assertFalse(window.device_overview_widget.bluetooth_button.isEnabled())
         self.assertIn('Select a device', window.device_overview_widget.get_current_detail_text())
 
 
