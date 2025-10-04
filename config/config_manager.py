@@ -67,6 +67,18 @@ class LogcatSettings:
 
 
 @dataclass
+class ScrcpySettings:
+    """scrcpy mirroring configuration."""
+    stay_awake: bool = True
+    turn_screen_off: bool = True
+    disable_screensaver: bool = True
+    enable_audio_playback: bool = True
+    bitrate: str = ''
+    max_size: int = 0
+    extra_args: str = ''
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     ui: UISettings
@@ -74,6 +86,7 @@ class AppConfig:
     command: CommandSettings
     logging: LoggingSettings
     logcat: LogcatSettings
+    scrcpy: ScrcpySettings
     command_history: list = None
     version: str = "1.0.0"
 
@@ -105,7 +118,8 @@ class ConfigManager:
             device=DeviceSettings(),
             command=CommandSettings(),
             logging=LoggingSettings(),
-            logcat=LogcatSettings()
+            logcat=LogcatSettings(),
+            scrcpy=ScrcpySettings(),
         )
 
     def _validate_config(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -167,6 +181,26 @@ class ConfigManager:
             logcat_settings['max_buffer_size'] = 100
             logger.warning('Logcat buffer size too low, reset to 100')
 
+        scrcpy_settings = validated.setdefault('scrcpy', {})
+        for flag in ('stay_awake', 'turn_screen_off', 'disable_screensaver', 'enable_audio_playback'):
+            value = scrcpy_settings.get(flag, True if flag != 'enable_audio_playback' else True)
+            scrcpy_settings[flag] = bool(value)
+
+        bitrate_value = scrcpy_settings.get('bitrate', '')
+        scrcpy_settings['bitrate'] = str(bitrate_value) if bitrate_value is not None else ''
+
+        max_size_value = scrcpy_settings.get('max_size', 0)
+        if isinstance(max_size_value, (int, float)):
+            max_size_int = int(max_size_value)
+        else:
+            max_size_int = 0
+        if max_size_int < 0:
+            max_size_int = 0
+        scrcpy_settings['max_size'] = max_size_int
+
+        extra_args_value = scrcpy_settings.get('extra_args', '')
+        scrcpy_settings['extra_args'] = str(extra_args_value) if extra_args_value is not None else ''
+
         return validated
 
     def load_config(self) -> AppConfig:
@@ -188,6 +222,7 @@ class ConfigManager:
                     command=CommandSettings(**validated_dict['command']),
                     logging=LoggingSettings(**validated_dict['logging']),
                     logcat=LogcatSettings(**validated_dict['logcat']),
+                    scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                     command_history=validated_dict.get('command_history', []),
                     version=validated_dict.get('version', '1.0.0')
                 )
@@ -212,6 +247,7 @@ class ConfigManager:
                         command=CommandSettings(**validated_dict['command']),
                         logging=LoggingSettings(**validated_dict['logging']),
                         logcat=LogcatSettings(**validated_dict['logcat']),
+                        scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                         command_history=validated_dict.get('command_history', []),
                         version=validated_dict.get('version', '1.0.0')
                     )
@@ -274,6 +310,10 @@ class ConfigManager:
         """Get logcat performance settings."""
         return self.load_config().logcat
 
+    def get_scrcpy_settings(self) -> ScrcpySettings:
+        """Get scrcpy mirroring settings."""
+        return self.load_config().scrcpy
+
     def update_ui_settings(self, **kwargs):
         """Update UI settings."""
         config = self.load_config()
@@ -304,6 +344,20 @@ class ConfigManager:
         for key, value in kwargs.items():
             if hasattr(config.logcat, key):
                 setattr(config.logcat, key, value)
+        self.save_config(config)
+
+    def update_scrcpy_settings(self, **kwargs):
+        """Update scrcpy mirroring settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.scrcpy, key):
+                setattr(config.scrcpy, key, value)
+        self.save_config(config)
+
+    def set_scrcpy_settings(self, settings: ScrcpySettings):
+        """Replace scrcpy settings with provided dataclass."""
+        config = self.load_config()
+        config.scrcpy = settings
         self.save_config(config)
 
     def reset_to_defaults(self):
@@ -340,6 +394,7 @@ class ConfigManager:
                 command=CommandSettings(**validated_dict['command']),
                 logging=LoggingSettings(**validated_dict['logging']),
                 logcat=LogcatSettings(**validated_dict['logcat']),
+                scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                 command_history=validated_dict.get('command_history', []),
                 version=validated_dict.get('version', '1.0.0')
             )

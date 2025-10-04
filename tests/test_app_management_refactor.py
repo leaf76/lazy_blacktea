@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     import lazy_blacktea_pyqt
     from ui.app_management_manager import AppManagementManager, ScrcpyManager, ApkInstallationManager
+    from config.config_manager import ScrcpySettings
     from utils import adb_models
 except ImportError as e:
     print(f"❌ 無法導入模組: {e}")
@@ -84,6 +85,7 @@ class AppManagementRefactorTest(unittest.TestCase):
             '_parse_scrcpy_version',
             '_select_device_for_mirroring',
             '_launch_scrcpy_process',
+            '_build_scrcpy_command',
             '_backup_device_selections',
             '_restore_device_selections'
         ]
@@ -253,6 +255,49 @@ class AppManagementRefactorTest(unittest.TestCase):
         version_invalid = scrcpy_manager._parse_scrcpy_version("invalid output")
         self.assertEqual(version_invalid, 2)  # 應該返回預設值
         print(f"    ✅ 無效版本輸出處理正確")
+
+    def test_scrcpy_command_respects_custom_settings(self):
+        """scrcpy命令應遵循自訂設定"""
+
+        mock_parent = Mock()
+        mock_parent.logger = None
+        mock_parent.dialog_manager = Mock()
+
+        class StubConfigManager:
+            def get_scrcpy_settings(self_inner):
+                return ScrcpySettings(
+                    stay_awake=False,
+                    turn_screen_off=False,
+                    disable_screensaver=False,
+                    enable_audio_playback=True,
+                    bitrate='12M',
+                    max_size=1080,
+                    extra_args='--always-on-top --crop 0:0:900:1600'
+                )
+
+        mock_parent.config_manager = StubConfigManager()
+
+        scrcpy_manager = ScrcpyManager(mock_parent)
+        scrcpy_manager.scrcpy_major_version = 3
+
+        command = scrcpy_manager._build_scrcpy_command('ABC123')
+
+        self.assertIn('scrcpy', command[0])
+        self.assertNotIn('--stay-awake', command)
+        self.assertNotIn('--turn-screen-off', command)
+        self.assertIn('--audio-source=playback', command)
+        self.assertIn('--audio-dup', command)
+        self.assertIn('--bit-rate=12M', command)
+        self.assertIn('--max-size=1080', command)
+        self.assertIn('--always-on-top', command)
+        self.assertIn('--crop', command)
+        self.assertIn('-s', command)
+        self.assertIn('ABC123', command)
+
+        scrcpy_manager.scrcpy_major_version = 2
+        command_v2 = scrcpy_manager._build_scrcpy_command('XYZ789')
+        self.assertNotIn('--audio-source=playback', command_v2)
+        self.assertIn('--bit-rate=12M', command_v2)
 
     def test_mock_apk_functionality(self):
         """測試APK功能（模擬）"""

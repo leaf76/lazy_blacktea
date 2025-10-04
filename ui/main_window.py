@@ -75,6 +75,7 @@ from ui.constants import DEVICE_FILE_IS_DIR_ROLE, DEVICE_FILE_PATH_ROLE
 from ui.device_file_controller import DeviceFileController
 from ui.recording_controller import RecordingController
 from ui.signal_payloads import RecordingProgressEvent
+from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -536,6 +537,22 @@ class WindowMain(QMainWindow):
     def show_error(self, title: str, message: str):
         """Show error message box."""
         self.dialog_manager.show_error(title, message)
+
+    def open_scrcpy_settings_dialog(self) -> None:
+        """Display the scrcpy settings dialog and persist updates."""
+        current_settings = self.config_manager.get_scrcpy_settings()
+        dialog = ScrcpySettingsDialog(current_settings, self)
+        dialog.exec()
+
+        updated_settings = dialog.get_settings()
+        if not updated_settings:
+            return
+
+        self.config_manager.set_scrcpy_settings(updated_settings)
+        self.show_info(
+            'scrcpy Settings Updated',
+            'scrcpy will use your new preferences the next time you launch mirroring.'
+        )
 
     # ------------------------------------------------------------------
     # Operation logging helpers

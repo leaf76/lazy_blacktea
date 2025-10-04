@@ -446,6 +446,13 @@ class PanelsManager(QObject):
         if hasattr(main_window, 'register_console_panel_action'):
             main_window.register_console_panel_action(console_toggle_action)
 
+        scrcpy_settings_action = QAction('scrcpy Settings...', main_window)
+        if hasattr(main_window, 'open_scrcpy_settings_dialog'):
+            scrcpy_settings_action.triggered.connect(main_window.open_scrcpy_settings_dialog)
+        else:  # pragma: no cover - compatibility with legacy harnesses
+            scrcpy_settings_action.setEnabled(False)
+        settings_menu.addAction(scrcpy_settings_action)
+
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)

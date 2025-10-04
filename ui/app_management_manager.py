@@ -11,12 +11,14 @@
 """
 
 import os
+import shlex
 import threading
 from typing import List, Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QProgressDialog
 
 from utils import adb_models, adb_tools
+from config.config_manager import ScrcpySettings
 
 
 class ScrcpyManager(QObject):
@@ -142,26 +144,7 @@ class ScrcpyManager(QObject):
         def scrcpy_wrapper():
             try:
                 # 根據版本使用不同的參數
-                if self.scrcpy_major_version >= 3:
-                    # scrcpy v3.x+ 使用新的audio參數
-                    cmd_args = [
-                        'scrcpy',
-                        '--audio-source=playback',
-                        '--audio-dup',
-                        '--stay-awake',
-                        '--turn-screen-off',
-                        '--disable-screensaver',
-                        '-s', serial
-                    ]
-                else:
-                    # scrcpy v2.x 使用舊的參數
-                    cmd_args = [
-                        'scrcpy',
-                        '--stay-awake',
-                        '--turn-screen-off',
-                        '--disable-screensaver',
-                        '-s', serial
-                    ]
+                cmd_args = self._build_scrcpy_command(serial)
 
                 if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
                     self.parent_window.logger.info(f'Executing scrcpy with args: {" ".join(cmd_args)}')
@@ -183,6 +166,61 @@ class ScrcpyManager(QObject):
 
         # 在背景執行緒中啟動
         threading.Thread(target=scrcpy_wrapper, daemon=True).start()
+
+    def _get_scrcpy_settings(self) -> ScrcpySettings:
+        """Safely fetch scrcpy settings from the config manager."""
+        config_manager = getattr(self.parent_window, 'config_manager', None)
+        if not config_manager:
+            return ScrcpySettings()
+
+        try:
+            settings = config_manager.get_scrcpy_settings()
+        except Exception as exc:  # pragma: no cover - defensive
+            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                self.parent_window.logger.warning(f'Failed to load scrcpy settings, using defaults: {exc}')
+            return ScrcpySettings()
+
+        if isinstance(settings, ScrcpySettings):
+            return settings
+
+        # Handle legacy dictionaries for safety
+        if isinstance(settings, dict):  # pragma: no cover - legacy safeguard
+            return ScrcpySettings(**settings)
+
+        return ScrcpySettings()
+
+    def _build_scrcpy_command(self, serial: str) -> List[str]:
+        """Construct the scrcpy command arguments using current settings."""
+        settings = self._get_scrcpy_settings()
+
+        cmd_args: List[str] = ['scrcpy']
+
+        if settings.enable_audio_playback and self.scrcpy_major_version >= 3:
+            cmd_args.extend(['--audio-source=playback', '--audio-dup'])
+
+        if settings.stay_awake:
+            cmd_args.append('--stay-awake')
+
+        if settings.turn_screen_off:
+            cmd_args.append('--turn-screen-off')
+
+        if settings.disable_screensaver:
+            cmd_args.append('--disable-screensaver')
+
+        bitrate = settings.bitrate.strip()
+        if bitrate:
+            cmd_args.append(f'--bit-rate={bitrate}')
+
+        if settings.max_size > 0:
+            cmd_args.append(f'--max-size={settings.max_size}')
+
+        extra_args = settings.extra_args.strip()
+        if extra_args:
+            cmd_args.extend(token for token in shlex.split(extra_args) if token)
+
+        cmd_args.extend(['-s', serial])
+
+        return cmd_args
 
     def _backup_device_selections(self) -> Dict[str, bool]:
         """備份目前的設備選擇"""

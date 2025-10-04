@@ -11,6 +11,7 @@ from config.config_manager import (
     UISettings,
     DeviceSettings,
     LogcatSettings,
+    ScrcpySettings,
 )
 
 
@@ -37,6 +38,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertIsInstance(config.ui, UISettings)
         self.assertIsInstance(config.device, DeviceSettings)
         self.assertIsInstance(config.logcat, LogcatSettings)
+        self.assertIsInstance(config.scrcpy, ScrcpySettings)
 
         # Check default values
         self.assertEqual(config.ui.window_width, 1200)
@@ -45,6 +47,9 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.command.max_history_size, 50)
         self.assertEqual(config.logcat.max_lines, 1000)
         self.assertEqual(config.logcat.history_multiplier, 5)
+        self.assertTrue(config.scrcpy.stay_awake)
+        self.assertTrue(config.scrcpy.turn_screen_off)
+        self.assertTrue(config.scrcpy.disable_screensaver)
 
     def test_save_and_load_config(self):
         """Test configuration saving and loading."""
@@ -87,6 +92,29 @@ class TestConfigManager(unittest.TestCase):
         config = self.config_manager.load_config()
         self.assertEqual(config.ui.ui_scale, 1.0)  # Should be reset to default
         self.assertEqual(config.device.refresh_interval, 30)  # Should be reset to default
+
+    def test_update_scrcpy_settings(self):
+        """Test scrcpy settings update and persistence."""
+        self.config_manager.update_scrcpy_settings(
+            stay_awake=False,
+            turn_screen_off=False,
+            disable_screensaver=False,
+            enable_audio_playback=False,
+            bitrate='12M',
+            max_size=1080,
+            extra_args='--always-on-top'
+        )
+
+        config = self.config_manager.load_config()
+        scrcpy_settings = config.scrcpy
+
+        self.assertFalse(scrcpy_settings.stay_awake)
+        self.assertFalse(scrcpy_settings.turn_screen_off)
+        self.assertFalse(scrcpy_settings.disable_screensaver)
+        self.assertFalse(scrcpy_settings.enable_audio_playback)
+        self.assertEqual(scrcpy_settings.bitrate, '12M')
+        self.assertEqual(scrcpy_settings.max_size, 1080)
+        self.assertEqual(scrcpy_settings.extra_args, '--always-on-top')
 
     def test_update_settings(self):
         """Test settings update methods."""
