@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QLabel
 
 from ui.device_file_controller import DeviceFileController
 from config.constants import PanelText
@@ -61,9 +62,15 @@ class DummyTreeItem:
 
 
 class DeviceFileControllerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication([])
+
     def setUp(self) -> None:
         self.browser_manager = MagicMock()
-        self.status_label = MagicMock()
+        self.status_label = QLabel('Ready to browse device files.')
+        self.status_label.setFixedWidth(420)
+        self.status_label.resize(420, self.status_label.sizeHint().height())
         self.device_label = MagicMock()
         self.path_edit = MagicMock()
         self.path_edit.text.return_value = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
@@ -93,8 +100,10 @@ class DeviceFileControllerTests(unittest.TestCase):
 
     def test_refresh_browser_without_device_updates_status_and_skips_fetch(self) -> None:
         self.controller.refresh_browser()
+        self._app.processEvents()
 
-        self.status_label.setText.assert_called_once_with('Select exactly one device to browse files.')
+        self.assertEqual(self.status_label.text(), 'Select exactly one device to browse files.')
+        self.assertEqual(self.status_label.toolTip(), '')
         self.browser_manager.fetch_directory.assert_not_called()
 
     def test_refresh_browser_fetches_directory_with_normalized_path(self) -> None:
@@ -103,10 +112,11 @@ class DeviceFileControllerTests(unittest.TestCase):
         self.path_edit.text.return_value = 'sdcard/Download/'
 
         self.controller.refresh_browser()
+        self._app.processEvents()
 
         self.path_edit.setText.assert_called_once_with('/sdcard/Download')
         self.device_label.setText.assert_called_once()
-        self.status_label.setText.assert_called_with('Loading directory...')
+        self.assertEqual(self.status_label.text(), 'Loading directory...')
         self.browser_manager.fetch_directory.assert_called_once_with('ABC123', '/sdcard/Download')
 
     def test_display_preview_uses_preview_window(self) -> None:
@@ -114,9 +124,10 @@ class DeviceFileControllerTests(unittest.TestCase):
         self.controller.ensure_preview_window = MagicMock(return_value=preview_window)
 
         self.controller.display_preview('/tmp/preview.png')
+        self._app.processEvents()
 
         preview_window.display_preview.assert_called_once_with('/tmp/preview.png')
-        self.status_label.setText.assert_called_with('Preview ready: /tmp/preview.png')
+        self.assertEqual(self.status_label.text(), 'Preview ready: /tmp/preview.png')
 
     def test_on_directory_listing_handles_dataclass_without_error_attribute(self) -> None:
         self.controller.current_serial = 'SER123'
@@ -130,10 +141,24 @@ class DeviceFileControllerTests(unittest.TestCase):
         )
 
         self.controller.on_directory_listing('SER123', '/sdcard', listing)
+        self._app.processEvents()
 
         self.assertEqual(len(self.tree.items), 2)
-        self.status_label.setText.assert_called_with('Loaded 1 folders and 1 files.')
+        self.assertEqual(self.status_label.text(), 'Loaded 1 folders and 1 files.')
         self.path_edit.setText.assert_called_with('/sdcard')
+
+    def test_status_label_elides_long_messages_and_provides_tooltip(self) -> None:
+        self.status_label.setFixedWidth(180)
+        self.status_label.resize(180, self.status_label.sizeHint().height())
+        long_message = 'Loaded 12 folders and 345 files from /a/really/long/path/that/does/not/fit'
+
+        self.controller.set_status(long_message)
+        self._app.processEvents()
+
+        label_text = self.status_label.text()
+        self.assertNotEqual(label_text, long_message)
+        self.assertTrue(label_text.endswith('…'), 'Expected elided text to end with ellipsis')
+        self.assertEqual(self.status_label.toolTip(), long_message)
 
 
 if __name__ == '__main__':

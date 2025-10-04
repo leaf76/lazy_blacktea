@@ -5,7 +5,7 @@ from __future__ import annotations
 import posixpath
 from typing import Iterable, List, Optional, TYPE_CHECKING
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, Qt, QEvent, QObject, QTimer
 from PyQt6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem
 
 from config.constants import PanelText
@@ -20,6 +20,19 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = common.get_logger("device_file_controller")
 
 
+class _StatusLabelElider(QObject):
+    """Listen for label resize events and reapply text elision."""
+
+    def __init__(self, controller: "DeviceFileController") -> None:
+        super().__init__()
+        self._controller = controller
+
+    def eventFilter(self, obj, event):  # pragma: no cover - simple Qt bridge
+        if event.type() == QEvent.Type.Resize:
+            self._controller._apply_status_text()
+        return False
+
+
 class DeviceFileController:
     """Encapsulates device file browser UI interactions."""
 
@@ -32,6 +45,8 @@ class DeviceFileController:
         self._preview_window: Optional["DeviceFilePreviewWindow"] = None
         self.current_serial: Optional[str] = None
         self.current_path: str = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
+        self._status_text: str = ''
+        self._status_label_elider: Optional[_StatusLabelElider] = None
 
     # ---- Widget registration -------------------------------------------------
 
@@ -47,6 +62,11 @@ class DeviceFileController:
         self._path_edit = path_edit
         self._status_label = status_label
         self._device_label = device_label
+        if self._status_label is not None:
+            self._status_label_elider = _StatusLabelElider(self)
+            self._status_label.installEventFilter(self._status_label_elider)
+            self._status_text = self._status_label.text() or ''
+            self._apply_status_text()
 
     # ---- Public API ----------------------------------------------------------
 
@@ -358,8 +378,30 @@ class DeviceFileController:
     # ---- Internal helpers ----------------------------------------------------
 
     def _set_status(self, message: str) -> None:
-        if self._status_label is not None:
-            self._status_label.setText(message)
+        self._status_text = message or ''
+        self._apply_status_text()
+        if self._status_label is not None and self._status_label.width() <= 0:
+            QTimer.singleShot(0, self._apply_status_text)
+
+    def _apply_status_text(self) -> None:
+        if self._status_label is None:
+            return
+
+        label = self._status_label
+        message = self._status_text
+        if not message:
+            label.setText('')
+            label.setToolTip('')
+            return
+
+        available_width = max(label.width(), 0)
+        if available_width <= 0:
+            available_width = max(label.sizeHint().width(), 0)
+
+        metrics = label.fontMetrics()
+        elided = metrics.elidedText(message, Qt.TextElideMode.ElideRight, max(0, available_width))
+        label.setText(elided)
+        label.setToolTip(message if elided != message else '')
 
     def _widgets_ready(self) -> bool:
         if self._tree is None or self._path_edit is None:
