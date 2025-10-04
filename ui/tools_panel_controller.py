@@ -491,6 +491,12 @@ class ToolsPanelController:
         status_label.setObjectName('device_file_browser_status_label')
         layout.addWidget(status_label)
         self.window.device_file_status_label = status_label
+        self.window.device_file_controller.register_widgets(
+            tree=self.window.device_file_tree,
+            path_edit=self.window.device_file_browser_path_edit,
+            status_label=status_label,
+            device_label=device_label,
+        )
 
         output_group = QGroupBox(PanelText.GROUP_DEVICE_FILE_OUTPUT)
         output_layout = QHBoxLayout(output_group)
