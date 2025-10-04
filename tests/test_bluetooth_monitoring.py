@@ -232,6 +232,66 @@ class BluetoothMonitorWindowTests(unittest.TestCase):
         reset_text = self.window.event_view.toPlainText()
         self.assertIn('stopScan', reset_text)
 
+    def test_event_view_auto_scroll_respects_manual_scroll(self):
+        from modules.bluetooth.models import ParsedEvent, BluetoothEventType
+
+        scrollbar = self.window.event_view.verticalScrollBar()
+
+        # Generate enough events to create scrollable content
+        for index in range(120):
+            event = ParsedEvent(
+                serial='SERIAL_BT_UI',
+                timestamp=float(index),
+                event_type=BluetoothEventType.ADVERTISING_START,
+                message=f'event {index}',
+                tag='BtGatt',
+                metadata={},
+                raw_line=f'raw{index}',
+            )
+            self.window.handle_event(event)
+
+        self._app.processEvents()
+        self.assertEqual(scrollbar.value(), scrollbar.maximum())
+
+        # Simulate user scrolling up (disable auto-follow)
+        scrollbar.setValue(0)
+        self._app.processEvents()
+
+        paused_value = scrollbar.value()
+        self.window.handle_event(
+            ParsedEvent(
+                serial='SERIAL_BT_UI',
+                timestamp=999.0,
+                event_type=BluetoothEventType.SCAN_START,
+                message='new event after scroll',
+                tag='BtGatt',
+                metadata={},
+                raw_line='raw-new',
+            )
+        )
+        self._app.processEvents()
+
+        self.assertLess(scrollbar.value(), scrollbar.maximum())
+        self.assertEqual(scrollbar.value(), paused_value)
+
+        # Scroll to bottom again to re-enable auto-follow
+        scrollbar.setValue(scrollbar.maximum())
+        self._app.processEvents()
+        self.window.handle_event(
+            ParsedEvent(
+                serial='SERIAL_BT_UI',
+                timestamp=1000.0,
+                event_type=BluetoothEventType.SCAN_STOP,
+                message='follow event',
+                tag='BtGatt',
+                metadata={},
+                raw_line='raw-follow',
+            )
+        )
+        self._app.processEvents()
+
+        self.assertEqual(scrollbar.value(), scrollbar.maximum())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -79,6 +79,9 @@ class BluetoothMonitorWindow(QDialog):
         self.event_view = QPlainTextEdit()
         self.event_view.setReadOnly(True)
         self.event_view.setPlaceholderText('Bluetooth events will appear here.')
+        self._auto_follow_events = True
+        self._event_view_updating = False
+        self.event_view.verticalScrollBar().valueChanged.connect(self._handle_event_scroll)
 
         self._build_layout()
         self._wire_service()
@@ -266,8 +269,21 @@ class BluetoothMonitorWindow(QDialog):
             filtered = self._events_history
 
         trimmed = list(filtered[-200:])
-        self.event_view.setPlainText('\n'.join(trimmed))
-        self.event_view.verticalScrollBar().setValue(self.event_view.verticalScrollBar().maximum())
+        scrollbar = self.event_view.verticalScrollBar()
+        previous_value = scrollbar.value()
+
+        self._event_view_updating = True
+        try:
+            self.event_view.setPlainText('\n'.join(trimmed))
+        finally:
+            self._event_view_updating = False
+
+        if self._auto_follow_events:
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            updated_max = scrollbar.maximum()
+            target = min(previous_value, updated_max)
+            scrollbar.setValue(max(0, target))
 
     def _run_dump_commands(self, commands: Iterable[str]) -> str:
         output_lines = []
@@ -284,3 +300,14 @@ class BluetoothMonitorWindow(QDialog):
     def closeEvent(self, event) -> None:  # pragma: no cover - UI callback
         self._stop_monitoring()
         super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _handle_event_scroll(self, value: int) -> None:
+        if self._event_view_updating:
+            return
+
+        scrollbar = self.event_view.verticalScrollBar()
+        at_bottom = value >= scrollbar.maximum()
+        self._auto_follow_events = at_bottom
