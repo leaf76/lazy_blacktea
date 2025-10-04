@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QFileDialog,
     QLabel,
@@ -120,8 +121,21 @@ class UIInspectorDialog(QDialog):
         self.screenshot_data = None
         self.ui_hierarchy = None
         self.ui_elements = []
+        self._hierarchy_filter_text: str = ''
         self._progress_is_busy = False
         self._worker_start_scheduled = False
+        self._base_pixmap: Optional[QPixmap] = None
+        self._base_scale: float = 1.0
+        self._zoom_multiplier: float = 1.0
+        self._zoom_options = (
+            (0.3, '30%'),
+            (0.4, '40%'),
+            (0.5, '50%'),
+            (0.67, '67%'),
+            (0.8, '80%'),
+            (1.0, '100%'),
+        )
+        self.zoom_combo: Optional[QComboBox] = None
 
         # Initialize UI Inspector factory for creating UI components
         self.ui_inspector_factory = UIInspectorFactory(parent_dialog=self)
@@ -188,6 +202,20 @@ class UIInspectorDialog(QDialog):
         self.refresh_btn.clicked.connect(self.refresh_ui_data)
         toolbar.addWidget(self.refresh_btn)
 
+        zoom_label = QLabel('🔎 Zoom')
+        StyleManager.apply_label_style(zoom_label, LabelStyle.SUBHEADER)
+        toolbar.addWidget(zoom_label)
+
+        zoom_combo = QComboBox()
+        zoom_combo.setFixedHeight(36)
+        for factor, label in self._zoom_options:
+            zoom_combo.addItem(label, factor)
+        zoom_combo.setCurrentIndex(len(self._zoom_options) - 1)
+        zoom_combo.currentIndexChanged.connect(self._on_zoom_combo_changed)
+        zoom_combo.setEnabled(False)
+        self.zoom_combo = zoom_combo
+        toolbar.addWidget(zoom_combo)
+
         # Progress bar with system styling
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -229,9 +257,11 @@ class UIInspectorDialog(QDialog):
         scroll_area.setFrameStyle(QScrollArea.Shape.StyledPanel)
 
         self.screenshot_label = ClickableScreenshotLabel()
+        self.screenshot_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.screenshot_label.element_clicked.connect(self.on_element_clicked)
         scroll_area.setWidget(self.screenshot_label)
         scroll_area.setWidgetResizable(True)
+        scroll_area.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         layout.addWidget(scroll_area)
 
         return panel
@@ -310,6 +340,7 @@ class UIInspectorDialog(QDialog):
         self.hierarchy_search = QLineEdit()
         self.hierarchy_search.setPlaceholderText('Search elements...')
         self.hierarchy_search.setStyleSheet(StyleManager.get_search_input_style())
+        self.hierarchy_search.textChanged.connect(self.on_hierarchy_search_changed)
         search_layout.addWidget(self.hierarchy_search)
 
         layout.addWidget(search_widget)
@@ -395,10 +426,22 @@ class UIInspectorDialog(QDialog):
         self._cleanup_temp_dir()
         self.screenshot_data = None
         self.ui_elements = []
+        self._base_pixmap = None
+        self._base_scale = 1.0
+        self._zoom_multiplier = 1.0
         self.screenshot_label.clear()
         self.screenshot_label.setText('🔄 Loading screenshot and UI data...')
         self.screenshot_label.set_ui_elements([], 1.0)
         self.screenshot_label.set_selected_element(None)
+        if self.zoom_combo:
+            self.zoom_combo.blockSignals(True)
+            try:
+                default_index = self.zoom_combo.findData(1.0)
+                if default_index != -1:
+                    self.zoom_combo.setCurrentIndex(default_index)
+            finally:
+                self.zoom_combo.blockSignals(False)
+            self.zoom_combo.setEnabled(False)
 
         self._set_progress_busy_mode()
         self.progress_bar.setVisible(True)
@@ -466,19 +509,23 @@ class UIInspectorDialog(QDialog):
             self._on_worker_failed('Failed to load processed screenshot')
             return
 
-        target_width = 600
-        scale_factor = target_width / pixmap.width() if pixmap.width() else 1.0
-        scaled_pixmap = pixmap.scaled(
-            target_width,
-            int(pixmap.height() * scale_factor) if pixmap.height() else target_width,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
-        self.screenshot_label.setPixmap(scaled_pixmap)
-        self.screenshot_label.set_ui_elements(ui_elements, scale_factor)
-        self.screenshot_data = screenshot_path
+        self._base_pixmap = pixmap
+        self._base_scale = (600 / pixmap.width()) if pixmap.width() else 1.0
+        self._zoom_multiplier = 1.0
         self.ui_elements = ui_elements
+        self.screenshot_data = screenshot_path
+
+        if self.zoom_combo:
+            self.zoom_combo.blockSignals(True)
+            try:
+                default_index = self.zoom_combo.findData(1.0)
+                if default_index != -1:
+                    self.zoom_combo.setCurrentIndex(default_index)
+            finally:
+                self.zoom_combo.blockSignals(False)
+            self.zoom_combo.setEnabled(True)
+
+        self._apply_scaled_pixmap()
 
         self.update_hierarchy_tree()
         self.show_success_message(len(ui_elements))
@@ -539,13 +586,26 @@ class UIInspectorDialog(QDialog):
         if not self.ui_elements:
             return
 
-        # Group elements by class for better organization
-        class_groups = {}
-        for element in self.ui_elements:
-            class_name = element['class'].split('.')[-1] if element['class'] else 'Unknown'
-            if class_name not in class_groups:
-                class_groups[class_name] = []
-            class_groups[class_name].append(element)
+        filter_key = self._hierarchy_filter_text.casefold()
+        if filter_key:
+            filtered_elements = [
+                element for element in self.ui_elements
+                if self._element_matches_filter(element, filter_key)
+            ]
+        else:
+            filtered_elements = list(self.ui_elements)
+
+        if not filtered_elements:
+            placeholder = QTreeWidgetItem(self.hierarchy_tree)
+            placeholder.setText(0, 'No matching elements')
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.hierarchy_tree.expandAll()
+            return
+
+        class_groups: dict[str, list[dict]] = {}
+        for element in filtered_elements:
+            class_name = element.get('class', '').split('.')[-1] if element.get('class') else 'Unknown'
+            class_groups.setdefault(class_name, []).append(element)
 
         for class_name, elements in class_groups.items():
             class_item = QTreeWidgetItem(self.hierarchy_tree)
@@ -553,13 +613,54 @@ class UIInspectorDialog(QDialog):
 
             for element in elements:
                 element_item = QTreeWidgetItem(class_item)
-                display_text = element['text'] or element['content_desc'] or element['resource_id'] or 'No text'
-                if len(display_text) > 50:
-                    display_text = display_text[:50] + '...'
-                element_item.setText(0, display_text)
+                element_item.setText(0, self._build_element_display_text(element))
                 element_item.setData(0, 32, element)  # Store element data
 
         self.hierarchy_tree.expandAll()
+
+    def on_hierarchy_search_changed(self, raw_text: str) -> None:
+        """Filter hierarchy tree items based on search input."""
+        normalized = raw_text.strip()
+        if normalized == self._hierarchy_filter_text:
+            return
+        self._hierarchy_filter_text = normalized
+        self.update_hierarchy_tree()
+
+    def _build_element_display_text(self, element: dict) -> str:
+        """Build display text for hierarchy entries with truncation."""
+        display_text = (
+            element.get('text')
+            or element.get('content_desc')
+            or element.get('resource_id')
+            or 'No text'
+        )
+
+        if len(display_text) > 50:
+            return display_text[:50] + '...'
+        return display_text
+
+    def _element_matches_filter(self, element: dict, filter_key: str) -> bool:
+        """Return True when the element contains the filter token in searchable fields."""
+        if not filter_key:
+            return True
+
+        searchable_values = [
+            element.get('text', ''),
+            element.get('content_desc', ''),
+            element.get('resource_id', ''),
+            element.get('class', ''),
+            element.get('package', ''),
+        ]
+
+        for value in searchable_values:
+            if value and filter_key in value.casefold():
+                return True
+
+        bounds = element.get('bounds')
+        if bounds and filter_key in str(bounds).casefold():
+            return True
+
+        return False
 
     def on_element_clicked(self, x, y):
         """Handle click on screenshot to select UI element and highlight in tree."""
@@ -618,6 +719,56 @@ class UIInspectorDialog(QDialog):
         if element:
             self.show_element_details(element)
             self.screenshot_label.set_selected_element(element)
+
+    # ------------------------------------------------------------------
+    # Screenshot zoom helpers
+    # ------------------------------------------------------------------
+    def _apply_scaled_pixmap(self) -> None:
+        if not self._base_pixmap or self._base_pixmap.isNull():
+            return
+
+        final_scale = self._base_scale * self._zoom_multiplier
+        if final_scale <= 0:
+            return
+
+        width = max(1, int(self._base_pixmap.width() * final_scale))
+        height = max(1, int(self._base_pixmap.height() * final_scale))
+        scaled_pixmap = self._base_pixmap.scaled(
+            width,
+            height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+        self.screenshot_label.setPixmap(scaled_pixmap)
+        self.screenshot_label.set_ui_elements(self.ui_elements, final_scale)
+
+    def _on_zoom_combo_changed(self, index: int) -> None:
+        if not self.zoom_combo:
+            return
+        factor = self.zoom_combo.itemData(index)
+        if not factor:
+            return
+        self.set_screenshot_zoom(float(factor))
+
+    def set_screenshot_zoom(self, multiplier: float) -> None:
+        """Adjust screenshot zoom while keeping overlays aligned."""
+        if multiplier <= 0:
+            logger.warning('Ignored invalid zoom multiplier: %s', multiplier)
+            return
+
+        self._zoom_multiplier = multiplier
+
+        if self.zoom_combo:
+            index = self.zoom_combo.findData(multiplier)
+            if index != -1 and self.zoom_combo.currentIndex() != index:
+                self.zoom_combo.blockSignals(True)
+                try:
+                    self.zoom_combo.setCurrentIndex(index)
+                finally:
+                    self.zoom_combo.blockSignals(False)
+
+        self._apply_scaled_pixmap()
 
     def on_tree_item_activated(self, item, column):
         """Handle activation (Enter key, double-click) on hierarchy tree item."""
