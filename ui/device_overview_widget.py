@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from utils import adb_models
-from ui.style_manager import StyleManager, LabelStyle
+from ui.style_manager import StyleManager, LabelStyle, PanelButtonVariant
 
 
 class DeviceOverviewWidget(QWidget):
@@ -59,7 +59,12 @@ class DeviceOverviewWidget(QWidget):
 
         self.refresh_button = QPushButton('Refresh')
         self.refresh_button.setToolTip('Refresh details')
-        self._apply_refresh_button_style(self.refresh_button)
+        StyleManager.apply_panel_button_style(
+            self.refresh_button,
+            PanelButtonVariant.REFRESH,
+            fixed_height=32,
+            min_width=96,
+        )
         self.refresh_button.clicked.connect(self._window.refresh_active_device_overview)
         title_row.addWidget(self.refresh_button)
 
@@ -126,25 +131,34 @@ class DeviceOverviewWidget(QWidget):
 
         self.logcat_button = QPushButton('Logcat')
         self.logcat_button.setToolTip('View device logs')
-        self._apply_primary_action_style(self.logcat_button)
+        StyleManager.apply_panel_button_style(self.logcat_button, PanelButtonVariant.PRIMARY)
         self.logcat_button.clicked.connect(self._window.show_logcat)
         button_grid.addWidget(self.logcat_button, 0, 0)
 
         self.ui_inspector_button = QPushButton('Inspect Layout')
         self.ui_inspector_button.setToolTip('Launch UI inspector')
-        self._apply_primary_action_style(self.ui_inspector_button)
+        StyleManager.apply_panel_button_style(
+            self.ui_inspector_button,
+            PanelButtonVariant.PRIMARY,
+        )
         self.ui_inspector_button.clicked.connect(self._window.launch_ui_inspector)
         button_grid.addWidget(self.ui_inspector_button, 0, 1)
 
         self.bluetooth_button = QPushButton('Bluetooth Monitor')
         self.bluetooth_button.setToolTip('Open Bluetooth monitor')
-        self._apply_secondary_action_style(self.bluetooth_button)
+        StyleManager.apply_panel_button_style(
+            self.bluetooth_button,
+            PanelButtonVariant.SECONDARY,
+        )
         self.bluetooth_button.clicked.connect(self._window.monitor_bluetooth)
         button_grid.addWidget(self.bluetooth_button, 1, 0)
 
         self.copy_button = QPushButton('Copy Info')
         self.copy_button.setToolTip('Copy overview details to clipboard')
-        self._apply_secondary_action_style(self.copy_button)
+        StyleManager.apply_panel_button_style(
+            self.copy_button,
+            PanelButtonVariant.SECONDARY,
+        )
         self.copy_button.clicked.connect(self._window.copy_active_device_overview)
         button_grid.addWidget(self.copy_button, 1, 1)
 
@@ -299,103 +313,6 @@ class DeviceOverviewWidget(QWidget):
             + f"\nQLabel {{ color: {color}; {transform_rule} letter-spacing: 0.5px; }}"
         )
 
-    def _apply_refresh_button_style(self, button: QPushButton) -> None:
-        palette = self._palette()
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setMinimumWidth(96)
-        button.setFixedHeight(32)
-        button.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {palette['surface_highlight']};
-                color: {palette['value_strong']};
-                border: 1px solid {palette['panel_border']};
-                border-radius: 10px;
-                padding: 6px 14px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {palette['primary_hover']};
-                border: 1px solid {palette['accent']};
-                color: {palette['value_strong']};
-            }}
-            QPushButton:pressed {{
-                background-color: {palette['primary_border_active']};
-                border: 1px solid {palette['accent_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: {palette['disabled_bg']};
-                color: {palette['disabled_text']};
-                border: 1px solid {palette['disabled_border']};
-            }}
-            """
-        )
-
-    def _apply_primary_action_style(self, button: QPushButton) -> None:
-        palette = self._palette()
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button.setFixedHeight(38)
-        button.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {palette['surface_highlight']};
-                color: {palette['value_strong']};
-                border: 1px solid {palette['panel_border']};
-                border-radius: 12px;
-                padding: 10px 14px;
-                font-weight: 600;
-                letter-spacing: 0.4px;
-            }}
-            QPushButton:hover {{
-                background-color: {palette['primary_hover']};
-                border: 1px solid {palette['accent']};
-            }}
-            QPushButton:pressed {{
-                background-color: {palette['primary_border_active']};
-                border: 1px solid {palette['accent_hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: {palette['disabled_bg']};
-                color: {palette['disabled_text']};
-                border: 1px solid {palette['disabled_border']};
-            }}
-            """
-        )
-
-    def _apply_secondary_action_style(self, button: QPushButton) -> None:
-        palette = self._palette()
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button.setFixedHeight(38)
-        button.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {palette['panel_background']};
-                color: {palette['text_secondary']};
-                border: 1px solid {palette['secondary_border']};
-                border-radius: 12px;
-                padding: 10px 14px;
-                font-weight: 600;
-                letter-spacing: 0.3px;
-            }}
-            QPushButton:hover {{
-                background-color: {palette['secondary_hover']};
-                color: {palette['value_text']};
-                border: 1px solid {palette['accent']};
-            }}
-            QPushButton:pressed {{
-                background-color: {palette['surface_highlight']};
-                border: 1px solid {palette['accent_hover']};
-                color: {palette['value_strong']};
-            }}
-            QPushButton:disabled {{
-                background-color: {palette['disabled_bg']};
-                color: {palette['disabled_text']};
-                border: 1px solid {palette['disabled_border']};
-            }}
-            """
-        )
 
 
     def get_active_model(self) -> str:

@@ -25,8 +25,7 @@ from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
 from config.constants import PanelConfig, PanelText
-from ui.style_manager import ButtonStyle, LabelStyle, StyleManager
-from ui.ui_factory import UIFactory
+from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
 from ui.device_overview_widget import DeviceOverviewWidget
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -44,16 +43,18 @@ class ToolsPanelController:
     def _style_button(
         self,
         button: QPushButton,
-        style: ButtonStyle = ButtonStyle.SECONDARY,
+        variant: PanelButtonVariant = PanelButtonVariant.SECONDARY,
         *,
         height: int | None = None,
         min_width: int | None = None,
     ) -> None:
         """Apply consistent styling to buttons inside tools panel."""
-        StyleManager.apply_button_style(button, style, fixed_height=height or self._default_button_height)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        if min_width:
-            button.setMinimumWidth(min_width)
+        StyleManager.apply_panel_button_style(
+            button,
+            variant,
+            fixed_height=height or self._default_button_height,
+            min_width=min_width,
+        )
 
     def create_tools_panel(self, parent) -> None:
         """Create the tabbed tools panel and attach it to the parent widget."""
@@ -111,12 +112,10 @@ class ToolsPanelController:
         self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
         output_row.addWidget(self.window.output_path_edit)
 
-        browse_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_BROWSE,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.browse_output_path(),
-            tooltip='Select output directory'
-        )
+        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
+        browse_btn.setToolTip('Select output directory')
+        browse_btn.clicked.connect(lambda: self.window.browse_output_path())
+        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, min_width=140)
         output_row.addWidget(browse_btn)
 
         output_layout.addLayout(output_row)
@@ -344,7 +343,7 @@ class ToolsPanelController:
         for idx, (label, command) in enumerate(PanelConfig.SHELL_TEMPLATE_COMMANDS):
             btn = QPushButton(label)
             btn.clicked.connect(lambda checked, cmd=command: self.window.add_template_command(cmd))
-            self._style_button(btn, ButtonStyle.SECONDARY, height=34, min_width=180)
+            self._style_button(btn, PanelButtonVariant.SECONDARY, height=34, min_width=180)
             row, col = divmod(idx, 3)
             template_layout.addWidget(btn, row, col)
 
@@ -371,17 +370,17 @@ class ToolsPanelController:
 
         run_single_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_COMMAND)
         run_single_btn.clicked.connect(lambda: self.window.run_single_command())
-        self._style_button(run_single_btn, ButtonStyle.PRIMARY, height=36, min_width=200)
+        self._style_button(run_single_btn, PanelButtonVariant.PRIMARY, height=36, min_width=200)
         exec_buttons_layout.addWidget(run_single_btn)
 
         run_batch_btn = QPushButton(PanelText.BUTTON_RUN_ALL_COMMANDS)
         run_batch_btn.clicked.connect(lambda: self.window.run_batch_commands())
-        self._style_button(run_batch_btn, ButtonStyle.SECONDARY, height=36, min_width=220)
+        self._style_button(run_batch_btn, PanelButtonVariant.SECONDARY, height=36, min_width=220)
         exec_buttons_layout.addWidget(run_batch_btn)
 
         cancel_all_btn = QPushButton('❌ Cancel All')
         cancel_all_btn.clicked.connect(lambda: self.window.command_execution_manager.cancel_all_commands())
-        self._style_button(cancel_all_btn, ButtonStyle.DANGER, height=36)
+        self._style_button(cancel_all_btn, PanelButtonVariant.DANGER, height=36)
         exec_buttons_layout.addWidget(cancel_all_btn)
 
         batch_layout.addLayout(exec_buttons_layout)
@@ -392,7 +391,7 @@ class ToolsPanelController:
 
         run_shell_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_SHELL)
         run_shell_btn.clicked.connect(lambda: self.window.run_shell_command())
-        self._style_button(run_shell_btn, ButtonStyle.PRIMARY, height=36, min_width=220)
+        self._style_button(run_shell_btn, PanelButtonVariant.PRIMARY, height=36, min_width=220)
         batch_layout.addWidget(run_shell_btn)
 
         content_layout.addWidget(batch_group)
@@ -410,22 +409,20 @@ class ToolsPanelController:
 
         history_buttons_layout = QHBoxLayout()
 
-        clear_history_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_CLEAR,
-            ButtonStyle.DANGER,
-            click_handler=lambda: self.window.clear_command_history(),
-            tooltip='Clear command history'
-        )
+        clear_history_btn = QPushButton(PanelText.BUTTON_CLEAR)
+        clear_history_btn.setToolTip('Clear command history')
+        clear_history_btn.clicked.connect(lambda: self.window.clear_command_history())
+        self._style_button(clear_history_btn, PanelButtonVariant.DANGER, height=32, min_width=140)
         history_buttons_layout.addWidget(clear_history_btn)
 
         export_history_btn = QPushButton(PanelText.BUTTON_EXPORT)
         export_history_btn.clicked.connect(lambda: self.window.export_command_history())
-        self._style_button(export_history_btn, ButtonStyle.SECONDARY, height=32, min_width=140)
+        self._style_button(export_history_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
         history_buttons_layout.addWidget(export_history_btn)
 
         import_history_btn = QPushButton(PanelText.BUTTON_IMPORT)
         import_history_btn.clicked.connect(lambda: self.window.import_command_history())
-        self._style_button(import_history_btn, ButtonStyle.SECONDARY, height=32, min_width=140)
+        self._style_button(import_history_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
         history_buttons_layout.addWidget(import_history_btn)
 
         history_layout.addLayout(history_buttons_layout)
@@ -460,28 +457,22 @@ class ToolsPanelController:
         self.window.device_file_browser_path_edit.setText(PanelText.PLACEHOLDER_DEVICE_FILE_PATH)
         path_layout.addWidget(self.window.device_file_browser_path_edit)
 
-        up_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_UP,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.navigate_device_files_up(),
-            tooltip='Go to parent directory'
-        )
+        up_btn = QPushButton(PanelText.BUTTON_UP)
+        up_btn.setToolTip('Go to parent directory')
+        up_btn.clicked.connect(lambda: self.window.navigate_device_files_up())
+        self._style_button(up_btn, PanelButtonVariant.SECONDARY, height=34, min_width=120)
         path_layout.addWidget(up_btn)
 
-        refresh_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_REFRESH,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.refresh_device_file_browser(),
-            tooltip='Refresh current directory'
-        )
+        refresh_btn = QPushButton(PanelText.BUTTON_REFRESH)
+        refresh_btn.setToolTip('Refresh current directory')
+        refresh_btn.clicked.connect(lambda: self.window.refresh_device_file_browser())
+        self._style_button(refresh_btn, PanelButtonVariant.SECONDARY, height=34, min_width=120)
         path_layout.addWidget(refresh_btn)
 
-        go_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_GO,
-            ButtonStyle.PRIMARY,
-            click_handler=lambda: self.window.navigate_device_files_to_path(),
-            tooltip='Navigate to the specified path'
-        )
+        go_btn = QPushButton(PanelText.BUTTON_GO)
+        go_btn.setToolTip('Navigate to the specified path')
+        go_btn.clicked.connect(lambda: self.window.navigate_device_files_to_path())
+        self._style_button(go_btn, PanelButtonVariant.PRIMARY, height=34, min_width=120)
         path_layout.addWidget(go_btn)
 
         content_layout.addWidget(path_group)
@@ -519,20 +510,16 @@ class ToolsPanelController:
         self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_OUTPUT)
         output_layout.addWidget(self.window.file_gen_output_path_edit)
 
-        browse_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_BROWSE,
-            ButtonStyle.SECONDARY,
-            click_handler=lambda: self.window.browse_file_generation_output_path(),
-            tooltip='Select local download destination'
-        )
+        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
+        browse_btn.setToolTip('Select local download destination')
+        browse_btn.clicked.connect(lambda: self.window.browse_file_generation_output_path())
+        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
         output_layout.addWidget(browse_btn)
 
-        download_btn = UIFactory.create_standard_button(
-            PanelText.BUTTON_DOWNLOAD_SELECTED,
-            ButtonStyle.PRIMARY,
-            click_handler=lambda: self.window.download_selected_device_files(),
-            tooltip='Download the checked files or folders'
-        )
+        download_btn = QPushButton(PanelText.BUTTON_DOWNLOAD_SELECTED)
+        download_btn.setToolTip('Download the checked files or folders')
+        download_btn.clicked.connect(lambda: self.window.download_selected_device_files())
+        self._style_button(download_btn, PanelButtonVariant.PRIMARY, height=34, min_width=160)
         output_layout.addWidget(download_btn)
 
         content_layout.addWidget(output_group)
@@ -565,7 +552,7 @@ class ToolsPanelController:
         save_group_btn = QPushButton(PanelText.BUTTON_SAVE_GROUP)
         save_group_btn.setToolTip('Save the current device selection as a named group')
         save_group_btn.clicked.connect(lambda: self.window.save_group())
-        self._style_button(save_group_btn, ButtonStyle.PRIMARY, height=34)
+        self._style_button(save_group_btn, PanelButtonVariant.PRIMARY, height=34)
         save_group_btn.setMinimumHeight(34)
         left_layout.addWidget(save_group_btn)
 
@@ -577,7 +564,7 @@ class ToolsPanelController:
         select_group_btn = QPushButton(PanelText.BUTTON_SELECT_GROUP)
         select_group_btn.setToolTip('Load and select all devices belonging to the chosen group')
         select_group_btn.clicked.connect(lambda: self.window.select_devices_in_group())
-        self._style_button(select_group_btn, ButtonStyle.SECONDARY, height=32)
+        self._style_button(select_group_btn, PanelButtonVariant.SECONDARY, height=32)
         select_group_btn.setMinimumHeight(32)
         select_group_btn.setMinimumWidth(0)
         select_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -586,7 +573,7 @@ class ToolsPanelController:
         delete_group_btn = QPushButton(PanelText.BUTTON_DELETE_GROUP)
         delete_group_btn.setToolTip('Remove the selected device group')
         delete_group_btn.clicked.connect(lambda: self.window.delete_group())
-        self._style_button(delete_group_btn, ButtonStyle.DANGER, height=32)
+        self._style_button(delete_group_btn, PanelButtonVariant.DANGER, height=32)
         delete_group_btn.setMinimumHeight(32)
         delete_group_btn.setMinimumWidth(0)
         delete_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

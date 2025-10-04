@@ -15,6 +15,9 @@ from textwrap import dedent
 from copy import deepcopy
 import platform
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QSizePolicy
+
 
 _THEME_PRESETS: Dict[str, Dict[str, str]] = {
     'light': {
@@ -165,6 +168,16 @@ class ButtonStyle(Enum):
     DANGER = "danger"        # 危險按鈕（紅色）
     NEUTRAL = "neutral"      # 中性按鈕（灰色）
     SYSTEM = "system"        # 系統按鈕（自適應）
+
+
+class PanelButtonVariant(Enum):
+    """面板按鈕樣式，用於工具頁籤保持一致風格"""
+
+    PRIMARY = "panel_primary"
+    SECONDARY = "panel_secondary"
+    NEUTRAL = "panel_neutral"
+    DANGER = "panel_danger"
+    REFRESH = "panel_refresh"
 
 
 class LabelStyle(Enum):
@@ -596,6 +609,204 @@ class StyleManager:
             ),
         ),
     }
+
+    @classmethod
+    def _resolve_panel_palette(cls) -> Dict[str, str]:
+        """取得面板按鈕使用的調色盤。"""
+
+        colors = cls.COLORS
+        panel_bg = colors.get('panel_background', '#252A37')
+        tile_bg = colors.get('tile_bg', '#2E3449')
+        tile_primary_bg = colors.get('tile_primary_bg', '#333A56')
+        tile_primary_border = colors.get('tile_primary_border', '#55608C')
+        tile_primary_hover = colors.get('tile_primary_hover', '#3F4566')
+        tile_border = colors.get('tile_border', '#454C63')
+        tile_hover = colors.get('tile_hover', '#3A4159')
+        return {
+            'panel_background': panel_bg,
+            'panel_border': colors.get('panel_border', '#3E4455'),
+            'surface_alt': tile_bg,
+            'surface_highlight': tile_primary_bg,
+            'primary_hover': tile_primary_hover,
+            'primary_border_active': tile_primary_border,
+            'secondary_hover': tile_hover,
+            'secondary_border': tile_border,
+            'text_primary': colors.get('text_primary', '#EAEAEA'),
+            'text_secondary': colors.get('text_secondary', '#C8C8C8'),
+            'text_hint': colors.get('text_hint', '#9DA5B3'),
+            'value_text': colors.get('tile_text', colors.get('text_primary', '#EAEAEA')),
+            'value_strong': colors.get('tile_primary_text', colors.get('tile_text', '#EAEAEA')),
+            'status_text_on_dark': colors.get('status_text_on_dark', '#FFFFFF'),
+            'input_background': colors.get('input_background', tile_bg),
+            'input_border': colors.get('input_border', tile_primary_border),
+            'accent': colors.get('secondary', colors.get('text_primary', '#EAEAEA')),
+            'accent_hover': colors.get('secondary_hover', colors.get('secondary', '#64B5F6')),
+            'disabled_bg': colors.get('status_disabled_bg', '#2C3143'),
+            'disabled_text': colors.get('status_disabled_text', '#8088A0'),
+            'disabled_border': colors.get('status_disabled_border', '#3F465A'),
+            'danger': colors.get('danger', '#EF5350'),
+            'danger_hover': colors.get('danger_hover', colors.get('danger', '#E53935')),
+            'neutral': colors.get('neutral', panel_bg),
+            'neutral_hover': colors.get('neutral_hover', tile_hover),
+        }
+
+    @classmethod
+    def _panel_button_tokens(cls, variant: PanelButtonVariant) -> Dict[str, str]:
+        """取得面板按鈕樣式顏色配置。"""
+
+        palette = cls._resolve_panel_palette()
+        tokens: Dict[str, str] = {
+            'hover_border': palette['accent'],
+            'pressed_border': palette['accent_hover'],
+            'disabled_bg': palette['disabled_bg'],
+            'disabled_fg': palette['disabled_text'],
+            'disabled_border': palette['disabled_border'],
+            'letter_spacing': '0.3px',
+        }
+
+        if variant == PanelButtonVariant.PRIMARY:
+            tokens.update(
+                {
+                    'bg': palette['surface_highlight'],
+                    'fg': palette['value_strong'],
+                    'border': palette['panel_border'],
+                    'hover_bg': palette['primary_hover'],
+                    'hover_fg': palette['value_strong'],
+                    'pressed_bg': palette['primary_border_active'],
+                    'pressed_fg': palette['value_strong'],
+                    'letter_spacing': '0.4px',
+                }
+            )
+        elif variant == PanelButtonVariant.SECONDARY:
+            tokens.update(
+                {
+                    'bg': palette['panel_background'],
+                    'fg': palette['text_secondary'],
+                    'border': palette['secondary_border'],
+                    'hover_bg': palette['secondary_hover'],
+                    'hover_fg': palette['value_text'],
+                    'pressed_bg': palette['surface_highlight'],
+                    'pressed_fg': palette['value_strong'],
+                }
+            )
+        elif variant == PanelButtonVariant.NEUTRAL:
+            tokens.update(
+                {
+                    'bg': palette['neutral'],
+                    'fg': palette['text_primary'],
+                    'border': palette['panel_border'],
+                    'hover_bg': palette['neutral_hover'],
+                    'hover_fg': palette['text_primary'],
+                    'pressed_bg': palette['surface_alt'],
+                    'pressed_fg': palette['value_text'],
+                }
+            )
+        elif variant == PanelButtonVariant.DANGER:
+            danger_bg = palette['danger']
+            danger_hover = palette['danger_hover']
+            tokens.update(
+                {
+                    'bg': danger_bg,
+                    'fg': palette['status_text_on_dark'],
+                    'border': danger_hover,
+                    'hover_bg': danger_hover,
+                    'hover_fg': palette['status_text_on_dark'],
+                    'pressed_bg': danger_hover,
+                    'pressed_fg': palette['status_text_on_dark'],
+                    'hover_border': danger_hover,
+                    'pressed_border': danger_hover,
+                }
+            )
+        else:  # PanelButtonVariant.REFRESH
+            tokens.update(
+                {
+                    'bg': palette['surface_highlight'],
+                    'fg': palette['value_strong'],
+                    'border': palette['panel_border'],
+                    'hover_bg': palette['primary_hover'],
+                    'hover_fg': palette['value_strong'],
+                    'pressed_bg': palette['primary_border_active'],
+                    'pressed_fg': palette['value_strong'],
+                    'letter_spacing': '0.3px',
+                }
+            )
+
+        return tokens
+
+    @classmethod
+    def get_panel_button_style(cls, variant: PanelButtonVariant) -> str:
+        """根據面板按鈕變體生成統一樣式。"""
+
+        tokens = cls._panel_button_tokens(variant)
+        border_radius = '10px' if variant == PanelButtonVariant.REFRESH else '12px'
+        padding = '6px 14px' if variant == PanelButtonVariant.REFRESH else '10px 14px'
+        base_css = dedent(
+            f"""
+            QPushButton {{
+                background-color: {tokens['bg']};
+                color: {tokens['fg']};
+                border: 1px solid {tokens['border']};
+                border-radius: {border_radius};
+                padding: {padding};
+                font-weight: 600;
+                letter-spacing: {tokens['letter_spacing']};
+            }}
+            QPushButton:hover {{
+                background-color: {tokens['hover_bg']};
+                color: {tokens['hover_fg']};
+                border: 1px solid {tokens['hover_border']};
+            }}
+            QPushButton:pressed {{
+                background-color: {tokens['pressed_bg']};
+                color: {tokens['pressed_fg']};
+                border: 1px solid {tokens['pressed_border']};
+            }}
+            """
+        ).strip()
+
+        disabled_css = dedent(
+            f"""
+            QPushButton:disabled {{
+                background-color: {tokens['disabled_bg']};
+                color: {tokens['disabled_fg']};
+                border: 1px solid {tokens['disabled_border']};
+            }}
+            """
+        ).strip()
+
+        return _combine_css(base_css, disabled_css)
+
+    @classmethod
+    def apply_panel_button_style(
+        cls,
+        button,
+        variant: PanelButtonVariant,
+        *,
+        fixed_height: int | None = 38,
+        min_width: int | None = None,
+    ) -> None:
+        """套用面板按鈕樣式並同步常用屬性。"""
+
+        button.setStyleSheet(cls.get_panel_button_style(variant))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        if fixed_height:
+            button.setFixedHeight(fixed_height)
+            button.setProperty('_lazy_button_height', fixed_height)
+        else:
+            button.setProperty('_lazy_button_height', 0)
+
+        if min_width is not None:
+            button.setMinimumWidth(min_width)
+        elif variant == PanelButtonVariant.REFRESH:
+            button.setMinimumWidth(96)
+
+        if variant == PanelButtonVariant.REFRESH:
+            button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        else:
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        button.setProperty('_lazy_panel_button_variant', variant.value)
 
     _BUTTON_BASE_BLOCKS: CSSBlocks = (
         (

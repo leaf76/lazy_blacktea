@@ -19,7 +19,13 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
+    from ui.style_manager import (
+        StyleManager,
+        ButtonStyle,
+        LabelStyle,
+        ThemeManager,
+        PanelButtonVariant,
+    )
     import lazy_blacktea_pyqt
 except ImportError as e:
     print(f"❌ 無法導入模組: {e}")
@@ -28,6 +34,35 @@ except ImportError as e:
 
 class StyleRefactorTest(unittest.TestCase):
     """樣式重構測試類"""
+
+    class _DummyButton:
+        """簡易按鈕替身，用於驗證樣式應用"""
+
+        def __init__(self):
+            self.stylesheet = ''
+            self.fixed_height = None
+            self.cursor = None
+            self.size_policy = None
+            self.min_width = None
+            self.properties = {}
+
+        def setStyleSheet(self, css: str) -> None:  # noqa: D401 - 簡化說明
+            self.stylesheet = css
+
+        def setFixedHeight(self, value: int) -> None:
+            self.fixed_height = value
+
+        def setCursor(self, cursor) -> None:
+            self.cursor = cursor
+
+        def setSizePolicy(self, horizontal, vertical) -> None:
+            self.size_policy = (horizontal, vertical)
+
+        def setMinimumWidth(self, value: int) -> None:
+            self.min_width = value
+
+        def setProperty(self, key: str, value) -> None:
+            self.properties[key] = value
 
     def test_style_enums_exist(self):
         """測試樣式枚舉類型的存在性"""
@@ -46,6 +81,18 @@ class StyleRefactorTest(unittest.TestCase):
         for style in button_styles:
             self.assertIsInstance(style, ButtonStyle)
             print(f"    ✅ {style.name}")
+
+        panel_button_variants = [
+            PanelButtonVariant.PRIMARY,
+            PanelButtonVariant.SECONDARY,
+            PanelButtonVariant.NEUTRAL,
+            PanelButtonVariant.DANGER,
+            PanelButtonVariant.REFRESH,
+        ]
+
+        for variant in panel_button_variants:
+            self.assertIsInstance(variant, PanelButtonVariant)
+            print(f"    ✅ {variant.name}")
 
         # 檢查LabelStyle
         label_styles = [
@@ -81,7 +128,9 @@ class StyleRefactorTest(unittest.TestCase):
             'get_action_button_style',
             'apply_button_style',
             'apply_label_style',
-            'get_status_styles'
+            'get_status_styles',
+            'get_panel_button_style',
+            'apply_panel_button_style',
         ]
 
         for method_name in key_methods:
@@ -126,6 +175,49 @@ class StyleRefactorTest(unittest.TestCase):
                 self.assertIn('height: 36px', css)
 
             print(f"    ✅ {button_style.name} -> {len(css)} 個字符")
+
+    def test_panel_button_style_tokens(self):
+        """驗證面板按鈕樣式使用面板配色並保留圓角。"""
+        print("\n🎛️ 測試面板按鈕樣式...")
+
+        palette = StyleManager.COLORS
+        panel_border = palette.get('panel_border', '#3E4455')
+        secondary_border = palette.get('tile_border', '#454C63')
+        danger_color = palette.get('danger', '#EF5350')
+        css_primary = StyleManager.get_panel_button_style(PanelButtonVariant.PRIMARY)
+        css_secondary = StyleManager.get_panel_button_style(PanelButtonVariant.SECONDARY)
+        css_danger = StyleManager.get_panel_button_style(PanelButtonVariant.DANGER)
+
+        self.assertIn('border-radius: 12px', css_primary)
+        self.assertIn(panel_border, css_primary)
+        self.assertIn(secondary_border, css_secondary)
+        self.assertIn(danger_color, css_danger)
+
+        print("    ✅ Primary / Secondary / Danger palettes applied")
+
+    def test_apply_panel_button_style_sets_properties(self):
+        """確保套用面板按鈕樣式時正確設定屬性。"""
+        print("\n🧪 測試面板按鈕套用屬性...")
+
+        primary_button = self._DummyButton()
+        StyleManager.apply_panel_button_style(
+            primary_button,
+            PanelButtonVariant.PRIMARY,
+            fixed_height=42,
+            min_width=140,
+        )
+
+        self.assertIn('font-weight: 600', primary_button.stylesheet)
+        self.assertEqual(primary_button.fixed_height, 42)
+        self.assertEqual(primary_button.min_width, 140)
+        self.assertIn('_lazy_panel_button_variant', primary_button.properties)
+
+        refresh_button = self._DummyButton()
+        StyleManager.apply_panel_button_style(refresh_button, PanelButtonVariant.REFRESH)
+        self.assertIsNotNone(refresh_button.fixed_height)
+        self.assertGreaterEqual(refresh_button.min_width or 0, 96)
+
+        print("    ✅ Panel button properties configured")
 
     def test_high_contrast_button_styles_on_unix_platforms(self):
         """確保在 Linux 與 macOS 上啟用高對比按鈕樣式。"""
