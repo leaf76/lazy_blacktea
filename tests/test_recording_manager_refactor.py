@@ -129,7 +129,7 @@ class RecordingManagerRefactorTest(unittest.TestCase):
         release_gate = threading.Event()
         self.addCleanup(release_gate.set)
 
-        def blocking_loop(self_obj, device, info, completion_cb, progress_cb, stop_event, start_signal):
+        def blocking_loop(self_obj, device, info, _completion_cb, _progress_cb, stop_event, start_signal):
             start_gate.set()
             if not release_gate.wait(timeout=5.0):
                 start_signal['success'] = False

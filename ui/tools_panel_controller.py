@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
 from config.constants import PanelConfig, PanelText
 from ui.style_manager import ButtonStyle, LabelStyle, StyleManager

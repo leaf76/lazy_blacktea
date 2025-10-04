@@ -4,6 +4,7 @@ Cross-platform build script for Lazy Blacktea
 Supports macOS and Linux builds with automatic platform detection
 """
 
+import importlib
 import os
 import sys
 import platform
@@ -75,7 +76,7 @@ def check_dependencies():
 
     # Check if PyQt6 is available
     try:
-        import PyQt6
+        importlib.import_module("PyQt6")
         print_success("PyQt6 is available")
     except ImportError:
         print_error("PyQt6 is not installed. Please install it first.")
@@ -83,7 +84,7 @@ def check_dependencies():
 
     # Check if PyInstaller is available
     try:
-        import PyInstaller
+        importlib.import_module("PyInstaller")
         print_success("PyInstaller is available")
     except ImportError:
         print_error("PyInstaller is not installed. Please install it first.")

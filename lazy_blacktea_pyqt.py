@@ -35,7 +35,7 @@ from utils import time_formatting
 # Import configuration and constants
 from config.config_manager import AppConfig, ConfigManager, LogcatSettings
 from config.constants import (
-    UIConstants, PathConstants, ADBConstants, MessageConstants,
+    UIConstants, PathConstants, ADBConstants,
     LoggingConstants, ApplicationConstants, PanelText
 )
 
@@ -87,9 +87,6 @@ from utils.recording_utils import (
 )
 from utils.ui_inspector_utils import check_ui_inspector_prerequisites
 # File generation utilities are now handled by FileOperationsManager
-from utils.debounced_refresh import (
-    DeviceListDebouncedRefresh, BatchedUIUpdater, PerformanceOptimizedRefresh
-)
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 from utils.icon_resolver import iter_icon_paths
 from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher

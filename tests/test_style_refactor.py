@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, PanelStyle, ThemeManager
+    from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
     import lazy_blacktea_pyqt
 except ImportError as e:
     print(f"❌ 無法導入模組: {e}")

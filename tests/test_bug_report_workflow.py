@@ -27,10 +27,10 @@ class _DummySignal:
 
 
 class _DummySignalDescriptor:
-    def __set_name__(self, owner, name):
+    def __set_name__(self, _owner, name):
         self._storage_name = f"__signal_{name}"
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance, _owner):
         if instance is None:
             return self
         signal = getattr(instance, self._storage_name, None)

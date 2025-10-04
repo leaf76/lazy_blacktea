@@ -528,7 +528,7 @@ class FakeProcess:
     def kill(self):
         self.killed = True
 
-    def waitForFinished(self, msec):
+    def waitForFinished(self, _msec):
         self.wait_finished_called = True
 
     def deleteLater(self):
