@@ -22,6 +22,7 @@ class UISettings:
     ui_scale: float = 1.0
     theme: str = 'dark'
     font_size: int = 10
+    show_console_panel: bool = False
 
 
 @dataclass
@@ -140,6 +141,9 @@ class ConfigManager:
         if ui_settings.get('ui_scale', 1.0) < 0.5 or ui_settings.get('ui_scale', 1.0) > 3.0:
             ui_settings['ui_scale'] = 1.0
             logger.warning('UI scale out of range, reset to 1.0')
+        if not isinstance(ui_settings.get('show_console_panel', True), bool):
+            ui_settings['show_console_panel'] = True
+            logger.warning('Console panel visibility invalid, reset to True')
 
         device_settings = validated.get('device', {})
         if device_settings.get('refresh_interval', 30) < 1:

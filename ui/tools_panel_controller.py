@@ -326,8 +326,14 @@ class ToolsPanelController:
         return palette
 
     def _create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 24, 16, 24)
+        content_layout.setSpacing(18)
+        scroll_area.setWidget(content)
 
         template_group = QGroupBox(PanelText.GROUP_COMMAND_TEMPLATES)
         template_layout = QGridLayout(template_group)
@@ -342,7 +348,7 @@ class ToolsPanelController:
             row, col = divmod(idx, 3)
             template_layout.addWidget(btn, row, col)
 
-        layout.addWidget(template_group)
+        content_layout.addWidget(template_group)
 
         batch_group = QGroupBox(PanelText.GROUP_BATCH_COMMANDS)
         batch_layout = QVBoxLayout(batch_group)
@@ -357,7 +363,8 @@ class ToolsPanelController:
             'pm list packages -3\n\n'
             'Use # for comments'
         )
-        self.window.batch_commands_edit.setMaximumHeight(120)
+        self.window.batch_commands_edit.setMinimumHeight(180)
+        self.window.batch_commands_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         batch_layout.addWidget(self.window.batch_commands_edit)
 
         exec_buttons_layout = QHBoxLayout()
@@ -388,7 +395,7 @@ class ToolsPanelController:
         self._style_button(run_shell_btn, ButtonStyle.PRIMARY, height=36, min_width=220)
         batch_layout.addWidget(run_shell_btn)
 
-        layout.addWidget(batch_group)
+        content_layout.addWidget(batch_group)
 
         history_group = QGroupBox(PanelText.GROUP_COMMAND_HISTORY)
         history_layout = QVBoxLayout(history_group)
@@ -396,7 +403,8 @@ class ToolsPanelController:
         history_layout.setSpacing(12)
 
         self.window.command_history_list = QListWidget()
-        self.window.command_history_list.setMaximumHeight(100)
+        self.window.command_history_list.setMinimumHeight(200)
+        self.window.command_history_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.window.command_history_list.itemDoubleClicked.connect(self.window.load_from_history)
         history_layout.addWidget(self.window.command_history_list)
 
@@ -421,20 +429,26 @@ class ToolsPanelController:
         history_buttons_layout.addWidget(import_history_btn)
 
         history_layout.addLayout(history_buttons_layout)
-        layout.addWidget(history_group)
+        content_layout.addWidget(history_group)
 
-        layout.addStretch()
+        content_layout.addStretch()
         self.window.update_history_display()
 
-        tab_widget.addTab(tab, PanelText.TAB_SHELL_COMMANDS)
+        tab_widget.addTab(scroll_area, PanelText.TAB_SHELL_COMMANDS)
 
     def _create_device_file_browser_tab(self, tab_widget: QTabWidget) -> None:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 24, 16, 24)
+        content_layout.setSpacing(16)
+        scroll_area.setWidget(content)
 
         device_label = QLabel('Select exactly one device to browse files.')
         device_label.setObjectName('device_file_browser_device_label')
-        layout.addWidget(device_label)
+        content_layout.addWidget(device_label)
         self.window.device_file_browser_device_label = device_label
 
         path_group = QGroupBox(PanelText.GROUP_DEVICE_FILES)
@@ -470,14 +484,15 @@ class ToolsPanelController:
         )
         path_layout.addWidget(go_btn)
 
-        layout.addWidget(path_group)
+        content_layout.addWidget(path_group)
 
         self.window.device_file_tree = QTreeWidget()
         self.window.device_file_tree.setObjectName('device_file_browser_tree')
         self.window.device_file_tree.setHeaderLabels(['Name', 'Type'])
         self.window.device_file_tree.setRootIsDecorated(False)
         self.window.device_file_tree.setColumnWidth(0, 320)
-        self.window.device_file_tree.setMinimumHeight(260)
+        self.window.device_file_tree.setMinimumHeight(320)
+        self.window.device_file_tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.window.device_file_tree.itemDoubleClicked.connect(
             lambda item, column: self.window.on_device_file_item_double_clicked(item, column)
         )
@@ -485,11 +500,11 @@ class ToolsPanelController:
         self.window.device_file_tree.customContextMenuRequested.connect(
             lambda pos: self.window.on_device_file_context_menu(pos)
         )
-        layout.addWidget(self.window.device_file_tree)
+        content_layout.addWidget(self.window.device_file_tree)
 
         status_label = QLabel('Ready to browse device files.')
         status_label.setObjectName('device_file_browser_status_label')
-        layout.addWidget(status_label)
+        content_layout.addWidget(status_label)
         self.window.device_file_status_label = status_label
         self.window.device_file_controller.register_widgets(
             tree=self.window.device_file_tree,
@@ -520,10 +535,10 @@ class ToolsPanelController:
         )
         output_layout.addWidget(download_btn)
 
-        layout.addWidget(output_group)
-        layout.addStretch()
+        content_layout.addWidget(output_group)
+        content_layout.addStretch()
 
-        tab_widget.addTab(tab, PanelText.TAB_DEVICE_FILES)
+        tab_widget.addTab(scroll_area, PanelText.TAB_DEVICE_FILES)
 
     def _create_device_groups_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()

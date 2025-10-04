@@ -438,6 +438,14 @@ class PanelsManager(QObject):
         if hasattr(main_window, 'register_ui_scale_actions'):
             main_window.register_ui_scale_actions(scale_actions)
 
+        console_toggle_action = QAction('Show Console Output', main_window, checkable=True)
+        console_toggle_action.setChecked(getattr(main_window, 'show_console_panel', True))
+        console_toggle_action.triggered.connect(lambda checked: main_window.handle_console_panel_toggle(checked))
+        settings_menu.addAction(console_toggle_action)
+
+        if hasattr(main_window, 'register_console_panel_action'):
+            main_window.register_console_panel_action(console_toggle_action)
+
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)

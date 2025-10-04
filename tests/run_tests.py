@@ -48,6 +48,10 @@ def main():
         ("Icon Resolver Tests", "test_icon_resolver.py"),
         ("Device Manager Tests", "test_device_manager_simple.py"),
         ("Integration Tests", "test_integration.py"),
+        ("Window Geometry Tests", "test_window_geometry.py"),
+        ("Shell Commands Layout Tests", "test_shell_commands_layout.py"),
+        ("Device Files Layout Tests", "test_device_files_layout.py"),
+        ("Console Panel Toggle Tests", "test_console_panel_toggle.py"),
         # Note: Functional tests require user interaction, run separately
         # ("Functional Tests", "test_functional.py"),
     ]

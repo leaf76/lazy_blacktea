@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
 )
-from PyQt6.QtCore import (Qt, QTimer, QUrl, QPoint, pyqtSignal)
+from PyQt6.QtCore import (Qt, QTimer, QUrl, QPoint, QRect, pyqtSignal)
 from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication, QDesktopServices)
 
 from utils import adb_models
@@ -31,7 +31,7 @@ from utils import json_utils
 from utils import time_formatting
 
 # Import configuration and constants
-from config.config_manager import AppConfig, ConfigManager, LogcatSettings
+from config.config_manager import AppConfig, ConfigManager, LogcatSettings, UISettings
 from config.constants import (
     UIConstants, PathConstants, ADBConstants,
     LoggingConstants, ApplicationConstants, PanelText
@@ -117,6 +117,7 @@ class WindowMain(QMainWindow):
         self.theme_actions: Dict[str, QAction] = {}
         self._current_theme = 'light'
         initial_config = self.config_manager.load_config()
+        self._initial_ui_settings: UISettings = initial_config.ui
         self._current_theme = self.theme_manager.set_theme(initial_config.ui.theme)
         self.error_handler = ErrorHandler(self)
         self.command_executor = CommandExecutor(self)
@@ -127,6 +128,10 @@ class WindowMain(QMainWindow):
         self.device_file_browser_manager = DeviceFileBrowserManager(self)
         self.device_file_controller = DeviceFileController(self)
         self.device_selection_manager = DeviceSelectionManager()
+
+        self.show_console_panel = self._initial_ui_settings.show_console_panel
+        self.console_panel_action: Optional[QAction] = None
+        self.console_panel = None
 
         # Background task dispatcher
         self._task_dispatcher = get_task_dispatcher()
@@ -293,11 +298,48 @@ class WindowMain(QMainWindow):
         self.battery_info_manager.start()
         QTimer.singleShot(2000, self.battery_info_manager.refresh_all)
 
+    def _apply_window_geometry(self, ui_settings: Optional[UISettings]) -> None:
+        """Apply initial window geometry derived from configuration and screen bounds."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            available_rect = QRect(screen.availableGeometry())
+        else:
+            available_rect = QRect(0, 0, UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
+
+        default_width = UIConstants.WINDOW_WIDTH
+        default_height = UIConstants.WINDOW_HEIGHT
+        default_x = 100
+        default_y = 100
+
+        if ui_settings is not None:
+            if ui_settings.window_width > 0:
+                default_width = ui_settings.window_width
+            if ui_settings.window_height > 0:
+                default_height = ui_settings.window_height
+            default_x = ui_settings.window_x
+            default_y = ui_settings.window_y
+
+        width = max(UIConstants.WINDOW_MIN_WIDTH, default_width)
+        height = max(UIConstants.WINDOW_MIN_HEIGHT, default_height)
+
+        width = min(width, available_rect.width()) if available_rect.width() > 0 else width
+        height = min(height, available_rect.height()) if available_rect.height() > 0 else height
+
+        max_x = available_rect.left() + max(0, available_rect.width() - width)
+        max_y = available_rect.top() + max(0, available_rect.height() - height)
+
+        x = max(available_rect.left(), min(default_x, max_x)) if available_rect.width() > 0 else default_x
+        y = max(available_rect.top(), min(default_y, max_y)) if available_rect.height() > 0 else default_y
+
+        self.setGeometry(x, y, width, height)
+
     def init_ui(self):
         """Initialize the user interface."""
         logger.info('[INIT] init_ui method started')
         self.setWindowTitle(f'🍵 {ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}')
-        self.setGeometry(100, 100, UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
+
+        self.setMinimumSize(UIConstants.WINDOW_MIN_WIDTH, UIConstants.WINDOW_MIN_HEIGHT)
+        self._apply_window_geometry(getattr(self, '_initial_ui_settings', None))
 
 
         # Set application icon
@@ -416,6 +458,44 @@ class WindowMain(QMainWindow):
     def create_console_panel(self, parent_layout):
         """Create the console output panel."""
         self.console_manager.create_console_panel(parent_layout)
+        self.set_console_panel_visibility(self.show_console_panel, persist=False)
+        QTimer.singleShot(0, lambda: self.set_console_panel_visibility(self.show_console_panel, persist=False))
+
+    def register_console_panel_action(self, action: QAction) -> None:
+        """Register the menu action controlling console visibility."""
+        self.console_panel_action = action
+        self._sync_console_panel_action()
+
+    def handle_console_panel_toggle(self, visible: bool) -> None:
+        """Respond to menu toggle requests for console visibility."""
+        self.set_console_panel_visibility(visible)
+
+    def set_console_panel_visibility(self, visible: bool, persist: bool = True) -> None:
+        """Show or hide the console panel, optionally persisting the state."""
+        self.show_console_panel = bool(visible)
+
+        if self.console_panel is not None:
+            if self.show_console_panel:
+                self.console_panel.show()
+            else:
+                self.console_panel.hide()
+
+        self._sync_console_panel_action()
+
+        if persist:
+            try:
+                self.config_manager.update_ui_settings(show_console_panel=self.show_console_panel)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning('Failed to persist console visibility: %s', exc)
+
+    def _sync_console_panel_action(self) -> None:
+        """Ensure the console toggle action matches current visibility state."""
+        if self.console_panel_action is None:
+            return
+
+        previous = self.console_panel_action.blockSignals(True)
+        self.console_panel_action.setChecked(self.show_console_panel)
+        self.console_panel_action.blockSignals(previous)
 
 
     def create_status_bar(self):
@@ -2150,6 +2230,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             # Load UI scale from new config
             self.set_ui_scale(config.ui.ui_scale)
 
+            # Apply console visibility preference
+            self.set_console_panel_visibility(config.ui.show_console_panel, persist=False)
+
             # Load device groups from old config for compatibility
             if old_config.get('device_groups'):
                 self.device_groups = old_config['device_groups']
@@ -2196,7 +2279,17 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         """Save configuration to file using ConfigManager."""
         try:
             # Update the new config manager
-            self.config_manager.update_ui_settings(ui_scale=self.user_scale)
+            geometry = self.geometry()
+            ui_payload = {
+                'window_width': geometry.width(),
+                'window_height': geometry.height(),
+                'window_x': geometry.x(),
+                'window_y': geometry.y(),
+                'show_console_panel': self.show_console_panel,
+            }
+            if hasattr(self, 'user_scale'):
+                ui_payload['ui_scale'] = self.user_scale
+            self.config_manager.update_ui_settings(**ui_payload)
             self.config_manager.update_device_settings(refresh_interval=self.refresh_interval)
 
             # Save command history to new config

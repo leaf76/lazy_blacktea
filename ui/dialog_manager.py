@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional, TYPE_CHECKING
 
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -36,6 +36,11 @@ class DialogManager:
 
     def show_error(self, title: str, message: str) -> None:
         self._error_fn(self.window, title, message)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy the provided text to the system clipboard."""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
 
 
 __all__ = ["DialogManager"]

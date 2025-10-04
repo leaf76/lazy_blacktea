@@ -75,6 +75,7 @@ class ConsoleManager:
         console_text.setPlainText(welcome_msg)
         logger.info("Console widget initialized and ready")
         self.window.console_text = console_text
+        self.window.console_panel = console_group
         self.window.write_to_console("✅ Console output system ready")
 
         console_text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
