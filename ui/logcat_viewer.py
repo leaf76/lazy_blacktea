@@ -71,6 +71,99 @@ PERFORMANCE_PRESETS = {
 }
 
 
+class CollapsiblePanel(QWidget):
+    """A simple collapsible panel controlled by a header button.
+
+    - The header is a button with a disclosure indicator.
+    - Clicking toggles the visibility of the content widget.
+    """
+
+    def __init__(self, title: str, content: Optional[QWidget] = None, *, collapsed: bool = False, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._collapsed = collapsed
+        self._content_widget: Optional[QWidget] = None
+
+        self._root = QVBoxLayout(self)
+        self._root.setContentsMargins(0, 0, 0, 0)
+        self._root.setSpacing(4)
+
+        self._toggle_btn = QPushButton(self._title_text(title))
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setChecked(not collapsed)
+        self._toggle_btn.setFlat(True)
+        self._toggle_btn.clicked.connect(self._on_toggled)
+        self._toggle_btn.setStyleSheet(
+            """
+            QPushButton {
+                text-align: left;
+                padding: 6px 8px;
+                color: #d0d3d4;
+                background-color: #2b2f33;
+                border: 1px solid #3e444a;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            QPushButton:pressed {
+                background-color: #25323a;
+            }
+            """
+        )
+        self._root.addWidget(self._toggle_btn)
+
+        self._content_container = QWidget()
+        self._content_container.setObjectName('collapsible_content')
+        self._content_container.setStyleSheet(
+            """
+            QWidget#collapsible_content {
+                background-color: #2c2c2c;
+                border: 1px solid #3e3e3e;
+                border-radius: 6px;
+            }
+            """
+        )
+        self._content_layout = QVBoxLayout(self._content_container)
+        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setSpacing(6)
+        self._root.addWidget(self._content_container)
+
+        if content is not None:
+            self.set_content(content)
+
+        self._apply_collapsed_state()
+
+    def _title_text(self, title: str) -> str:
+        return ('▾ ' if not self._collapsed else '▸ ') + title
+
+    def _on_toggled(self):
+        self._collapsed = not self._toggle_btn.isChecked()
+        self._apply_collapsed_state()
+
+    def _apply_collapsed_state(self):
+        self._content_container.setVisible(not self._collapsed)
+        # Update disclosure indicator
+        text = self._toggle_btn.text()
+        plain = text[2:] if len(text) > 2 else text
+        self._toggle_btn.setText(self._title_text(plain))
+
+    def set_content(self, widget: QWidget) -> None:
+        # Clear previous
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(0)
+            if (w := item.widget()) is not None:
+                w.setParent(None)
+        self._content_widget = widget
+        self._content_layout.addWidget(widget)
+        self._apply_collapsed_state()
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        self._collapsed = bool(collapsed)
+        self._toggle_btn.setChecked(not self._collapsed)
+        self._apply_collapsed_state()
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+
 @dataclass(frozen=True)
 class LogLine:
     """Represents a parsed logcat line with convenient accessors."""
@@ -127,8 +220,6 @@ class LogcatListModel(QAbstractListModel):
             return None
         log = self._logs[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
-            if log.line_no > 0:
-                return f"{log.line_no:05d} | {log.raw}"
             return log.raw
         if role == Qt.ItemDataRole.UserRole:
             return log
@@ -724,20 +815,47 @@ class LogcatWindow(QDialog):
 
         # Main layout and splitter configuration
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         control_layout = self.create_control_panel()
-        filter_panel = self.create_filter_panel()
+
+        # Extract levels and filters into collapsible panels for a cleaner UI.
+        levels_content = self._create_levels_widget()
+        levels_panel = CollapsiblePanel('Levels', levels_content, collapsed=False, parent=self)
+
+        filters_content = self.create_filter_panel()
+        filters_panel = CollapsiblePanel('Filters', filters_content, collapsed=False, parent=self)
 
         top_panel = QWidget()
         top_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        top_panel.setMaximumHeight(190)
         top_layout = QVBoxLayout(top_panel)
         top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(6)
+        top_layout.setSpacing(2)
         top_layout.addLayout(control_layout)
-        top_layout.addWidget(filter_panel)
+        top_layout.addWidget(levels_panel)
+        top_layout.addWidget(filters_panel)
+
+        # Place Levels/Filters toggles next to Start Logcat; hide panel headers to avoid duplication
+        self.levels_panel = levels_panel
+        self.filters_panel = filters_panel
+        # Collapse by default to keep top area compact; user can expand via buttons
+        self.levels_panel.set_collapsed(True)
+        self.filters_panel.set_collapsed(True)
+        # Hide the internal header buttons; external toolbar buttons control visibility
+        try:
+            self.levels_panel._toggle_btn.setVisible(False)
+            self.filters_panel._toggle_btn.setVisible(False)
+        except Exception:
+            pass
+
+        # If toolbar toggle buttons exist, ensure they reflect and control panel state
+        if hasattr(self, 'levels_toggle_btn'):
+            self.levels_toggle_btn.setCheckable(True)
+            self.levels_toggle_btn.setChecked(not self.levels_panel.is_collapsed())
+        if hasattr(self, 'filters_toggle_btn'):
+            self.filters_toggle_btn.setCheckable(True)
+            self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
 
         self.log_display = QListView()
         self.log_display.setModel(self.log_proxy)
@@ -878,7 +996,7 @@ class LogcatWindow(QDialog):
         self.log_display.selectAll()
 
     def create_control_panel(self):
-        """Create a structured control panel for logcat actions and filters."""
+        """Create the primary control toolbar (start/stop, performance, follow)."""
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -917,16 +1035,37 @@ class LogcatWindow(QDialog):
         jump_btn.setToolTip('Re-enable auto-follow and scroll to newest log entries')
         primary_row.addWidget(jump_btn)
 
+        # Inline toggles to expand/collapse Levels and Filters panels just below
+        primary_row.addWidget(self.create_vertical_separator())
+
+        self.levels_toggle_btn = QPushButton('Levels')
+        self.levels_toggle_btn.clicked.connect(self.toggle_levels_visibility)
+        primary_row.addWidget(self.levels_toggle_btn)
+
+        self.filters_toggle_btn = QPushButton('Filters')
+        self.filters_toggle_btn.clicked.connect(self.toggle_filters_visibility)
+        primary_row.addWidget(self.filters_toggle_btn)
+
         primary_row.addStretch(1)
         layout.addLayout(primary_row)
+        return layout
 
-        # ------------------------------------------------------------------
-        # Secondary row: log levels and source filter
-        # ------------------------------------------------------------------
-        secondary_row = QHBoxLayout()
-        secondary_row.setContentsMargins(0, 0, 0, 0)
-        secondary_row.setSpacing(12)
+    def toggle_levels_visibility(self):
+        """Toggle the visibility of the Levels panel content."""
+        if hasattr(self, 'levels_panel') and self.levels_panel:
+            self.levels_panel.set_collapsed(not self.levels_panel.is_collapsed())
+            if hasattr(self, 'levels_toggle_btn'):
+                self.levels_toggle_btn.setChecked(not self.levels_panel.is_collapsed())
 
+    def toggle_filters_visibility(self):
+        """Toggle the visibility of the Filters panel content."""
+        if hasattr(self, 'filters_panel') and self.filters_panel:
+            self.filters_panel.set_collapsed(not self.filters_panel.is_collapsed())
+            if hasattr(self, 'filters_toggle_btn'):
+                self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
+
+    def _create_levels_widget(self) -> QWidget:
+        """Create content widget for log levels checkboxes."""
         levels_container = QWidget()
         levels_container.setObjectName('logcat_levels_container')
         levels_container.setStyleSheet(
@@ -934,11 +1073,10 @@ class LogcatWindow(QDialog):
             ' background-color: #2c2c2c;'
             ' border: 1px solid #3e3e3e;'
             ' border-radius: 6px;'
-            ' padding: 4px 8px;'
             '}'
         )
         levels_layout = QHBoxLayout(levels_container)
-        levels_layout.setContentsMargins(4, 0, 4, 0)
+        levels_layout.setContentsMargins(8, 6, 8, 6)
         levels_layout.setSpacing(8)
 
         self.log_levels = {
@@ -956,13 +1094,21 @@ class LogcatWindow(QDialog):
             checkbox.stateChanged.connect(self.update_log_levels)
             levels_layout.addWidget(checkbox)
 
-        secondary_row.addWidget(levels_container, stretch=1)
-        secondary_row.addWidget(self.create_vertical_separator())
+        levels_layout.addStretch(1)
+        return levels_container
 
+    def create_filter_panel(self) -> QWidget:
+        """Create the filter panel (source + live/saved filters)."""
+        panel = QWidget()
+        main_layout = QVBoxLayout(panel)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(8)
+
+        # Source (Tag/Package/Raw) row
         source_cluster = QWidget()
         source_layout = QHBoxLayout(source_cluster)
         source_layout.setContentsMargins(0, 0, 0, 0)
-        source_layout.setSpacing(6)
+        source_layout.setSpacing(8)
 
         source_label = QLabel('Source')
         source_label.setStyleSheet('font-weight: bold;')
@@ -981,17 +1127,7 @@ class LogcatWindow(QDialog):
         self.log_source_input.setMinimumWidth(220)
         source_layout.addWidget(self.log_source_input, stretch=1)
 
-        secondary_row.addWidget(source_cluster, stretch=2)
-
-        layout.addLayout(secondary_row)
-        return layout
-
-    def create_filter_panel(self) -> QWidget:
-        """Create the filter panel with real-time filtering in a compact layout."""
-        panel = QWidget()
-        main_layout = QVBoxLayout(panel)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(6)
+        main_layout.addWidget(source_cluster)
 
         # Form-style rows for filter and saved controls
         form_widget = QWidget()
