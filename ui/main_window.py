@@ -1,11 +1,11 @@
 """A PyQt6 GUI application for simplifying Android ADB and automation tasks."""
 
-import datetime
+from __future__ import annotations
+
 import logging
 import math
 import os
 import platform
-import subprocess
 import sys
 import threading
 import webbrowser
@@ -20,15 +20,15 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
+    QMessageBox,
 )
-from PyQt6.QtCore import (Qt, QTimer, QUrl, QPoint, QRect, pyqtSignal)
-from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication, QDesktopServices)
+from PyQt6.QtCore import (Qt, QTimer, QPoint, QRect, pyqtSignal)
+from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
 
 from utils import adb_models
 from utils import adb_tools
 from utils import common
 from utils import json_utils
-from utils import time_formatting
 
 # Import configuration and constants
 from config.config_manager import AppConfig, ConfigManager, LogcatSettings, UISettings
@@ -52,6 +52,7 @@ from ui.command_execution_manager import CommandExecutionManager
 from ui.style_manager import StyleManager, ButtonStyle, LabelStyle, ThemeManager
 from ui.app_management_manager import AppManagementManager
 from ui.logging_manager import LoggingManager, DiagnosticsManager, ConsoleHandler
+from ui.operation_logging_mixin import OperationLoggingMixin
 from ui.device_list_controller import DeviceListController
 from ui.device_actions_controller import DeviceActionsController
 from ui.tools_panel_controller import ToolsPanelController
@@ -76,6 +77,11 @@ from ui.device_file_controller import DeviceFileController
 from ui.recording_controller import RecordingController
 from ui.signal_payloads import RecordingProgressEvent
 from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
+from ui.device_files_facade import DeviceFilesFacade
+from ui.device_groups_facade import DeviceGroupsFacade
+from ui.commands_facade import CommandsFacade
+from ui.device_actions_facade import DeviceActionsFacade
+from ui.logcat_facade import LogcatFacade
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -95,7 +101,7 @@ os.environ.setdefault('QT_DELAY_BEFORE_TIP', '300')
 from ui.logcat_viewer import LogcatWindow
 
 
-class WindowMain(QMainWindow):
+class WindowMain(QMainWindow, OperationLoggingMixin):
     finalize_operation_requested = pyqtSignal(list, str)
     """Main PyQt6 application window."""
 
@@ -128,6 +134,9 @@ class WindowMain(QMainWindow):
         self.panels_manager = PanelsManager(self)
         self.device_file_browser_manager = DeviceFileBrowserManager(self)
         self.device_file_controller = DeviceFileController(self)
+        self.device_files_facade = DeviceFilesFacade(self, self.device_file_controller)
+        self.device_groups_facade = DeviceGroupsFacade(self)
+        self.commands_facade = CommandsFacade(self)
         self.device_selection_manager = DeviceSelectionManager()
 
         self.show_console_panel = self._initial_ui_settings.show_console_panel
@@ -181,6 +190,7 @@ class WindowMain(QMainWindow):
         self.device_list_controller = DeviceListController(self)
         self.tools_panel_controller = ToolsPanelController(self)
         self.device_actions_controller = DeviceActionsController(self)
+        self.device_actions_facade = DeviceActionsFacade(self)
 
         # Initialize UI factory for creating UI components
         self.ui_factory = UIFactory(parent_window=self)
@@ -227,6 +237,7 @@ class WindowMain(QMainWindow):
         # Initialize logging and diagnostics manager
         self.logging_manager = LoggingManager(self)
         self.diagnostics_manager = DiagnosticsManager(self)
+        self.logcat_facade = LogcatFacade(self)
 
 
         self.flag_actions = {}
@@ -554,43 +565,7 @@ class WindowMain(QMainWindow):
             'scrcpy will use your new preferences the next time you launch mirroring.'
         )
 
-    # ------------------------------------------------------------------
-    # Operation logging helpers
-    # ------------------------------------------------------------------
-    def _log_operation_start(self, operation: str, details: str | None = None) -> None:
-        if getattr(self, 'logging_manager', None):
-            if details:
-                self.logging_manager.log_operation_start(operation, details)
-            else:
-                self.logging_manager.log_operation_start(operation)
-
-    def _log_operation_complete(self, operation: str, details: str | None = None) -> None:
-        if getattr(self, 'logging_manager', None):
-            if details:
-                self.logging_manager.log_operation_complete(operation, details)
-            else:
-                self.logging_manager.log_operation_complete(operation)
-
-    def _log_operation_failure(self, operation: str, error: str) -> None:
-        if getattr(self, 'logging_manager', None):
-            self.logging_manager.log_operation_failure(operation, error)
-
-    def _execute_with_operation_logging(
-        self,
-        operation: str,
-        action: Callable[[], Any],
-        *,
-        success_details: str | None = None,
-    ) -> Any:
-        self._log_operation_start(operation)
-        try:
-            result = action()
-        except Exception as exc:
-            self._log_operation_failure(operation, str(exc))
-            raise
-        else:
-            self._log_operation_complete(operation, success_details)
-            return result
+    # Operation logging helpers moved to OperationLoggingMixin
 
     def _format_device_label(self, serial: str) -> str:
         device = self.device_dict.get(serial) if hasattr(self, 'device_dict') else None
@@ -754,37 +729,37 @@ class WindowMain(QMainWindow):
     def save_group(self):
         self._execute_with_operation_logging(
             'Save Device Group',
-            self.device_group_manager.save_group,
+            self.device_groups_facade.save_group,
         )
 
     def delete_group(self):
         self._execute_with_operation_logging(
             'Delete Device Group',
-            self.device_group_manager.delete_group,
+            self.device_groups_facade.delete_group,
         )
 
     def select_devices_in_group(self):
         self._execute_with_operation_logging(
             'Select Devices In Group',
-            self.device_group_manager.select_devices_in_group,
+            self.device_groups_facade.select_devices_in_group,
         )
 
     def select_devices_in_group_by_name(self, group_name: str):
         self._execute_with_operation_logging(
             f'Select Group: {group_name}',
-            lambda: self.device_group_manager.select_devices_in_group_by_name(group_name),
+            lambda: self.device_groups_facade.select_devices_in_group_by_name(group_name),
         )
 
     def update_groups_listbox(self):
         self._execute_with_operation_logging(
             'Update Group List',
-            self.device_group_manager.update_groups_listbox,
+            self.device_groups_facade.update_groups_listbox,
         )
 
     def on_group_select(self):
         self._execute_with_operation_logging(
             'Handle Group Selection',
-            self.device_group_manager.on_group_select,
+            self.device_groups_facade.on_group_select,
         )
 
     # Context Menu functionality
@@ -795,7 +770,7 @@ class WindowMain(QMainWindow):
     def copy_selected_device_info(self):
         self._execute_with_operation_logging(
             'Copy Selected Device Info',
-            self.device_actions_controller.copy_selected_device_info,
+            self.device_actions_facade.copy_selected_device_info,
         )
 
     def show_console_context_menu(self, position):
@@ -895,44 +870,44 @@ class WindowMain(QMainWindow):
 
     def show_device_context_menu(self, position, device_serial, checkbox_widget):
         """Delegate context menu handling to the device actions controller."""
-        self.device_actions_controller.show_context_menu(position, device_serial, checkbox_widget)
+        self.device_actions_facade.show_context_menu(position, device_serial, checkbox_widget)
 
     def select_only_device(self, target_serial):
         """Expose device selection through the controller."""
         self._execute_with_operation_logging(
             f'Select Only Device {target_serial}',
-            lambda: self.device_actions_controller.select_only_device(target_serial),
+            lambda: self.device_actions_facade.select_only_device(target_serial),
         )
 
     def deselect_device(self, target_serial):
         """Expose deselection through the controller."""
         self._execute_with_operation_logging(
             f'Deselect Device {target_serial}',
-            lambda: self.device_actions_controller.deselect_device(target_serial),
+            lambda: self.device_actions_facade.deselect_device(target_serial),
         )
 
     def launch_ui_inspector_for_device(self, device_serial):
         self._execute_with_operation_logging(
             f'Launch UI Inspector ({device_serial})',
-            lambda: self.device_actions_controller.launch_ui_inspector_for_device(device_serial),
+            lambda: self.device_actions_facade.launch_ui_inspector_for_device(device_serial),
         )
 
     def reboot_single_device(self, device_serial):
         self._execute_with_operation_logging(
             f'Reboot Device ({device_serial})',
-            lambda: self.device_actions_controller.reboot_single_device(device_serial),
+            lambda: self.device_actions_facade.reboot_single_device(device_serial),
         )
 
     def take_screenshot_single_device(self, device_serial):
         self._execute_with_operation_logging(
             f'Take Screenshot ({device_serial})',
-            lambda: self.device_actions_controller.take_screenshot_single_device(device_serial),
+            lambda: self.device_actions_facade.take_screenshot_single_device(device_serial),
         )
 
     def launch_scrcpy_single_device(self, device_serial):
         self._execute_with_operation_logging(
             f'Launch scrcpy ({device_serial})',
-            lambda: self.device_actions_controller.launch_scrcpy_single_device(device_serial),
+            lambda: self.device_actions_facade.launch_scrcpy_single_device(device_serial),
         )
 
     def filter_and_sort_devices(self):
@@ -966,7 +941,7 @@ class WindowMain(QMainWindow):
         dialog.exec()
 
     def copy_single_device_info(self, device_serial):
-        self.device_actions_controller.copy_single_device_info(device_serial)
+        self.device_actions_facade.copy_single_device_info(device_serial)
 
     def _copy_device_detail_text(self, device_serial: str, device_model: str, detail_text: str) -> None:
         try:
@@ -1664,53 +1639,20 @@ class WindowMain(QMainWindow):
 
     @ensure_devices_selected
     def clear_logcat(self):
-        """Clear logcat on selected devices using logging manager."""
-        self.logging_manager.logcat_manager.clear_logcat_selected_devices()
+        """Clear logcat on selected devices using facade."""
+        self.logcat_facade.clear_logcat_selected_devices()
 
     def _open_logcat_for_device(self, device: adb_models.DeviceInfo) -> None:
-        """Create and show the logcat window for a device."""
-        if not device:
-            self.show_error('Error', 'Selected device is not available.')
-            return
-
-        try:
-            settings_payload: Dict[str, int] = {}
-            if self.logcat_settings is not None:
-                settings_payload = {
-                    'max_lines': self.logcat_settings.max_lines,
-                    'history_multiplier': self.logcat_settings.history_multiplier,
-                    'update_interval_ms': self.logcat_settings.update_interval_ms,
-                    'max_lines_per_update': self.logcat_settings.max_lines_per_update,
-                    'max_buffer_size': self.logcat_settings.max_buffer_size,
-                }
-
-            self.logcat_window = LogcatWindow(
-                device,
-                self,
-                settings=settings_payload,
-                on_settings_changed=self.persist_logcat_settings,
-            )
-            self.logcat_window.show()
-        except Exception as exc:
-            logger.error('Failed to open logcat window: %s', exc)
-            self.show_error('Logcat Error', f'Unable to launch Logcat viewer.\n\nDetails: {exc}')
+        """Create and show the logcat window for a device via facade."""
+        self.logcat_facade._open_logcat_for_device(device)
 
     def show_logcat(self):
         """Show logcat viewer for the single selected device."""
-        device = self.require_single_device_selection('Logcat viewer')
-        if device is None:
-            return
-
-        self._open_logcat_for_device(device)
+        self.logcat_facade.show_logcat_for_selected()
 
     def view_logcat_for_device(self, device_serial: str) -> None:
         """Launch the logcat viewer for the device under the context menu pointer."""
-        device = self.device_dict.get(device_serial)
-        if not device:
-            self.show_error('Logcat Error', 'Target device is no longer available.')
-            return
-
-        self._open_logcat_for_device(device)
+        self.logcat_facade.view_logcat_for_device(device_serial)
 
     def monitor_bluetooth(self) -> None:
         """Open Bluetooth monitor for the active device selection."""
@@ -1741,53 +1683,28 @@ class WindowMain(QMainWindow):
     # Shell commands
     @ensure_devices_selected
     def run_shell_command(self):
-        """Run shell command on selected devices using command execution manager."""
-        command = self.shell_cmd_edit.text().strip()
-        devices = self.get_checked_devices()
-        self.command_execution_manager.run_shell_command(command, devices)
+        """Run shell command on selected devices using commands facade."""
+        self.commands_facade.run_shell_command()
 
     # Enhanced command execution methods
     def add_template_command(self, command):
-        """Add a template command to the batch commands area using command execution manager."""
-        self.command_execution_manager.add_template_command(command)
+        """Add a template command using commands facade."""
+        self.commands_facade.add_template_command(command)
 
     @ensure_devices_selected
     def run_single_command(self):
         """Run the currently selected/first command from batch area."""
-        text = self.batch_commands_edit.toPlainText().strip()
-        if not text:
-            self.show_error('Error', 'Please enter commands in the batch area.')
-            return
-
-        # Get cursor position to determine which line to execute
-        cursor = self.batch_commands_edit.textCursor()
-        current_line = cursor.blockNumber()
-
-        lines = text.split('\n')
-        if current_line < len(lines):
-            command = lines[current_line].strip()
-        else:
-            command = lines[0].strip()  # Default to first line
-
-        # Skip comments and empty lines
-        if not command or command.startswith('#'):
-            self.show_error('Error', 'Selected line is empty or a comment.')
-            return
-
-        self.execute_single_command(command)
+        self.commands_facade.run_single_command()
 
     @ensure_devices_selected
     def run_batch_commands(self):
-        """Run all commands simultaneously using command execution manager."""
-        commands = self.get_valid_commands()
-        devices = self.get_checked_devices()
-        self.command_execution_manager.execute_batch_commands(commands, devices)
+        """Run all commands simultaneously using commands facade."""
+        self.commands_facade.run_batch_commands()
 
 
     def execute_single_command(self, command):
-        """Execute a single command and add to history using command execution manager."""
-        devices = self.get_checked_devices()
-        self.command_execution_manager.execute_single_command(command, devices)
+        """Execute a single command using commands facade."""
+        self.commands_facade.execute_single_command(command)
 
     def log_command_results(self, command, serials, results):
         """Log command results to console with proper formatting."""
@@ -1847,42 +1764,32 @@ class WindowMain(QMainWindow):
 
 
     def get_valid_commands(self):
-        """Extract valid commands from batch text area using command execution manager."""
-        text = self.batch_commands_edit.toPlainText().strip()
-        return self.command_execution_manager.get_valid_commands_from_text(text)
+        """Extract valid commands using commands facade."""
+        return self.commands_facade.get_valid_commands()
 
     def add_to_history(self, command):
-        """Add command to history using command history manager."""
-        self.command_history_manager.add_to_history(command)
-        self.update_history_display()
+        """Add command to history using commands facade."""
+        self.commands_facade.add_to_history(command)
 
     def update_history_display(self):
-        """Update the history list widget."""
-        self.command_history_list.clear()
-        for command in reversed(self.command_history_manager.command_history):  # Show most recent first
-            self.command_history_list.addItem(command)
+        """Update the history list widget using commands facade."""
+        self.commands_facade.update_history_display()
 
     def load_from_history(self, item):
-        """Load selected history item to batch commands area."""
-        command = item.text()
-        current_text = self.batch_commands_edit.toPlainText()
-        if current_text:
-            new_text = current_text + '\n' + command
-        else:
-            new_text = command
-        self.batch_commands_edit.setPlainText(new_text)
+        """Load selected history item using commands facade."""
+        self.commands_facade.load_from_history(item)
 
     def clear_command_history(self):
-        """Clear command history using command history manager."""
-        self.command_history_manager.clear_history()
+        """Clear command history using commands facade."""
+        self.commands_facade.clear_command_history()
 
     def export_command_history(self):
-        """Export command history to file using command history manager."""
-        self.command_history_manager.export_command_history()
+        """Export command history using commands facade."""
+        self.commands_facade.export_command_history()
 
     def import_command_history(self):
-        """Import command history from file using command history manager."""
-        self.command_history_manager.import_command_history()
+        """Import command history using commands facade."""
+        self.commands_facade.import_command_history()
 
     def load_command_history_from_config(self):
         """Load command history from config file using command history manager."""
@@ -2059,57 +1966,55 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
 
     def _set_device_file_status(self, message: str) -> None:
-        self.device_file_controller.set_status(message)
+        self.device_files_facade.set_status(message)
 
     def refresh_device_file_browser(self, path: Optional[str] = None) -> None:
-        self.device_file_controller.refresh_browser(path)
-        self.device_file_browser_current_serial = self.device_file_controller.current_serial
-        self.device_file_browser_current_path = self.device_file_controller.current_path
+        self.device_files_facade.refresh_browser(path)
 
     def navigate_device_files_up(self) -> None:
-        self.device_file_controller.navigate_up()
+        self.device_files_facade.navigate_up()
 
     def navigate_device_files_to_path(self) -> None:
-        self.device_file_controller.navigate_to_path()
+        self.device_files_facade.navigate_to_path()
 
     def on_device_file_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        self.device_file_controller.handle_item_double_clicked(item, column)
+        self.device_files_facade.handle_item_double_clicked(item, column)
 
     def download_selected_device_files(self) -> None:
-        self.device_file_controller.download_selected_files()
+        self.device_files_facade.download_selected_files()
 
     def preview_selected_device_file(self, item: Optional[QTreeWidgetItem] = None) -> None:
-        self.device_file_controller.preview_selected_file(item)
+        self.device_files_facade.preview_selected_file(item)
 
     def display_device_file_preview(self, local_path: str) -> None:
-        self.device_file_controller.display_preview(local_path)
+        self.device_files_facade.display_preview(local_path)
 
     def clear_device_file_preview(self) -> None:
-        self.device_file_controller.clear_preview()
+        self.device_files_facade.clear_preview()
 
     def hide_preview_loading(self) -> None:
-        self.device_file_controller.hide_preview_loading()
+        self.device_files_facade.hide_preview_loading()
 
     def copy_device_file_path(self, item: Optional[QTreeWidgetItem] = None) -> None:
-        self.device_file_controller.copy_path(item)
+        self.device_files_facade.copy_path(item)
 
     def download_device_file_item(self, item: Optional[QTreeWidgetItem] = None) -> None:
-        self.device_file_controller.download_item(item)
+        self.device_files_facade.download_item(item)
 
     def on_device_file_context_menu(self, position: QPoint) -> None:
-        self.device_file_controller.show_context_menu(position)
+        self.device_files_facade.show_context_menu(position)
 
     def ensure_preview_window(self) -> DeviceFilePreviewWindow:
-        return self.device_file_controller.ensure_preview_window()
+        return self.device_files_facade.ensure_preview_window()
 
     def clear_preview_cache(self) -> None:
-        self.device_file_controller.clear_preview_cache()
+        self.device_files_facade.clear_preview_cache()
 
     def open_preview_externally(self) -> None:
-        self.device_file_controller.open_preview_externally()
+        self.device_files_facade.open_preview_externally()
 
     def _handle_preview_cleanup(self, local_path: str) -> None:
-        self.device_file_controller.handle_preview_cleanup(local_path)
+        self.device_files_facade.handle_preview_cleanup(local_path)
 
     @ensure_devices_selected
     def generate_android_bug_report(self):
@@ -2393,8 +2298,7 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.device_file_controller.shutdown()
 
         # Clean up device management threads aggressively for immediate shutdown
-        if hasattr(self, 'device_manager'):
-            self.device_manager.cleanup()
+        # (already handled above)
 
         logger.info('Application shutdown complete')
         event.accept()
