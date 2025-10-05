@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 from ui.main_window import WindowMain
 from ui.constants import DEVICE_FILE_IS_DIR_ROLE, DEVICE_FILE_PATH_ROLE
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
+from config.constants import ApplicationConstants
 
 import sys
 
@@ -27,7 +28,7 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName("lazy blacktea")
-    app.setApplicationVersion("0.0.1")
+    app.setApplicationVersion(ApplicationConstants.APP_VERSION)
 
     window = WindowMain()
     window.show()
