@@ -18,6 +18,15 @@ logger = common.get_logger('task_dispatcher')
 TaskCallable = Callable[..., Any]
 
 
+class TaskCancelledError(Exception):
+    """Signal that a task was cancelled intentionally.
+
+    This exception type allows callers to indicate cancellation without
+    being treated as an error in logs. Downstream listeners still receive
+    the failure signal to perform UI cleanup, but logging uses INFO level.
+    """
+
+
 @dataclass(frozen=True)
 class TaskContext:
     """Metadata describing the submitted task."""
@@ -128,6 +137,15 @@ class _TaskRunnable(QRunnable):
     def _safe_report_progress(self, value: int, label: str) -> None:
         self._safe_emit('progress', value, label)
 
+    @staticmethod
+    def _is_cancelled_exception(exc: Exception) -> bool:
+        """Return True if the exception represents a user cancellation."""
+        if isinstance(exc, TaskCancelledError):
+            return True
+        # Backward compatibility with callers raising a generic RuntimeError
+        # with a standardized message.
+        return isinstance(exc, RuntimeError) and str(exc).strip().lower() == 'operation cancelled'
+
     def run(self) -> None:  # pragma: no cover - executed in thread pool
         if self._safe_is_cancelled():
             logger.debug('Skipping task %s because it was cancelled or handle destroyed before start', self._context)
@@ -144,7 +162,10 @@ class _TaskRunnable(QRunnable):
             try:
                 result = self.fn(*self.args, **kwargs)
             except Exception as exc:  # pragma: no cover - defensive path
-                logger.exception('Task %s failed: %s', self._context, exc)
+                if self._is_cancelled_exception(exc):
+                    logger.info('Task %s cancelled', self._context)
+                else:
+                    logger.exception('Task %s failed: %s', self._context, exc)
                 self._safe_emit('failed', exc)
             else:
                 self._safe_emit('completed', result)
@@ -208,4 +229,4 @@ def get_task_dispatcher() -> TaskDispatcher:
     return _dispatcher
 
 
-__all__ = ['TaskDispatcher', 'TaskHandle', 'TaskContext', 'get_task_dispatcher']
+__all__ = ['TaskDispatcher', 'TaskHandle', 'TaskContext', 'TaskCancelledError', 'get_task_dispatcher']

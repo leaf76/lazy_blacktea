@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from utils import common, dump_device_ui
-from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
+from utils.task_dispatcher import TaskContext, TaskHandle, TaskCancelledError, get_task_dispatcher
 from utils.ui_inspector_utils import (
     capture_device_screenshot,
     create_temp_files,
@@ -70,7 +70,7 @@ def _execute_ui_inspector_task(
 
     def _check_cancelled() -> None:
         if task_handle and task_handle.is_cancelled():  # pragma: no cover - defensive
-            raise RuntimeError('Operation cancelled')
+            raise TaskCancelledError('Operation cancelled')
 
     temp_dir: Optional[str] = None
     try:
@@ -542,13 +542,15 @@ class UIInspectorDialog(QDialog):
 
         logger.info('UI Inspector data refreshed for device: %s - Found %s elements', self.device_serial, len(ui_elements))
 
-    def _on_worker_failed(self, message: str) -> None:
-        if message == 'Operation cancelled':
+    def _on_worker_failed(self, error: Exception) -> None:
+        # Treat cancellation as a normal outcome without surfacing an error UI
+        if isinstance(error, TaskCancelledError) or str(error).strip() == 'Operation cancelled':
             logger.info('UI Inspector task cancelled for %s', self.device_serial)
             self.refresh_btn.setEnabled(True)
             self.refresh_btn.setText('🔄 Refresh')
             return
 
+        message = str(error)
         logger.error('Error refreshing UI data for %s: %s', self.device_serial, message)
 
         self._ensure_progress_determinate()
