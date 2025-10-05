@@ -109,14 +109,14 @@ Lazy Blacktea is a PyQt-based Android ADB cockpit for power-users. It streamline
 - Targeted checks:
   - `python3 tests/test_device_operations_refactor.py` — concurrency + retry coverage.
   - `python3 tests/test_logcat_viewer.py` — log streaming behaviours.
-  - `python3 test_device_list_performance.py` — large inventory stress test.
+  - `python3 tests/smoke/test_device_list_performance.py` — large inventory stress test.
   - Smoke scripts under `tests/smoke/` validate device workflows against ADB stubs.
 - Follow the TDD discipline noted in the engineering agreement: add/adjust tests with every behaviour change and prevent silent failures.
 
 ## Performance & Observability
 - Hot paths rely on `utils.debounced_refresh` (batched UI updates) and `utils.task_dispatcher` (thread pool orchestration); profile before altering refresh cadences.
 - Use structured logging with correlation IDs via `utils.common.get_logger`; log levels adhere to `config.constants.LoggingConstants`.
-- Performance regressions are caught by `tests/test_device_list_performance.py` and `tests/test_async_device_performance.py`—run them after touching device list rendering or async refresh.
+- Performance regressions are caught by `tests/smoke/test_device_list_performance.py` and `tests/test_async_device_performance.py`—run them after touching device list rendering or async refresh.
 - For heavy-duty analysis, leverage the native crate (`native_lbb`) or craft temporary scripts, but remove one-off helpers after use.
 
 ## Build & Distribution
@@ -152,13 +152,19 @@ Lazy Blacktea is a PyQt-based Android ADB cockpit for power-users. It streamline
 
 ## Documentation & Support
 - Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Repository operating playbook for agents: [AGENTS.md](AGENTS.md)
 - GitHub issues: https://github.com/cy76/lazy_blacktea/issues
 - Discussions: https://github.com/cy76/lazy_blacktea/discussions
 - Security reports: submit privately via GitHub Security Advisories
 
 ## Contributing
 Review the guidelines, keep commits focused (Conventional Commits), accompany changes with tests, and document performance assumptions. Request review only after `python3 tests/run_tests.py` passes on your machine.
+
+Engineering agreement (summary):
+- TDD and refactor routinely; apply Clean Code; keep commits small with tests/docs.
+- Optimize with data; focus hot paths; avoid premature optimization; prefer non-blocking I/O.
+- Concurrency: async for I/O, threads/processes for CPU; propagate trace IDs and use structured logs.
+- Security: store secrets in a manager; validate inputs; least privilege; enforce TLS.
+- Tests: unit > integration > E2E; never ignore failing tests; add tests when fixing bugs.
 
 ## License
 Lazy Blacktea is released under the [MIT License](LICENSE). PyQt6 and bundled dependencies retain their respective upstream licenses.
