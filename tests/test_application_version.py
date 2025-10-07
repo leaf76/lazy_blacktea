@@ -73,6 +73,23 @@ class ApplicationVersionResolutionTests(unittest.TestCase):
 
         self.assertEqual(version, '7.8.9')
 
+    def test_read_version_falls_back_to_executable_parent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Place VERSION next to a fake executable path
+            version_file = Path(temp_dir) / 'VERSION'
+            version_file.write_text('v2.3.4')
+
+            original_executable = sys.executable
+            try:
+                sys.executable = str(Path(temp_dir) / 'lazyblacktea')
+                # Only offer executable-parent VERSION candidate
+                with patch.object(self.constants, '_version_candidates', return_value=[version_file]):
+                    version = self.constants._read_version()
+            finally:
+                sys.executable = original_executable
+
+        self.assertEqual(version, '2.3.4')
+
 
 if __name__ == '__main__':
     unittest.main()

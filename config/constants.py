@@ -205,11 +205,25 @@ def _normalize_version(raw: str | None) -> str | None:
 def _version_candidates() -> list[Path]:
     """Return possible locations for the VERSION file."""
     base_dir = Path(__file__).resolve().parent.parent
-    candidates = [base_dir / 'VERSION']
+    candidates: list[Path] = [base_dir / 'VERSION']
 
+    # PyInstaller one-file extraction dir
     bundle_root = getattr(sys, '_MEIPASS', None)
     if bundle_root:
         candidates.append(Path(bundle_root) / 'VERSION')
+
+    # PyInstaller one-folder: sibling to executable
+    try:
+        exec_dir = Path(sys.executable).resolve().parent
+        candidates.append(exec_dir / 'VERSION')
+    except Exception:
+        pass
+
+    # Fallback: current working directory (useful when running from dist/)
+    try:
+        candidates.append(Path.cwd() / 'VERSION')
+    except Exception:
+        pass
 
     return candidates
 
