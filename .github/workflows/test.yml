@@ -113,6 +113,25 @@ jobs:
             print("Command timed out after 30 seconds")
         PY
 
+    - name: Run tests with coverage
+      env:
+        QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
+        COVERAGE_RUN_CHILD: '1'
+      run: |
+        python -m pip install coverage
+        python -m coverage erase
+        python -m coverage run -m tests.run_tests
+        python -m coverage combine
+        python -m coverage xml -o coverage.xml
+        python -m coverage report -m
+
+    - name: Upload coverage
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-${{ matrix.os }}
+        path: coverage.xml
+        if-no-files-found: error
+
     - name: Test utilities modules
       run: |
         python -c "

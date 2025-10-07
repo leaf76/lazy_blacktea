@@ -16,7 +16,13 @@ def run_test(test_name, test_file):
 
     start_time = time.time()
     try:
-        result = subprocess.run([sys.executable, test_file],
+        # Optionally run tests under coverage per-child when COVERAGE_RUN_CHILD=1
+        use_cov = os.environ.get('COVERAGE_RUN_CHILD', '0') == '1'
+        cmd = [sys.executable, test_file]
+        if use_cov:
+            cmd = [sys.executable, '-m', 'coverage', 'run', '-p', test_file]
+
+        result = subprocess.run(cmd,
                               cwd=os.path.dirname(os.path.abspath(__file__)),
                               capture_output=False,
                               timeout=120)
@@ -52,6 +58,12 @@ def main():
         ("Shell Commands Layout Tests", "test_shell_commands_layout.py"),
         ("Device Files Layout Tests", "test_device_files_layout.py"),
         ("Console Panel Toggle Tests", "test_console_panel_toggle.py"),
+        # Additional lightweight unit tests to improve coverage
+        ("Debounced Refresh Tests", "test_debounced_refresh.py"),
+        ("JSON Utils Extra Tests", "test_json_utils_extra.py"),
+        ("Qt Dependency Checker Extra Tests", "test_qt_dependency_checker_extra.py"),
+        ("Common Utils Extra Tests", "test_common_utils_extra.py"),
+        ("File Generation Utils Extra Tests", "test_file_generation_utils_extra.py"),
         # Note: Functional tests require user interaction, run separately
         # ("Functional Tests", "test_functional.py"),
     ]

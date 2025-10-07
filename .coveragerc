@@ -1,0 +1,17 @@
+[run]
+branch = True
+parallel = True
+source = utils,ui,config
+omit =
+    tests/*
+    venv/*
+    */venv/*
+    build/*
+    dist/*
+    native_lbb/*
+
+[report]
+show_missing = True
+skip_covered = False
+fail_under = 0
+
