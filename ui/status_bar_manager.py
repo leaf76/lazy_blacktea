@@ -33,20 +33,24 @@ class StatusBarManager:
         self._status_bar_factory = status_bar_factory or QStatusBar
         self._progress_bar_factory = progress_bar_factory or QProgressBar
         self._version_label_factory = version_label_factory or QLabel
+        self._selection_mode_label_factory: Callable[[], QLabel] = QLabel
 
     def create_status_bar(self) -> None:
         status_bar = self._status_bar_factory()
         version_label = self._create_version_label()
+        selection_label = self._create_selection_mode_label()
         progress_bar = self._progress_bar_factory()
         progress_bar.setVisible(False)
 
         self.window.setStatusBar(status_bar)
+        status_bar.addPermanentWidget(selection_label)
         status_bar.addPermanentWidget(version_label)
         status_bar.addPermanentWidget(progress_bar)
 
         self.window.status_bar = status_bar
         self.window.progress_bar = progress_bar
         self.window.version_label = version_label
+        self.window.selection_mode_status_label = selection_label
 
         self.show_message("Ready")
         logger.debug("Status bar and progress bar initialised")
@@ -61,6 +65,31 @@ class StatusBarManager:
         if hasattr(label, "setStyleSheet"):
             label.setStyleSheet("color: #6c6c6c; padding-right: 12px;")
         return label
+
+    def _create_selection_mode_label(self) -> QLabel:
+        label = self._selection_mode_label_factory()
+        if hasattr(label, "setObjectName"):
+            label.setObjectName("selectionModeLabel")
+        if hasattr(label, "setStyleSheet"):
+            label.setStyleSheet("color: #6c6c6c; padding-left: 8px; padding-right: 8px;")
+        # Initial text will be set by update_selection_mode
+        return label
+
+    def update_selection_mode(self, single: bool) -> None:
+        """Update the status bar label indicating selection mode."""
+        label = getattr(self.window, "selection_mode_status_label", None)
+        if label is None:
+            return
+        mode_text = "Single" if single else "Multi"
+        if hasattr(label, "setText"):
+            label.setText(f"Mode: {mode_text}")
+        if hasattr(label, "setToolTip"):
+            tip = (
+                "Single-select: selecting a device replaces any previous selection"
+                if single
+                else "Multi-select: use checkboxes to select multiple devices"
+            )
+            label.setToolTip(tip)
 
     def show_message(self, message: str, timeout: int = 0) -> None:
         status_bar = getattr(self.window, "status_bar", None)

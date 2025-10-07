@@ -23,6 +23,8 @@ class UISettings:
     theme: str = 'dark'
     font_size: int = 10
     show_console_panel: bool = False
+    # Device list selection mode: True means Single-select, False means Multi-select
+    single_selection: bool = True
 
 
 @dataclass
@@ -158,6 +160,10 @@ class ConfigManager:
         if not isinstance(ui_settings.get('show_console_panel', True), bool):
             ui_settings['show_console_panel'] = True
             logger.warning('Console panel visibility invalid, reset to True')
+        # Ensure selection mode is boolean; default to True (Single-select)
+        if not isinstance(ui_settings.get('single_selection', True), bool):
+            ui_settings['single_selection'] = True
+            logger.warning('Selection mode invalid, reset to Single-select')
 
         device_settings = validated.get('device', {})
         if device_settings.get('refresh_interval', 30) < 1:

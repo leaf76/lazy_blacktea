@@ -180,10 +180,27 @@ class DeviceListController:
     def select_all_devices(self) -> None:
         """Select every available device."""
         serials = list(self.window.device_dict.keys())
-        self.window.device_selection_manager.set_selected_serials(serials)
-        self._synchronize_ui_selection(serials, self.window.device_selection_manager.get_active_serial())
+        if self.window.device_selection_manager.is_single_selection():
+            # In single-select mode, keep only the last serial (stable order)
+            keep = serials[-1:] if serials else []
+            selected = self.window.device_selection_manager.set_selected_serials(keep)
+        else:
+            selected = self.window.device_selection_manager.set_selected_serials(serials)
+        self._synchronize_ui_selection(selected, self.window.device_selection_manager.get_active_serial())
         self.update_selection_count()
         logger.info('Selected all %s devices', len(serials))
+
+    def select_last_visible_device(self) -> None:
+        """Select the last device in the currently visible (filtered/sorted) list."""
+        devices = self._get_filtered_sorted_devices(self.window.device_dict)
+        if not devices:
+            logger.info('No visible devices to select')
+            self._set_selection([])
+            return
+        last = devices[-1]
+        serial = last.device_serial_num
+        self._set_selection([serial], active_serial=serial)
+        logger.info('Selected last visible device: %s', serial)
 
     def select_no_devices(self) -> None:
         """Clear selection state."""
@@ -235,6 +252,19 @@ class DeviceListController:
             self.window.selection_summary_label.setText(
                 f'Selected {selected_count} of {total_count} · Active: {active_label}'
             )
+
+        # Update hint label according to selection mode
+        if hasattr(self.window, 'selection_hint_label') and self.window.selection_hint_label is not None:
+            if self.window.device_selection_manager.is_single_selection():
+                hint_text = (
+                    'Tip: Single-select mode is ON. Clicking a row selects only that device. '
+                    'Toggle again to clear.'
+                )
+            else:
+                hint_text = (
+                    'Tip: Use the checkboxes for multi-select. Toggle a device last to mark it active for single-device actions.'
+                )
+            self.window.selection_hint_label.setText(hint_text)
 
         update_overview = getattr(self.window, 'update_device_overview', None)
         if callable(update_overview):

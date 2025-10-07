@@ -125,6 +125,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self._current_theme = 'light'
         initial_config = self.config_manager.load_config()
         self._initial_ui_settings: UISettings = initial_config.ui
+        self._initial_single_selection = getattr(self._initial_ui_settings, 'single_selection', True)
         self._current_theme = self.theme_manager.set_theme(initial_config.ui.theme)
         self.error_handler = ErrorHandler(self)
         self.command_executor = CommandExecutor(self)
@@ -382,6 +383,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.no_devices_label = device_components['no_devices_label']
         self.device_panel_stack = device_components['device_panel_stack']
         self.selection_summary_label = device_components['selection_summary_label']
+        # New selection mode + hint references
+        self.selection_hint_label = device_components.get('selection_hint_label')
+        self.selection_mode_checkbox = device_components.get('selection_mode_checkbox')
+        # Control buttons references for selection mode dependent state
+        self.select_all_btn = device_components.get('select_all_btn')
+        self.select_none_btn = device_components.get('select_none_btn')
 
         self.device_list_controller.attach_table(self.device_table)
         self.device_list_controller.update_selection_count()
@@ -403,6 +410,62 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Create status bar
         self.create_status_bar()
+
+        # Apply persisted selection mode after UI is ready
+        try:
+            # Ensure manager state
+            self.device_selection_manager.set_single_selection(self._initial_single_selection)
+            # Sync checkbox without emitting signals
+            if self.selection_mode_checkbox is not None:
+                prev = self.selection_mode_checkbox.blockSignals(True)
+                self.selection_mode_checkbox.setChecked(self._initial_single_selection)
+                self.selection_mode_checkbox.blockSignals(prev)
+            # Update dependent UI and status label
+            self._sync_selection_mode_dependent_ui()
+            self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning('Failed to apply initial selection mode: %s', exc)
+
+    # ------------------------------------------------------------------
+    # Device selection mode
+    # ------------------------------------------------------------------
+    def handle_selection_mode_toggle(self, enabled: bool) -> None:
+        """Toggle between single-select and multi-select for the device list."""
+        try:
+            self.device_selection_manager.set_single_selection(bool(enabled))
+            # If switching to single, collapse selection is already handled by manager
+            selected = self.device_selection_manager.get_selected_serials()
+            active = self.device_selection_manager.get_active_serial()
+            # Re-sync UI selection and labels
+            self.device_list_controller._set_selection(selected, active_serial=active)
+            self.device_list_controller.update_selection_count()
+            # Update UI controls and status indicator
+            self._sync_selection_mode_dependent_ui()
+            self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
+            # Persist setting
+            try:
+                self.config_manager.update_ui_settings(single_selection=self.device_selection_manager.is_single_selection())
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning('Failed to persist selection mode: %s', exc)
+            logger.info('Selection mode changed: %s', 'single' if enabled else 'multi')
+        except Exception as exc:  # pragma: no cover - safety
+            logger.error('Failed to toggle selection mode: %s', exc)
+
+    def _sync_selection_mode_dependent_ui(self) -> None:
+        """Update widgets (buttons, tips, labels) based on selection mode state."""
+        single = self.device_selection_manager.is_single_selection()
+        # Panel buttons
+        if getattr(self, 'select_all_btn', None) is not None:
+            try:
+                # Update label and tooltip instead of disabling in single mode
+                if single:
+                    self.select_all_btn.setText('Select Last Visible')
+                    self.select_all_btn.setToolTip('Select the last visible device (single-select mode)')
+                else:
+                    self.select_all_btn.setText('Select All')
+                    self.select_all_btn.setToolTip('Select all devices')
+            except Exception:  # pragma: no cover - compatibility
+                pass
 
     def set_app_icon(self):
         """Set the application icon across supported platforms."""
@@ -513,6 +576,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def create_status_bar(self):
         """Create the status bar."""
         self.status_bar_manager.create_status_bar()
+        # Ensure initial selection mode indicator is shown
+        self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
@@ -724,6 +789,20 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             'Deselect All Devices',
             self.device_list_controller.select_no_devices,
         )
+
+    def handle_select_all_action(self):
+        """Context-aware handler for the Select All panel/menu action.
+
+        - In multi-select mode: selects all devices.
+        - In single-select mode: selects the last visible device.
+        """
+        if self.device_selection_manager.is_single_selection():
+            self._execute_with_operation_logging(
+                'Select Last Visible Device',
+                self.device_list_controller.select_last_visible_device,
+            )
+        else:
+            self.select_all_devices()
 
     # Device Groups functionality
     def save_group(self):

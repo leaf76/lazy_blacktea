@@ -47,8 +47,24 @@ class DeviceListContextMenuManager:
         refresh_action = menu.addAction("Refresh")
         refresh_action.triggered.connect(self.window.device_manager.force_refresh)
 
-        select_all_action = menu.addAction("Select All")
-        select_all_action.triggered.connect(self.window.select_all_devices)
+        # Adapt label and handler depending on selection mode
+        selection_mgr = getattr(self.window, 'device_selection_manager', None)
+        if selection_mgr is not None and selection_mgr.is_single_selection():
+            select_all_action = menu.addAction("Select Last Visible")
+            # Prefer context-aware handler if available
+            if hasattr(self.window, 'handle_select_all_action'):
+                select_all_action.triggered.connect(self.window.handle_select_all_action)
+            else:
+                # Fallback directly to controller method
+                select_all_action.triggered.connect(self.window.device_list_controller.select_last_visible_device)
+            if hasattr(select_all_action, 'setToolTip'):
+                select_all_action.setToolTip('Select the last visible device (single-select mode)')
+        else:
+            select_all_action = menu.addAction("Select All")
+            if hasattr(self.window, 'handle_select_all_action'):
+                select_all_action.triggered.connect(self.window.handle_select_all_action)
+            else:
+                select_all_action.triggered.connect(self.window.select_all_devices)
 
         clear_all_action = menu.addAction("Clear All")
         clear_all_action.triggered.connect(self.window.select_no_devices)

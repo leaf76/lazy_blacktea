@@ -12,6 +12,7 @@ class DeviceSelectionManager:
     def __init__(self) -> None:
         self._selection: "OrderedDict[str, None]" = OrderedDict()
         self._active_serial: Optional[str] = None
+        self._single_selection_enabled: bool = False
 
     # ------------------------------------------------------------------
     # Selection bookkeeping
@@ -24,10 +25,18 @@ class DeviceSelectionManager:
     ) -> List[str]:
         """Apply a checkbox/radio toggle to the tracked selection state."""
         if is_checked:
-            self._selection.pop(serial, None)
-            self._selection[serial] = None
-            self._active_serial = serial
+            if self._single_selection_enabled:
+                # Single-select mode: replace with only this serial
+                self._selection.clear()
+                self._selection[serial] = None
+                self._active_serial = serial
+            else:
+                # Multi-select mode: append while keeping insertion order unique
+                self._selection.pop(serial, None)
+                self._selection[serial] = None
+                self._active_serial = serial
         else:
+            # Uncheck always removes in both modes
             self._selection.pop(serial, None)
             if self._active_serial == serial:
                 self._active_serial = next(reversed(self._selection), None)
@@ -43,9 +52,15 @@ class DeviceSelectionManager:
 
     def set_selected_serials(self, serials: Iterable[str]) -> List[str]:
         """Replace the tracked selection with the provided serials."""
+        serial_list = list(serials)
         self._selection.clear()
-        for serial in serials:
-            self._selection[serial] = None
+        if self._single_selection_enabled:
+            # In single-select mode, keep only the last provided serial if any
+            if serial_list:
+                self._selection[serial_list[-1]] = None
+        else:
+            for serial in serial_list:
+                self._selection[serial] = None
         self._active_serial = next(reversed(self._selection), None)
         return self.get_selected_serials()
 
@@ -65,6 +80,31 @@ class DeviceSelectionManager:
         """Reset tracked selection."""
         self._selection.clear()
         self._active_serial = None
+
+    # ------------------------------------------------------------------
+    # Selection mode controls
+    # ------------------------------------------------------------------
+    def set_single_selection(self, enabled: bool) -> None:
+        """Enable or disable single-selection mode.
+
+        When enabling single-selection, collapse existing multi-selection to at most one
+        device (prefer the current active device, else keep the last inserted).
+        """
+        was_enabled = self._single_selection_enabled
+        self._single_selection_enabled = bool(enabled)
+        if not was_enabled and self._single_selection_enabled:
+            # Collapse to one selection
+            if len(self._selection) > 1:
+                active = self.get_active_serial()
+                # Rebuild selection with only the active (or last) serial
+                self._selection.clear()
+                if active is not None:
+                    self._selection[active] = None
+                self._active_serial = active
+
+    def is_single_selection(self) -> bool:
+        """Return True if single-selection mode is enabled."""
+        return self._single_selection_enabled
 
     def set_active_serial(self, serial: Optional[str]) -> Optional[str]:
         """Mark the specified serial as the active device if it is selected."""

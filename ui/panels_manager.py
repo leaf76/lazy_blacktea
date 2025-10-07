@@ -507,12 +507,25 @@ class PanelsManager(QObject):
         control_layout.addWidget(refresh_btn)
 
         select_all_btn = QPushButton('Select All')
-        select_all_btn.clicked.connect(lambda checked: main_window.select_all_devices())
+        # Route to context-aware handler if available; fallback to legacy select_all
+        if hasattr(main_window, 'handle_select_all_action'):
+            select_all_btn.clicked.connect(lambda checked: main_window.handle_select_all_action())
+        else:  # pragma: no cover - legacy compatibility
+            select_all_btn.clicked.connect(lambda checked: main_window.select_all_devices())
         control_layout.addWidget(select_all_btn)
 
         select_none_btn = QPushButton('Select None')
         select_none_btn.clicked.connect(lambda checked: main_window.select_no_devices())
         control_layout.addWidget(select_none_btn)
+
+        # Selection mode toggle (single vs multi)
+        selection_mode_checkbox = QCheckBox('Single Select')
+        selection_mode_checkbox.setToolTip('Toggle between single and multiple device selection modes')
+        try:
+            selection_mode_checkbox.toggled.connect(lambda checked: main_window.handle_selection_mode_toggle(checked))
+        except Exception:  # pragma: no cover - compatibility
+            pass
+        control_layout.addWidget(selection_mode_checkbox)
 
         device_layout.addLayout(control_layout)
 
@@ -562,4 +575,7 @@ class PanelsManager(QObject):
             'device_panel_stack': device_stack,
             'selection_summary_label': selection_summary_label,
             'selection_hint_label': hint_label,
+            'selection_mode_checkbox': selection_mode_checkbox,
+            'select_all_btn': select_all_btn,
+            'select_none_btn': select_none_btn,
         }
