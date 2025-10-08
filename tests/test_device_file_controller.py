@@ -147,7 +147,7 @@ class DeviceFileControllerTests(unittest.TestCase):
         self.assertEqual(self.status_label.text(), 'Loaded 1 folders and 1 files.')
         self.path_edit.setText.assert_called_with('/sdcard')
 
-    def test_status_label_elides_long_messages_and_provides_tooltip(self) -> None:
+    def test_status_label_shows_full_text_without_ellipsis(self) -> None:
         self.status_label.setFixedWidth(180)
         self.status_label.resize(180, self.status_label.sizeHint().height())
         long_message = 'Loaded 12 folders and 345 files from /a/really/long/path/that/does/not/fit'
@@ -156,9 +156,8 @@ class DeviceFileControllerTests(unittest.TestCase):
         self._app.processEvents()
 
         label_text = self.status_label.text()
-        self.assertNotEqual(label_text, long_message)
-        self.assertTrue(label_text.endswith('…'), 'Expected elided text to end with ellipsis')
-        self.assertEqual(self.status_label.toolTip(), long_message)
+        self.assertEqual(label_text, long_message)
+        self.assertEqual(self.status_label.toolTip(), '')
 
 
 if __name__ == '__main__':
