@@ -37,6 +37,11 @@ class CommandExecutionManager(QObject):
         self._active_handles: List[TaskHandle] = []
         self._handle_processes: dict[TaskHandle, List[subprocess.Popen]] = {}
         self._console_connected = False
+        # Track batch executions: batch_id -> {
+        #   expected, done, failed, serials, commands,
+        #   completed_commands: List[str], failed_commands: List[tuple[str, str]]
+        # }
+        self._batch_states: Dict[str, Dict[str, Any]] = {}
         # 連接信號到父視窗的處理方法
         if hasattr(parent_window, '_write_to_console_safe'):
             self.console_output_signal.connect(parent_window._write_to_console_safe)
@@ -175,6 +180,19 @@ class CommandExecutionManager(QObject):
             f'🚀 Running {len(commands)} batch command(s) on {device_count} device(s)...'
         )
 
+        # Initialize batch tracking
+        batch_id = common.generate_trace_id()
+        with self.process_lock:
+            self._batch_states[batch_id] = {
+                'expected': len(commands),
+                'done': 0,
+                'failed': 0,
+                'serials': serials,
+                'commands': list(commands),
+                'completed_commands': [],
+                'failed_commands': [],  # (command, error)
+            }
+
         for cmd in commands:
             if hasattr(self.parent_window, 'command_history_manager'):
                 self.parent_window.command_history_manager.add_to_history(cmd)
@@ -186,8 +204,13 @@ class CommandExecutionManager(QObject):
                 command=cmd,
                 context=context,
             )
-            handle.completed.connect(lambda payload, c=cmd: self._on_cancellable_command_completed(c, serials, payload))
-            handle.failed.connect(lambda exc, c=cmd: self._log_error(f"Error executing batch command '{c}': {exc}"))
+            # Suppress per-command dialog; aggregate by batch_id
+            handle.completed.connect(
+                lambda payload, c=cmd, bid=batch_id: self._on_cancellable_command_completed(c, serials, payload, is_batch=True, batch_id=bid)
+            )
+            handle.failed.connect(
+                lambda exc, c=cmd, bid=batch_id: self._on_batch_command_failed(c, serials, exc, batch_id=bid)
+            )
             self._track_handle(handle)
 
     def log_command_results(self, command: str, serials: List[str], results):
@@ -302,14 +325,120 @@ class CommandExecutionManager(QObject):
         if isinstance(payload, dict):
             results = payload.get('results', [])
         self.command_results_ready.emit(command, serials, results)
+        # Log and notify completion via UI dialog
         QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
+        try:
+            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            QTimer.singleShot(
+                0,
+                lambda: getattr(self.parent_window, 'show_info', lambda *_: None)(
+                    'Shell Command Completed',
+                    f'Command "{command}" completed on {device_count} device(s).'
+                ),
+            )
+        except Exception:
+            # Avoid breaking the flow if dialog presentation fails
+            pass
 
-    def _on_cancellable_command_completed(self, command: str, serials: List[str], payload: Any) -> None:
+    def _on_cancellable_command_completed(self, command: str, serials: List[str], payload: Any, is_batch: bool = False, batch_id: Optional[str] = None) -> None:
         results = []
         if isinstance(payload, dict):
             results = payload.get('results', [])
         self.command_results_ready.emit(command, serials, results)
         QTimer.singleShot(0, lambda: self._log_completion(f'Command "{command}" completed on {len(serials)} device(s)'))
+
+        if is_batch and batch_id:
+            # Update batch state and maybe show one summary dialog
+            self._increment_batch_done(batch_id, success=True, command=command)
+            return
+
+        # Non-batch single command: show completion dialog
+        try:
+            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            QTimer.singleShot(
+                0,
+                lambda: getattr(self.parent_window, 'show_info', lambda *_: None)(
+                    'Command Completed',
+                    f'Command "{command}" completed on {device_count} device(s).'
+                ),
+            )
+        except Exception:
+            # Defensive: ignore dialog issues
+            pass
+
+    def _on_batch_command_failed(self, command: str, serials: List[str], exc: Exception, *, batch_id: Optional[str] = None) -> None:
+        self._log_error(f"Error executing batch command '{command}': {exc}")
+        if batch_id:
+            self._increment_batch_done(batch_id, success=False, command=command, error=str(exc))
+
+    def _increment_batch_done(self, batch_id: str, *, success: bool, command: Optional[str] = None, error: Optional[str] = None) -> None:
+        with self.process_lock:
+            state = self._batch_states.get(batch_id)
+            if not state:
+                return
+            state['done'] += 1
+            if not success:
+                state['failed'] += 1
+                if command is not None:
+                    state['failed_commands'].append((command, error or ''))
+            else:
+                if command is not None:
+                    state['completed_commands'].append(command)
+
+            done = state['done']
+            expected = state['expected']
+            failed = state['failed']
+            serials = state.get('serials', [])
+
+            if done < expected:
+                return
+
+            # Batch completed: show one summary and cleanup
+            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            summary_lines: List[str] = []
+            summary_lines.append(f'Executed {expected} command(s) on {device_count} device(s).')
+            if failed:
+                summary_lines.append(f'Failures: {failed}')
+
+            # Include first few commands for quick glance
+            try:
+                commands: List[str] = list(state.get('commands') or [])
+                if commands:
+                    preview_count = min(5, len(commands))
+                    summary_lines.append('Commands:')
+                    for cmd in commands[:preview_count]:
+                        summary_lines.append(f'• {cmd}')
+                    if len(commands) > preview_count:
+                        summary_lines.append(f'... and {len(commands) - preview_count} more')
+            except Exception:
+                pass
+
+            # Include failed commands brief list
+            try:
+                failures: List[tuple[str, str]] = list(state.get('failed_commands') or [])
+                if failures:
+                    preview_fail = min(5, len(failures))
+                    summary_lines.append('Failed Commands:')
+                    for cmd, err in failures[:preview_fail]:
+                        err_snippet = (err or '').strip().splitlines()[0][:120]
+                        if err_snippet:
+                            summary_lines.append(f'• {cmd} — {err_snippet}')
+                        else:
+                            summary_lines.append(f'• {cmd}')
+                    if len(failures) > preview_fail:
+                        summary_lines.append(f'... and {len(failures) - preview_fail} more failures')
+            except Exception:
+                pass
+
+            summary = '\n'.join(summary_lines)
+
+            QTimer.singleShot(
+                0,
+                lambda: getattr(self.parent_window, 'show_info', lambda *_: None)('Batch Commands Completed', summary),
+            )
+
+            # Cleanup state
+            self._batch_states.pop(batch_id, None)
 
     def _run_shell_command_task(
         self,

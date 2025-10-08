@@ -805,7 +805,8 @@ def run_adb_shell_command(
     cmd = adb_commands.cmd_adb_shell(s, command_str)
     commands.append(cmd)
 
-  results = _execute_commands_parallel(commands, 'clear_android_device_logcat')
+  # Execute per-device shell commands in parallel with accurate operation label
+  results = _execute_commands_parallel(commands, 'run_adb_shell_command')
 
   # Log detailed results for each device
   for i, (serial, cmd, result) in enumerate(zip(serial_nums, commands, results)):
