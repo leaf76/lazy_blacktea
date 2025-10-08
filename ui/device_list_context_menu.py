@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Callable, Iterable, Optional, Sequence, TYPE_CHECKING
 
 from PyQt6.QtWidgets import QMenu
+from PyQt6.QtCore import QPoint
 
 from utils import common
 
@@ -34,10 +35,32 @@ class DeviceListContextMenuManager:
         return menu
 
     def show_context_menu(self, position) -> None:
+        """Show context menu at a global position, resolving anchor defensively.
+
+        Accepts either a QPoint or a tuple-like (x, y) position for easier testing.
+        """
         menu = self.create_context_menu()
+
+        # Prefer the device table's viewport when available
         table = getattr(self.window, 'device_table', None)
-        anchor = table.viewport() if table is not None else self.window
-        global_pos = anchor.mapToGlobal(position)
+        if table is not None and hasattr(table, 'viewport'):
+            anchor = table.viewport()
+        else:
+            # Fallback to an optional scroll/viewport shim used in tests
+            anchor = getattr(self.window, 'device_scroll', self.window)
+
+        # Map to global if supported; pass through raw tuple for test doubles
+        if hasattr(anchor, 'mapToGlobal'):
+            global_pos = anchor.mapToGlobal(position)
+        else:
+            # Normalise position to QPoint if a tuple was provided
+            if not isinstance(position, QPoint):
+                try:
+                    x, y = position  # type: ignore[misc]
+                    position = QPoint(int(x), int(y))
+                except Exception:
+                    position = QPoint(0, 0)
+            global_pos = position
         menu.exec(global_pos)
 
     # ------------------------------------------------------------------

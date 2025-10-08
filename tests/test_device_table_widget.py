@@ -267,6 +267,50 @@ class DeviceTableWidgetTest(unittest.TestCase):
         reset_color = self.table.item(0, 1).foreground().color().name()
         self.assertEqual(reset_color, default_color)
 
+    def test_active_highlight_after_sort_maps_to_correct_row(self):
+        devices = {
+            's1': adb_models.DeviceInfo('s1', 'usb', 'prod', 'Bravo', True, True, '14', '34', '35', 'fp'),
+            's2': adb_models.DeviceInfo('s2', 'usb', 'prod', 'Alpha', False, False, '13', '33', '34', 'fp'),
+        }
+
+        self.table.update_devices(devices)
+
+        # Sort by model ascending: Alpha should be at row 0
+        self.table.sortItems(1, Qt.SortOrder.AscendingOrder)
+        self._app.processEvents()
+
+        # Resolve the serial currently at row 0 and mark it active
+        row0_serial = self.table.item(0, 0).data(self.table._SERIAL_ROLE)
+        self.table.set_active_serial(row0_serial)
+        self._app.processEvents()
+
+        # Verify row 0 shows the active text color
+        active_color = self.table.item(0, 1).foreground().color().name()
+        self.assertEqual(active_color, '#0b5394')
+
+    def test_set_checked_serials_after_sort_sets_correct_row(self):
+        devices = {
+            's1': adb_models.DeviceInfo('s1', 'usb', 'prod', 'Bravo', True, True, '14', '34', '35', 'fp'),
+            's2': adb_models.DeviceInfo('s2', 'usb', 'prod', 'Alpha', False, False, '13', '33', '34', 'fp'),
+        }
+
+        self.table.update_devices(devices)
+        # Sort so that 'Alpha' is first and 'Bravo' is second
+        self.table.sortItems(1, Qt.SortOrder.AscendingOrder)
+        self._app.processEvents()
+
+        # Programmatically select 's1' (Bravo), which is row 1 after sort
+        self.table.set_checked_serials(['s1'], active_serial=None)
+        self._app.processEvents()
+
+        # Ensure only the row containing 's1' is checked
+        checked = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                checked.append(item.data(self.table._SERIAL_ROLE))
+        self.assertEqual(checked, ['s1'])
+
 
 if __name__ == '__main__':
     unittest.main()
