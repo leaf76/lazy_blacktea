@@ -13,8 +13,8 @@
 import os
 import threading
 from typing import Any, Dict, List, Callable, Optional
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
+from PyQt6.QtWidgets import QFileDialog, QProgressDialog
 
 from utils import adb_models, common, json_utils
 from utils.file_generation_utils import (
@@ -44,6 +44,10 @@ class FileOperationsManager(QObject):
         self._active_bug_report_devices: list[str] = []
         self._dispatcher = get_task_dispatcher()
         self._active_handles: List[TaskHandle] = []
+        self.progress_dialog: Optional[QProgressDialog] = None
+        self._bug_report_cancel_event: Optional[threading.Event] = None
+        self._bug_report_handle: Optional[TaskHandle] = None
+        self._bug_report_per_device: Dict[str, Dict[str, Any]] = {}
 
     def _track_handle(self, handle: TaskHandle) -> None:
         self._active_handles.append(handle)
@@ -91,6 +95,7 @@ class FileOperationsManager(QObject):
         *,
         output_path: str,
         progress_callback: Optional[Callable[[dict], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
         task_handle: Optional[TaskHandle] = None,
         **_: Any,
     ) -> Dict[str, Any]:
@@ -115,6 +120,7 @@ class FileOperationsManager(QObject):
             callback,
             progress_callback=progress_callback,
             completion_event=completion_event,
+            cancel_event=cancel_event,
         )
 
         completion_event.wait()
@@ -249,12 +255,17 @@ class FileOperationsManager(QObject):
         self._bug_report_in_progress = True
         self._active_bug_report_devices = serials
 
-        # 顯示進度通知（避免阻塞，改用狀態列與信號）
+        # 顯示進度通知與非阻塞進度對話框
         initial_message = (
             f'🐛 Preparing bug report generation for {device_count} device(s)... '
             f'(Saving to: {validated_path})'
         )
         QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(0, device_count, initial_message))
+
+        # 建立進度對話框（初始未知進度 → Busy）
+        self._create_bug_report_progress_dialog(total=device_count, message=initial_message)
+        # 準備取消事件
+        self._bug_report_cancel_event = threading.Event()
 
         def progress_callback(payload: dict):
             """Bug report 進度更新回調"""
@@ -271,7 +282,27 @@ class FileOperationsManager(QObject):
             if not payload.get('success') and payload.get('error_message'):
                 base_message = f"{base_message} — {payload['error_message']}"
 
-            QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(current, total, base_message))
+            # 更新 per-device 進度
+            percent = payload.get('percent', None)
+            if serial not in self._bug_report_per_device:
+                self._bug_report_per_device[serial] = {
+                    'model': device_model,
+                    'percent': 0,
+                    'status': 'running',
+                }
+            if isinstance(percent, int):
+                self._bug_report_per_device[serial]['percent'] = max(0, min(100, percent))
+            # 完成或失敗標記
+            if payload.get('success') and percent is None:
+                self._bug_report_per_device[serial]['percent'] = 100
+                self._bug_report_per_device[serial]['status'] = 'success'
+            elif (not payload.get('success')) and payload.get('error_message'):
+                self._bug_report_per_device[serial]['status'] = 'failed'
+
+            formatted = self._format_bug_report_progress_message(base_message)
+
+            QTimer.singleShot(0, lambda: self.file_generation_progress_signal.emit(current, total, formatted))
+            self._update_bug_report_progress(message=formatted, current=current, total=total)
 
         context = TaskContext(name='bug_report_generation', category='file_generation')
 
@@ -280,8 +311,10 @@ class FileOperationsManager(QObject):
             devices,
             output_path=validated_path,
             progress_callback=progress_callback,
+            cancel_event=self._bug_report_cancel_event,
             context=context,
         )
+        self._bug_report_handle = handle
 
         def _on_completed(payload: Dict[str, Any]) -> None:
             summary_text = payload.get('summary', '')
@@ -295,6 +328,16 @@ class FileOperationsManager(QObject):
                 on_complete(summary_text)
             self._bug_report_in_progress = False
             self._active_bug_report_devices = []
+            # 完成時更新對話框文案並延遲關閉
+            final_message = (
+                f'{icon} Bug report generation finished.\n\n'
+                f'Output: {output_directory}'
+            )
+            self._update_bug_report_progress(message=final_message, current=success_count, total=device_count)
+            QTimer.singleShot(1500, self._close_bug_report_progress_dialog)
+            self._bug_report_handle = None
+            self._bug_report_cancel_event = None
+            self._bug_report_per_device.clear()
 
         def _on_failed(exc: Exception) -> None:
             self._bug_report_in_progress = False
@@ -308,12 +351,142 @@ class FileOperationsManager(QObject):
             ))
             if on_failure:
                 on_failure(str(exc))
+            # 失敗時亦關閉對話框
+            QTimer.singleShot(0, self._close_bug_report_progress_dialog)
+            self._bug_report_handle = None
+            self._bug_report_cancel_event = None
+            self._bug_report_per_device.clear()
 
         handle.completed.connect(_on_completed)
         handle.failed.connect(_on_failed)
         handle.finished.connect(lambda: self.file_generation_progress_signal.emit(device_count, device_count, '🐛 Bug report generation finished'))
         self._track_handle(handle)
         return True
+
+    def _create_bug_report_progress_dialog(self, total: int, message: str) -> None:
+        """Create and show a non-blocking progress dialog for bug report generation.
+
+        Starts in Busy mode (setRange(0, 0)); switches to determinate when total > 0.
+        """
+        try:
+            self.progress_dialog = QProgressDialog(
+                message,
+                "Cancel",
+                0,
+                max(0, int(total or 0)),
+                self.parent_window,
+            )
+            self.progress_dialog.setWindowTitle("🐛 Bug Report Progress")
+            self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            self.progress_dialog.setMinimumDuration(0)
+            self.progress_dialog.setAutoClose(False)
+            self.progress_dialog.setAutoReset(False)
+
+            # Busy mode initially (unknown progress)
+            self.progress_dialog.setRange(0, 0)
+
+            # Basic styling (consistent with APK dialog)
+            self.progress_dialog.setStyleSheet("""
+                QProgressDialog { font-size: 12px; min-width: 460px; min-height: 160px; background-color: #111827; color: #e5e7eb; }
+                QLabel { color: #e5e7eb; }
+                QPushButton { padding: 6px 12px; border: 1px solid #6b7280; border-radius: 4px; background: #374151; color: #e5e7eb; margin-top: 12px; }
+                QPushButton:hover { background: #4b5563; }
+                QPushButton:pressed { background: #1f2937; }
+                QProgressBar { border: 2px solid #3b82f6; border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px; color: #e5e7eb; background: #1f2937; margin-top: 8px; margin-bottom: 14px; }
+                QProgressBar::chunk { background-color: #60a5fa; border-radius: 4px; }
+            """)
+
+            self.progress_dialog.show()
+            try:
+                # 當使用者點擊 Cancel 時觸發取消
+                self.progress_dialog.canceled.connect(self._cancel_bug_report_generation)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        except Exception:
+            # Defensive: ignore if dialog cannot be created in test/headless environments
+            self.progress_dialog = None
+
+    def _update_bug_report_progress(self, message: str, current: int, total: int) -> None:
+        """Update the bug report progress dialog.
+
+        - total <= 0 → Busy mode
+        - total > 0 → Determinate mode with range 0..total
+        """
+        if not self.progress_dialog:
+            return
+
+        def _update():
+            if not self.progress_dialog:
+                return
+            try:
+                if total and total > 0:
+                    self.progress_dialog.setRange(0, int(total))
+                else:
+                    self.progress_dialog.setRange(0, 0)
+            except Exception:
+                pass
+
+            try:
+                self.progress_dialog.setLabelText(message)
+            except Exception:
+                pass
+
+            try:
+                self.progress_dialog.setValue(max(0, int(current)))
+            except Exception:
+                pass
+
+        QTimer.singleShot(0, _update)
+
+    def _close_bug_report_progress_dialog(self) -> None:
+        dlg = getattr(self, 'progress_dialog', None)
+        if dlg is not None:
+            try:
+                dlg.close()
+            except Exception:
+                pass
+        self.progress_dialog = None
+
+    def _cancel_bug_report_generation(self) -> None:
+        """Handle user cancellation from the progress dialog."""
+        # 設定取消旗標供背景任務察覺
+        if self._bug_report_cancel_event is None:
+            self._bug_report_cancel_event = threading.Event()
+        self._bug_report_cancel_event.set()
+
+        # 嘗試通知 TaskDispatcher 停止傳遞結果
+        handle = getattr(self, '_bug_report_handle', None)
+        try:
+            if handle is not None:
+                handle.cancel()
+        except Exception:
+            pass
+
+        # UI 反饋：切換為 Busy 並顯示取消中文案
+        self._update_bug_report_progress('Cancelling bug report generation...', current=0, total=0)
+
+    def _format_bug_report_progress_message(self, base_message: str) -> str:
+        """組合每台裝置的進度清單加入訊息之後。"""
+        try:
+            per_device = getattr(self, '_bug_report_per_device', {}) or {}
+        except Exception:
+            per_device = {}
+        if not per_device:
+            return base_message
+        lines = [base_message, '', 'Devices progress:']
+        # 維持插入順序
+        for serial, info in per_device.items():
+            model = info.get('model') or serial
+            status = info.get('status', 'running')
+            percent = max(0, min(100, int(info.get('percent', 0))))
+            if status == 'success':
+                suffix = '✅ Done'
+            elif status == 'failed':
+                suffix = '❌ Failed'
+            else:
+                suffix = f'{percent}%'
+            lines.append(f'• {model} ({serial}) — {suffix}')
+        return '\n'.join(lines)
 
     def is_bug_report_in_progress(self) -> bool:
         """Return whether a bug report generation is currently running."""

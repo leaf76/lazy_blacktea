@@ -9,7 +9,10 @@ import platform
 import re
 import shutil
 import subprocess
+import shlex
+import signal
 import tempfile
+import threading
 import time
 import traceback
 from typing import List, Callable, Any, Optional
@@ -570,7 +573,13 @@ def generate_the_android_bug_report(
 
 
 @adb_device_operation(default_return=None)
-def generate_bug_report_device(serial_num: str, output_path: str, timeout: int = 300) -> dict:
+def generate_bug_report_device(
+    serial_num: str,
+    output_path: str,
+    timeout: int = 300,
+    *,
+    cancel_event: Optional[threading.Event] = None,
+) -> dict:
   """Generate bug report for a single device with enhanced error handling.
 
   Args:
@@ -627,23 +636,100 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
     cmd = adb_commands.cmd_output_device_bug_report(serial_num, output_path)
     executed_command = cmd
 
-    # Execute with timeout (bug reports can take a long time)
     logger.info(f'Executing: {cmd}')
-    command_result = common.run_command(cmd, timeout)
-    if command_result and isinstance(command_result, list):
-      command_output = [str(item) for item in command_result]
+
+    # Launch cancellable subprocess for better cancellation responsiveness
+    popen_kwargs: dict = {
+      'stdout': subprocess.PIPE,
+      'stderr': subprocess.PIPE,
+      'text': True,
+      'encoding': 'utf-8',
+      'shell': False,
+    }
+
+    system = platform.system().lower()
+    if system == 'windows':  # Create a new process group for CTRL_BREAK
+      popen_kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    else:  # Start a new session for group signalling
+      popen_kwargs['preexec_fn'] = os.setsid
+
+    proc = subprocess.Popen(shlex.split(cmd), **popen_kwargs)
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    start_time = time.time()
+    cancelled = False
+    while True:
+      try:
+        out, err = proc.communicate(timeout=0.5)
+        if out:
+          stdout_chunks.append(out)
+        if err:
+          stderr_chunks.append(err)
+        break
+      except subprocess.TimeoutExpired:
+        # Check timeout
+        if timeout and (time.time() - start_time) > timeout:
+          try:
+            if system == 'windows':
+              proc.terminate()
+            else:
+              os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+          except Exception:
+            pass
+          result['error'] = f'Bug report generation timed out after {timeout} seconds'
+          logger.error(result['error'])
+          break
+
+        # Check cancellation
+        if cancel_event is not None and cancel_event.is_set():
+          cancelled = True
+          try:
+            if system == 'windows':
+              # Try to gracefully break; fall back to terminate/kill
+              try:
+                proc.send_signal(getattr(signal, 'CTRL_BREAK_EVENT', signal.SIGTERM))
+              except Exception:
+                proc.terminate()
+              time.sleep(0.5)
+              if proc.poll() is None:
+                proc.kill()
+            else:
+              try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+              except Exception:
+                proc.terminate()
+              time.sleep(0.5)
+              if proc.poll() is None:
+                proc.kill()
+          except Exception:
+            pass
+          try:
+            out, err = proc.communicate(timeout=2)
+            if out:
+              stdout_chunks.append(out)
+            if err:
+              stderr_chunks.append(err)
+          except Exception:
+            pass
+          result['error'] = 'Cancelled by user'
+          logger.info('Bug report generation for %s cancelled by user', serial_num)
+          break
+
+    command_output = (''.join(stdout_chunks) + '\n' + ''.join(stderr_chunks)).splitlines()
     result['details'] = f'Command: {cmd}'
     if command_output:
       joined_output = ' '.join(command_output)
       result['details'] += f'\nOutput: {joined_output}'
 
     # Check command output for common Samsung/manufacturer errors
-    if command_result and isinstance(command_result, list):
-      output_str = ' '.join(str(item) for item in command_result).lower()
+    if command_output:
+      output_str = ' '.join(str(item) for item in command_output).lower()
       if any(error in output_str for error in ['permission denied', 'access denied', 'not allowed', 'unauthorized']):
         result['error'] = f'Permission denied - {manufacturer.title()} device requires additional authorization'
         logger.error(result['error'])
-        logger.debug(f'Bug report command output for {serial_num}: {command_result}')
+        logger.debug(f'Bug report command output for {serial_num}: {output_str}')
         return result
 
     # Check if file was created and has reasonable size
@@ -651,15 +737,25 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
       file_size = os.path.getsize(output_path)
       result['file_size'] = file_size
 
-      if file_size > 1024:  # At least 1KB
+      if file_size > 1024 and not cancelled:  # At least 1KB and not cancelled
         result['success'] = True
         logger.info(f'✅ Bug report generated successfully for {serial_num}')
         logger.info(f'   File: {output_path} ({file_size:,} bytes)')
         result['details'] = f'Command: {cmd}\nFile saved to {output_path} ({file_size} bytes)'
       else:
-        result['error'] = f'Bug report file too small ({file_size} bytes), likely incomplete'
-        logger.warning(result['error'])
-        result['details'] = f'Command: {cmd}\nFile size only {file_size} bytes'
+        if cancelled:
+          result['error'] = 'Cancelled by user'
+          # Clean up tiny partial files to avoid user confusion
+          try:
+            if file_size < 1024:
+              os.remove(output_path)
+              logger.info('Removed partial bug report file after cancellation: %s', output_path)
+          except Exception:
+            pass
+        else:
+          result['error'] = f'Bug report file too small ({file_size} bytes), likely incomplete'
+          logger.warning(result['error'])
+          result['details'] = f'Command: {cmd}\nFile size only {file_size} bytes'
     else:
       result['error'] = 'Bug report file was not created'
       logger.error(f'Bug report file not found: {output_path}')
@@ -677,6 +773,167 @@ def generate_bug_report_device(serial_num: str, output_path: str, timeout: int =
 
   return result
 
+
+def generate_bug_report_device_streaming(
+    serial_num: str,
+    output_path: str,
+    timeout: int = 300,
+    *,
+    cancel_event: Optional[threading.Event] = None,
+    progress_cb: Optional[Callable[[int], None]] = None,
+) -> dict:
+  """Generate bug report using bugreportz -p to report streaming progress.
+
+  Falls back to non-streaming when unsupported.
+
+  Returns dict similar to generate_bug_report_device, with extra key:
+    'stream_supported': bool
+  """
+  result = {
+    'success': False,
+    'serial': serial_num,
+    'output_path': output_path if output_path.endswith('.zip') else output_path + '.zip',
+    'error': None,
+    'file_size': 0,
+    'details': '',
+    'stream_supported': False,
+  }
+
+  try:
+    logger.info('Attempting streaming bugreport for %s', serial_num)
+
+    # Ensure output path suffix
+    if not output_path.endswith('.zip'):
+      output_path += '.zip'
+
+    system = platform.system().lower()
+    popen_kwargs: dict = {
+      'stdout': subprocess.PIPE,
+      'stderr': subprocess.STDOUT,
+      'text': True,
+      'encoding': 'utf-8',
+      'shell': False,
+    }
+    if system == 'windows':
+      popen_kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    else:
+      popen_kwargs['preexec_fn'] = os.setsid
+
+    # Start streaming progress
+    cmd = [
+      'adb', '-s', serial_num,
+      'shell', 'bugreportz', '-p'
+    ]
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    result['stream_supported'] = True
+
+    start_time = time.time()
+    remote_path = ''
+    last_percent = -1
+
+    while True:
+      # Check cancel
+      if cancel_event is not None and cancel_event.is_set():
+        try:
+          if system == 'windows':
+            try:
+              proc.send_signal(getattr(signal, 'CTRL_BREAK_EVENT', signal.SIGTERM))
+            except Exception:
+              proc.terminate()
+            time.sleep(0.5)
+            if proc.poll() is None:
+              proc.kill()
+          else:
+            try:
+              os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+            except Exception:
+              proc.terminate()
+            time.sleep(0.5)
+            if proc.poll() is None:
+              proc.kill()
+        except Exception:
+          pass
+        result['error'] = 'Cancelled by user'
+        logger.info('Streaming bugreport cancelled for %s', serial_num)
+        break
+
+      # Timeout
+      if timeout and (time.time() - start_time) > timeout:
+        try:
+          if system == 'windows':
+            proc.terminate()
+          else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+          pass
+        result['error'] = f'Streaming bugreport timed out after {timeout} seconds'
+        logger.error(result['error'])
+        break
+
+      line = proc.stdout.readline() if proc.stdout else ''
+      if not line:
+        if proc.poll() is not None:
+          break
+        time.sleep(0.05)
+        continue
+
+      payload = parse_bugreportz_line(line)
+      logger.debug('bugreportz -p parsed: %s', payload)
+
+      if payload.get('type') == 'progress':
+        percent = int(payload.get('percent', 0))
+        if percent != last_percent:
+          last_percent = percent
+          if progress_cb:
+            try:
+              progress_cb(percent)
+            except Exception:
+              pass
+      elif payload.get('type') == 'ok':
+        remote_path = payload.get('path', '')
+      elif payload.get('type') == 'fail':
+        result['error'] = payload.get('reason', 'FAIL')
+
+    # Process ended
+    code = proc.poll()
+    if code not in (0, None) and not remote_path and not result['error']:
+      result['error'] = f'bugreportz returned non-zero code {code}'
+
+    if result['error']:
+      return result
+
+    if not remote_path:
+      # Streaming not available or no path returned
+      result['stream_supported'] = False
+      result['error'] = 'Streaming unsupported or did not return path'
+      return result
+
+    # Pull the generated zip
+    pull_cmd = ['adb', '-s', serial_num, 'pull', remote_path, output_path]
+    try:
+      pull_proc = subprocess.run(pull_cmd, check=False, capture_output=True, text=True)
+      if pull_proc.returncode != 0:
+        result['error'] = f'Failed to pull bugreport: {pull_proc.stderr.strip()}'
+        return result
+    except Exception as exc:
+      result['error'] = f'Failed to pull bugreport: {exc}'
+      return result
+
+    if os.path.exists(output_path):
+      file_size = os.path.getsize(output_path)
+      result['file_size'] = file_size
+      if file_size > 1024:
+        result['success'] = True
+        result['output_path'] = output_path
+      else:
+        result['error'] = f'Bug report file too small ({file_size} bytes), likely incomplete'
+
+    return result
+  except Exception as exc:
+    logger.debug('Streaming bugreport path failed, will fallback: %s', exc)
+    result['stream_supported'] = False
+    result['error'] = str(exc)
+    return result
 
 def _is_device_available(serial_num: str) -> bool:
   """Check if device is available and responding.
@@ -1980,3 +2237,63 @@ def _verify_file_pulled(output_path: str, serial_num: str, name: str) -> bool:
 
   logger.warning(f'Could not verify file was pulled: {local_file_path}')
   return False
+def parse_bugreportz_line(line: str) -> dict:
+  """Parse a single bugreportz output line into a structured payload.
+
+  Supports common OEM variations:
+    - "PROGRESS: N/M"
+    - "PROGRESS: N%" or "PROGRESS: N"
+    - optional spaces around colon and slashes
+    - "OK: <path>" or "OK:filename=<path>"
+    - "FAIL: <reason>"
+  """
+  try:
+    raw = (line or '').strip()
+    if not raw:
+      return {'type': 'unknown', 'raw': line}
+
+    upper = raw.upper()
+    if upper.startswith('PROGRESS'):
+      # Normalize separators
+      try:
+        payload = raw.split(':', 1)[1].strip()
+      except Exception:
+        payload = ''
+      # Try fraction form
+      m = re.match(r"^(\d+)\s*/\s*(\d+)$", payload)
+      if m:
+        num = int(m.group(1))
+        den = max(1, int(m.group(2)))
+        pct = int(min(100, max(0, round(100 * num / den))))
+        return {'type': 'progress', 'percent': pct, 'raw': line}
+      # Try percentage or integer
+      m = re.match(r"^(\d+)\s*%?$", payload)
+      if m:
+        pct = int(m.group(1))
+        pct = int(min(100, max(0, pct)))
+        return {'type': 'progress', 'percent': pct, 'raw': line}
+      return {'type': 'unknown', 'raw': line}
+
+    if upper.startswith('OK'):
+      try:
+        payload = raw.split(':', 1)[1].strip()
+      except Exception:
+        payload = ''
+      # Handle optional key=value
+      if '=' in payload:
+        _, val = payload.split('=', 1)
+        path_val = val.strip()
+      else:
+        path_val = payload
+      return {'type': 'ok', 'path': path_val, 'raw': line}
+
+    if upper.startswith('FAIL'):
+      try:
+        payload = raw.split(':', 1)[1].strip()
+      except Exception:
+        payload = raw
+      return {'type': 'fail', 'reason': payload, 'raw': line}
+
+    return {'type': 'unknown', 'raw': line}
+  except Exception:
+    return {'type': 'unknown', 'raw': line}

@@ -97,6 +97,7 @@ def generate_bug_report_batch(
     callback: Optional[Callable] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     completion_event: Optional[threading.Event] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> None:
     """Generate Android bug reports for multiple devices.
 
@@ -127,7 +128,9 @@ def generate_bug_report_batch(
 
             successes = 0
             failures: List[Dict[str, str]] = []
-            progress_count = 0
+            # For smooth progress: each device contributes 0..100 units
+            device_percent: Dict[str, int] = {d.device_serial_num: 0 for d in devices}
+            total_steps = max(1, device_count * 100)
             progress_lock = asyncio.Lock()
 
             def _emit_progress(payload: Dict[str, Any]) -> None:
@@ -158,7 +161,7 @@ def generate_bug_report_batch(
                     logger.warning('Vivo device %s may require FunTouch OS developer permissions', device_model)
 
             async def _process_device(index: int, device: adb_models.DeviceInfo) -> None:
-                nonlocal successes, progress_count
+                nonlocal successes
 
                 sanitized_model = _sanitize_fragment(device.device_model)
                 sanitized_serial = _sanitize_fragment(device.device_serial_num)
@@ -180,12 +183,68 @@ def generate_bug_report_batch(
                 details = ''
 
                 try:
-                    result = await asyncio.to_thread(
-                        adb_tools.generate_bug_report_device,
+                    # 若已取消，快速退出
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError('operation cancelled')
+
+                    # Emit initial 0% for this device
+                    async with progress_lock:
+                        device_percent[device.device_serial_num] = 0
+                        overall_current = sum(device_percent.values())
+                        _emit_progress({
+                            'success': True,
+                            'current': overall_current,
+                            'total': total_steps,
+                            'device_serial': device.device_serial_num,
+                            'device_model': device.device_model,
+                            'output_path': payload_output_path,
+                            'details': 'Starting bug report...',
+                        })
+
+                    # Try streaming progress first
+                    def _on_device_percent(p: int) -> None:
+                        # Note: running in background thread
+                        async def _update():
+                            async with progress_lock:
+                                device_percent[device.device_serial_num] = max(0, min(100, int(p)))
+                                overall_current = sum(device_percent.values())
+                                _emit_progress({
+                                    'success': True,
+                                    'current': overall_current,
+                                    'total': total_steps,
+                                    'device_serial': device.device_serial_num,
+                                    'device_model': device.device_model,
+                                    'output_path': payload_output_path,
+                                    'details': f'Progress {p}%',
+                                    'percent': int(p),
+                                })
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.run_coroutine_threadsafe(_update(), loop)
+                        except Exception:
+                            pass
+
+                    stream_result = await asyncio.to_thread(
+                        adb_tools.generate_bug_report_device_streaming,
                         device.device_serial_num,
                         filepath,
                         300,
+                        cancel_event=cancel_event,
+                        progress_cb=_on_device_percent,
                     )
+
+                    if stream_result.get('stream_supported') and not stream_result.get('error'):
+                        result = stream_result
+                    else:
+                        # Fallback to non-streaming; set to busy and complete as 100 when done
+                        result = await asyncio.to_thread(
+                            adb_tools.generate_bug_report_device,
+                            device.device_serial_num,
+                            filepath,
+                            300,
+                            cancel_event=cancel_event,
+                        )
                     success = bool(result.get('success'))
                     payload_output_path = result.get('output_path', payload_output_path)
                     error_message = result.get('error', '')
@@ -216,7 +275,7 @@ def generate_bug_report_batch(
 
                 payload = {
                     'success': success,
-                    'total': device_count,
+                    'total': total_steps,
                     'device_serial': device.device_serial_num,
                     'device_model': device.device_model,
                     'output_path': payload_output_path,
@@ -225,8 +284,10 @@ def generate_bug_report_batch(
                 }
 
                 async with progress_lock:
-                    progress_count += 1
-                    payload['current'] = progress_count
+                    # Mark this device as finished (100) regardless of success/failure to reflect completion
+                    device_percent[device.device_serial_num] = 100
+                    overall_current = sum(device_percent.values())
+                    payload['current'] = overall_current
                     if success:
                         successes += 1
                     elif failure_entry is not None:

@@ -365,15 +365,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         central_widget.setObjectName('mainCentralWidget')
         self.setCentralWidget(central_widget)
 
-        # Create main layout
+        # Create main layout container
         main_layout = QVBoxLayout(central_widget)
 
-        # Create menu bar
+        # Menu bar
         self.panels_manager.create_menu_bar(self)
 
-        # Create main splitter
+        # Build a vertical splitter so the bottom console is resizable
+        vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_layout.addWidget(vertical_splitter)
+
+        # Top: existing horizontal splitter for device list and tools
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(main_splitter)
+        vertical_splitter.addWidget(main_splitter)
 
         # Create device list panel
         # Create device panel using panels_manager
@@ -405,8 +409,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         main_splitter.setStretchFactor(0, 1)
         main_splitter.setStretchFactor(1, 1)
 
-        # Create console panel at bottom
-        self.create_console_panel(main_layout)
+        # Bottom: console panel (resizable via the vertical splitter)
+        self.create_console_panel(vertical_splitter)
+
+        # Set initial proportions for vertical splitter (e.g., ~80% top / 20% bottom)
+        try:
+            total_h = max(self.height(), UIConstants.WINDOW_HEIGHT)
+            top_h = max(300, int(total_h * 0.8))
+            bottom_h = max(180, total_h - top_h)
+            vertical_splitter.setSizes([top_h, bottom_h])
+        except Exception:
+            # Fallback sizes if geometry is not yet stable
+            vertical_splitter.setSizes([UIConstants.WINDOW_HEIGHT - 220, 220])
+
+        # Encourage the top area to take remaining space when resizing
+        vertical_splitter.setStretchFactor(0, 5)
+        vertical_splitter.setStretchFactor(1, 1)
 
         # Create status bar
         self.create_status_bar()

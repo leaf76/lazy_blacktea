@@ -255,6 +255,7 @@ class ApkInstallationManager(QObject):
         super().__init__()
         self.parent_window = parent_window
         self.progress_dialog = None
+        self._apk_cancelled = False
 
     def install_apk_dialog(self):
         """顯示APK選擇對話框並開始安裝"""
@@ -290,27 +291,30 @@ class ApkInstallationManager(QObject):
         self.progress_dialog.setAutoClose(False)
         self.progress_dialog.setAutoReset(False)
 
-        # 設置進度條樣式
+        # 初始以「未知進度」模式顯示，待首個進度更新時再切換為可量測進度
+        # Qt 規範：setRange(0, 0) 會顯示無限循環（busy）狀態
+        try:
+            self.progress_dialog.setRange(0, 0)
+        except Exception:
+            # fallback 保護：若環境不支援 setRange
+            pass
+
+        # 設置進度條樣式（暗色友善）
         self.progress_dialog.setStyleSheet("""
-            QProgressDialog {
-                font-size: 12px;
-                min-width: 400px;
-                min-height: 150px;
-            }
-            QProgressBar {
-                border: 2px solid #3498db;
-                border-radius: 5px;
-                text-align: center;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QProgressBar::chunk {
-                background-color: #3498db;
-                border-radius: 3px;
-            }
+            QProgressDialog { font-size: 12px; min-width: 460px; min-height: 160px; background-color: #111827; color: #e5e7eb; }
+            QLabel { color: #e5e7eb; }
+            QPushButton { padding: 6px 12px; border: 1px solid #6b7280; border-radius: 4px; background: #374151; color: #e5e7eb; margin-top: 12px; }
+            QPushButton:hover { background: #4b5563; }
+            QPushButton:pressed { background: #1f2937; }
+            QProgressBar { border: 2px solid #3b82f6; border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px; color: #e5e7eb; background: #1f2937; margin-top: 8px; margin-bottom: 14px; }
+            QProgressBar::chunk { background-color: #60a5fa; border-radius: 4px; }
         """)
 
         self.progress_dialog.show()
+        try:
+            self.progress_dialog.canceled.connect(self._on_installation_cancelled)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         def install_with_progress():
             try:
@@ -333,15 +337,40 @@ class ApkInstallationManager(QObject):
         if self.progress_dialog:
             self.progress_dialog.close()
             self.progress_dialog = None
+        self._apk_cancelled = False
 
     def _update_progress(self, message: str, current: int, total: int):
-        """更新進度對話框"""
+        """更新進度對話框
+
+        - 若 total <= 0，切換為無限循環（不確定進度）模式。
+        - 若 total > 0，設定為可量測進度並更新 value。
+        """
         if self.progress_dialog:
             def update_ui():
-                if self.progress_dialog:  # 再次檢查，防止對話框已關閉
+                if not self.progress_dialog:  # 再次檢查，防止對話框已關閉
+                    return
+
+                # 切換顯示模式（未知進度 → 無限循環；可量測 → 設定範圍）
+                try:
+                    if total and total > 0:
+                        self.progress_dialog.setRange(0, total)
+                    else:
+                        self.progress_dialog.setRange(0, 0)
+                except Exception:
+                    # 容錯：某些 stub 或測試替身可能未實作 setRange
+                    pass
+
+                # 更新文案與當前值（無限循環模式下 value 會被忽略）
+                try:
                     self.progress_dialog.setLabelText(message)
-                    self.progress_dialog.setValue(current)
-                    # total 參數用於進度對話框的最大值設置，已在初始化時設定
+                except Exception:
+                    pass
+
+                try:
+                    self.progress_dialog.setValue(max(0, current))
+                except Exception:
+                    pass
+
             QTimer.singleShot(0, update_ui)
 
     def _install_apk_with_progress(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
@@ -353,7 +382,7 @@ class ApkInstallationManager(QObject):
         for index, device in enumerate(devices, 1):
             try:
                 # 檢查是否取消
-                if self.progress_dialog and self.progress_dialog.wasCanceled():
+                if (self.progress_dialog and self.progress_dialog.wasCanceled()) or self._apk_cancelled:
                     break
 
                 # 更新進度對話框
@@ -435,6 +464,16 @@ class ApkInstallationManager(QObject):
 
         # 發送完成信號
         self.installation_completed_signal.emit(successful_installs, failed_installs, apk_name)
+
+    def _on_installation_cancelled(self):
+        """使用者取消安裝時的 UI 與狀態更新"""
+        self._apk_cancelled = True
+        try:
+            if self.progress_dialog:
+                self.progress_dialog.setRange(0, 0)
+                self.progress_dialog.setLabelText('Cancelling installation...')
+        except Exception:
+            pass
 
 
 class AppManagementManager(QObject):

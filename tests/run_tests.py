@@ -58,6 +58,10 @@ def main():
         ("Shell Commands Layout Tests", "test_shell_commands_layout.py"),
         ("Device Files Layout Tests", "test_device_files_layout.py"),
         ("Console Panel Toggle Tests", "test_console_panel_toggle.py"),
+        ("bugreportz Parser Tests", "test_bugreportz_parser.py"),
+        ("Bug Report Progress Dialog Tests", "test_bug_report_progress_dialog_busy.py"),
+        ("Bug Report Cancel Tests", "test_bug_report_cancel.py"),
+        ("APK Progress Dialog Tests", "test_apk_progress_dialog_busy.py"),
         # Additional lightweight unit tests to improve coverage
         ("Debounced Refresh Tests", "test_debounced_refresh.py"),
         ("JSON Utils Extra Tests", "test_json_utils_extra.py"),
