@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current release: v0.0.36 | [English version](README.md)
+> Current release: v0.0.39 | [English version](README.md)
 
 ## 為什麼選擇 Lazy Blacktea？
 - 單一視窗即可掌握多台 Android 裝置狀態與操作排程。
