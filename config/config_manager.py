@@ -98,6 +98,21 @@ class ApkInstallSettings:
 
 
 @dataclass
+class ScreenshotSettings:
+    """Screenshot capture configuration."""
+    extra_args: str = ''  # Additional args for 'screencap' (e.g., -d 0)
+
+
+@dataclass
+class ScreenRecordSettings:
+    """Screen recording configuration."""
+    bit_rate: str = ''        # e.g., 8000000 (bps)
+    time_limit_sec: int = 0   # 0 means unlimited
+    size: str = ''            # e.g., 1280x720
+    extra_args: str = ''      # Additional args for 'screenrecord'
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     ui: UISettings
@@ -107,6 +122,8 @@ class AppConfig:
     logcat: LogcatSettings
     scrcpy: ScrcpySettings
     apk_install: ApkInstallSettings
+    screenshot: ScreenshotSettings
+    screen_record: ScreenRecordSettings
     command_history: list = None
     version: str = "1.0.0"
 
@@ -141,6 +158,8 @@ class ConfigManager:
             logcat=LogcatSettings(),
             scrcpy=ScrcpySettings(),
             apk_install=ApkInstallSettings(),
+            screenshot=ScreenshotSettings(),
+            screen_record=ScreenRecordSettings(),
         )
 
     def _validate_config(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -233,6 +252,28 @@ class ConfigManager:
         apk_extra = apk_settings.get('extra_args', '')
         apk_settings['extra_args'] = str(apk_extra) if apk_extra is not None else ''
 
+        # Validate screenshot settings
+        screenshot_settings = validated.setdefault('screenshot', {})
+        screenshot_extra = screenshot_settings.get('extra_args', '')
+        screenshot_settings['extra_args'] = str(screenshot_extra) if screenshot_extra is not None else ''
+
+        # Validate screen record settings
+        record_settings = validated.setdefault('screen_record', {})
+        bit_rate_v = record_settings.get('bit_rate', '')
+        record_settings['bit_rate'] = str(bit_rate_v) if bit_rate_v is not None else ''
+        time_limit_v = record_settings.get('time_limit_sec', 0)
+        try:
+            time_limit_v = int(time_limit_v)
+        except Exception:
+            time_limit_v = 0
+        if time_limit_v < 0:
+            time_limit_v = 0
+        record_settings['time_limit_sec'] = time_limit_v
+        size_v = record_settings.get('size', '')
+        record_settings['size'] = str(size_v) if size_v is not None else ''
+        extra_v = record_settings.get('extra_args', '')
+        record_settings['extra_args'] = str(extra_v) if extra_v is not None else ''
+
         return validated
 
     def load_config(self) -> AppConfig:
@@ -256,6 +297,8 @@ class ConfigManager:
                     logcat=LogcatSettings(**validated_dict['logcat']),
                     scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                     apk_install=ApkInstallSettings(**validated_dict['apk_install']),
+                    screenshot=ScreenshotSettings(**validated_dict['screenshot']),
+                    screen_record=ScreenRecordSettings(**validated_dict['screen_record']),
                     command_history=validated_dict.get('command_history', []),
                     version=validated_dict.get('version', '1.0.0')
                 )
@@ -282,6 +325,8 @@ class ConfigManager:
                         logcat=LogcatSettings(**validated_dict['logcat']),
                         scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                         apk_install=ApkInstallSettings(**validated_dict['apk_install']),
+                        screenshot=ScreenshotSettings(**validated_dict['screenshot']),
+                        screen_record=ScreenRecordSettings(**validated_dict['screen_record']),
                         command_history=validated_dict.get('command_history', []),
                         version=validated_dict.get('version', '1.0.0')
                     )
@@ -352,6 +397,14 @@ class ConfigManager:
         """Get APK install settings."""
         return self.load_config().apk_install
 
+    def get_screenshot_settings(self) -> ScreenshotSettings:
+        """Get screenshot capture settings."""
+        return self.load_config().screenshot
+
+    def get_screen_record_settings(self) -> ScreenRecordSettings:
+        """Get screen recording settings."""
+        return self.load_config().screen_record
+
     def update_ui_settings(self, **kwargs):
         """Update UI settings."""
         config = self.load_config()
@@ -400,6 +453,22 @@ class ConfigManager:
                 setattr(config.apk_install, key, value)
         self.save_config(config)
 
+    def update_screenshot_settings(self, **kwargs):
+        """Update screenshot capture settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.screenshot, key):
+                setattr(config.screenshot, key, value)
+        self.save_config(config)
+
+    def update_screen_record_settings(self, **kwargs):
+        """Update screen recording settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.screen_record, key):
+                setattr(config.screen_record, key, value)
+        self.save_config(config)
+
     def set_scrcpy_settings(self, settings: ScrcpySettings):
         """Replace scrcpy settings with provided dataclass."""
         config = self.load_config()
@@ -410,6 +479,18 @@ class ConfigManager:
         """Replace APK install settings with provided dataclass."""
         config = self.load_config()
         config.apk_install = settings
+        self.save_config(config)
+
+    def set_screenshot_settings(self, settings: ScreenshotSettings):
+        """Replace screenshot settings with provided dataclass."""
+        config = self.load_config()
+        config.screenshot = settings
+        self.save_config(config)
+
+    def set_screen_record_settings(self, settings: ScreenRecordSettings):
+        """Replace screen recording settings with provided dataclass."""
+        config = self.load_config()
+        config.screen_record = settings
         self.save_config(config)
 
     def reset_to_defaults(self):
@@ -448,6 +529,8 @@ class ConfigManager:
                 logcat=LogcatSettings(**validated_dict['logcat']),
                 scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
                 apk_install=ApkInstallSettings(**validated_dict['apk_install']),
+                screenshot=ScreenshotSettings(**validated_dict['screenshot']),
+                screen_record=ScreenRecordSettings(**validated_dict['screen_record']),
                 command_history=validated_dict.get('command_history', []),
                 version=validated_dict.get('version', '1.0.0')
             )

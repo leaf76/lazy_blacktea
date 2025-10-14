@@ -462,6 +462,13 @@ class PanelsManager(QObject):
             apk_install_settings_action.setEnabled(False)
         settings_menu.addAction(apk_install_settings_action)
 
+        capture_settings_action = QAction('Capture Settings...', main_window)
+        if hasattr(main_window, 'open_capture_settings_dialog'):
+            capture_settings_action.triggered.connect(main_window.open_capture_settings_dialog)
+        else:  # pragma: no cover
+            capture_settings_action.setEnabled(False)
+        settings_menu.addAction(capture_settings_action)
+
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)

@@ -51,11 +51,26 @@ def _build_adb_shell_command(serial_num: str, shell_command: str) -> str:
 
 
 def cmd_screencap_capture(serial_num: str, remote_path: str) -> str:
+  """Build screencap capture command, honoring screenshot settings."""
+  extra_tokens: list[str] = []
+  try:
+    from config.config_manager import ConfigManager
+    ss = ConfigManager().get_screenshot_settings()
+    extra = getattr(ss, 'extra_args', '') or ''
+    if extra.strip():
+      try:
+        extra_tokens = [tok for tok in shlex.split(extra) if tok]
+      except Exception:
+        extra_tokens = [extra.strip()]
+  except Exception:
+    pass
+
   return _build_adb_command(
       serial_num,
       'shell',
       'screencap',
       '-p',
+      *extra_tokens,
       shlex.quote(remote_path)
   )
 
@@ -328,19 +343,59 @@ def cmd_list_device_directory(serial_num: str, remote_path: str) -> str:
 def cmd_adb_screen_shot(
     serial_num: str, file_name: str, output_folder_path: str
 ) -> str:
+  """One-line screenshot capture+pull command; applies screenshot settings when present."""
   screen_shot_phone_path = f'/sdcard/{serial_num}_screenshot_{file_name}.png'
   quoted_phone_path = shlex.quote(screen_shot_phone_path)
   quoted_output_path = shlex.quote(output_folder_path)
+
+  extra_tokens: list[str] = []
+  try:
+    from config.config_manager import ConfigManager
+    ss = ConfigManager().get_screenshot_settings()
+    extra = getattr(ss, 'extra_args', '') or ''
+    if extra.strip():
+      try:
+        extra_tokens = [tok for tok in shlex.split(extra) if tok]
+      except Exception:
+        extra_tokens = [extra.strip()]
+  except Exception:
+    pass
+
+  extra_str = (" " + " ".join(extra_tokens)) if extra_tokens else ""
   return (
-      f'adb -s {serial_num} shell screencap -p {quoted_phone_path} && '
+      f'adb -s {serial_num} shell screencap -p{extra_str} {quoted_phone_path} && '
       f'adb -s {serial_num} pull {quoted_phone_path} {quoted_output_path}'
   )
 
 
 def cmd_android_screen_record(serial_num, name) -> str:
+  """Build screenrecord start command using persisted settings when available."""
+  opts: list[str] = []
+  try:
+    from config.config_manager import ConfigManager
+    rs = ConfigManager().get_screen_record_settings()
+    br = (getattr(rs, 'bit_rate', '') or '').strip()
+    if br:
+      opts.extend(['--bit-rate', br])
+    tl = int(getattr(rs, 'time_limit_sec', 0) or 0)
+    if tl > 0:
+      opts.extend(['--time-limit', str(tl)])
+    sz = (getattr(rs, 'size', '') or '').strip()
+    if sz:
+      opts.extend(['--size', sz])
+    extra = (getattr(rs, 'extra_args', '') or '').strip()
+    if extra:
+      try:
+        opts.extend([tok for tok in shlex.split(extra) if tok])
+      except Exception:
+        opts.append(extra)
+  except Exception:
+    pass
+
   return (
       f'adb -s {serial_num} shell screenrecord'
-      f' /sdcard/screenrecord_{serial_num}_{name}.mp4'
+      + (" " + " ".join(opts) if opts else "")
+      + f' /sdcard/screenrecord_{serial_num}_{name}.mp4'
   )
 
 def cmd_android_screen_record_stop(serial_num) -> str:

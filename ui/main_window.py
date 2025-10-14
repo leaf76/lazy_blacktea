@@ -78,6 +78,7 @@ from ui.recording_controller import RecordingController
 from ui.signal_payloads import RecordingProgressEvent
 from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
 from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
+from ui.capture_settings_dialog import CaptureSettingsDialog
 from ui.device_files_facade import DeviceFilesFacade
 from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
@@ -664,6 +665,24 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             'APK Install Settings Updated',
             'New adb install flags will be applied to future installs.'
         )
+
+    def open_capture_settings_dialog(self) -> None:
+        """Display the Capture (Screenshot & Screen Record) settings dialog and persist updates."""
+        ss = self.config_manager.get_screenshot_settings()
+        rec = self.config_manager.get_screen_record_settings()
+        dialog = CaptureSettingsDialog(ss, rec, self)
+        dialog.exec()
+
+        new_ss, new_rec = dialog.get_settings()
+        changed = False
+        if new_ss is not None:
+            self.config_manager.set_screenshot_settings(new_ss)
+            changed = True
+        if new_rec is not None:
+            self.config_manager.set_screen_record_settings(new_rec)
+            changed = True
+        if changed:
+            self.show_info('Capture Settings Updated', 'New screenshot and recording parameters will apply to future actions.')
 
     # Operation logging helpers moved to OperationLoggingMixin
 
