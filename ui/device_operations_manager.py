@@ -31,7 +31,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from utils import adb_models, adb_tools, common
+from utils import adb_models, adb_tools, common, adb_commands
 from utils.recording_utils import RecordingManager
 from utils.screenshot_utils import take_screenshots_batch
 from ui.ui_inspector_dialog import UIInspectorDialog
@@ -710,8 +710,25 @@ class DeviceOperationsManager(QObject):
         self._log_console(f"📱 [{position}/{total}] Installing on {device_name} ({serial})...")
 
         try:
-            result = adb_tools.run_adb_command(f'-s {serial} install -r "{apk_file}"')
-            if result.returncode == 0:
+            # Show command preview on console
+            try:
+                preview_cmd = adb_commands.cmd_adb_install(serial, apk_file)
+                self._log_console(f"🚀 Executing: {preview_cmd}")
+            except Exception:
+                pass
+
+            # Use shared installer which honors APK Install Settings
+            install_results = adb_tools.install_the_apk([serial], apk_file)
+            # Normalize and check for success token
+            flat_lines = []
+            for item in install_results or []:
+                if isinstance(item, (list, tuple)):
+                    flat_lines.extend(str(x) for x in item)
+                elif item is not None:
+                    flat_lines.append(str(item))
+
+            joined = "\n".join(flat_lines)
+            if 'Success' in joined or 'success' in joined:
                 message = f'APK installed: {apk_name}'
                 self._log_console(f"✅ [{position}/{total}] Successfully installed on {device_name}")
                 self.operation_completed_signal.emit("apk_install", serial, True, message)
@@ -721,7 +738,7 @@ class DeviceOperationsManager(QObject):
                     'device_name': device_name,
                 }
 
-            error_msg = getattr(result, 'stderr', '') or 'Installation failed'
+            error_msg = joined.strip() or 'Installation failed'
             self._log_console(f"❌ [{position}/{total}] Failed to install on {device_name}: {error_msg}")
             self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
             return {'success': False, 'message': error_msg}

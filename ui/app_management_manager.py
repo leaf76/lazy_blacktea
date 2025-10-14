@@ -17,7 +17,7 @@ from typing import List, Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QProgressDialog
 
-from utils import adb_models, adb_tools
+from utils import adb_models, adb_tools, adb_commands
 from config.config_manager import ScrcpySettings
 
 
@@ -278,6 +278,47 @@ class ApkInstallationManager(QObject):
 
     def install_apk_to_devices(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
         """安裝APK到指定設備"""
+        # 安裝前確認：顯示將執行的 adb 指令與裝置數
+        if not devices:
+            self.parent_window.show_error('Error', 'No devices selected.')
+            return
+
+        try:
+            first_serial = devices[0].device_serial_num
+            preview_cmd = adb_commands.cmd_adb_install(first_serial, apk_file)
+            message = (
+                f"You are about to install:\n\n"
+                f"  APK: {apk_name}\n"
+                f"  Devices: {len(devices)}\n\n"
+                f"Command preview (first device):\n"
+                f"{preview_cmd}\n\n"
+                f"Proceed?"
+            )
+            from PyQt6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self.parent_window,
+                'Confirm APK Install',
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        except Exception:
+            # 若預覽產生失敗，依舊允許安裝，僅略過確認
+            pass
+
+        # 將預覽指令輸出到 Console，便於追蹤
+        try:
+            if hasattr(self.parent_window, 'write_to_console'):
+                self.parent_window.write_to_console(f"🚀 Install command: {preview_cmd}")
+                if len(devices) > 1:
+                    self.parent_window.write_to_console(
+                        f"… and {len(devices)-1} more device(s) with respective serials"
+                    )
+        except Exception:
+            pass
+
         # 創建進度對話框
         self.progress_dialog = QProgressDialog(
             f"🚀 Installing {apk_name}...\n\nPreparing installation...",
@@ -404,6 +445,14 @@ class ApkInstallationManager(QObject):
                         f'Installing APK on device {index}/{total_devices}: '
                         f'{device.device_model} ({device.device_serial_num})'
                     )
+
+                # 在 Console 顯示即將執行的指令
+                try:
+                    preview_cmd = adb_commands.cmd_adb_install(device.device_serial_num, apk_file)
+                    if hasattr(self.parent_window, 'write_to_console'):
+                        self.parent_window.write_to_console(f"🚀 Executing: {preview_cmd}")
+                except Exception:
+                    pass
 
                 # 執行安裝
                 result = adb_tools.install_the_apk([device.device_serial_num], apk_file)

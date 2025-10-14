@@ -77,6 +77,7 @@ from ui.device_file_controller import DeviceFileController
 from ui.recording_controller import RecordingController
 from ui.signal_payloads import RecordingProgressEvent
 from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
+from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
 from ui.device_files_facade import DeviceFilesFacade
 from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
@@ -646,6 +647,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.show_info(
             'scrcpy Settings Updated',
             'scrcpy will use your new preferences the next time you launch mirroring.'
+        )
+
+    def open_apk_install_settings_dialog(self) -> None:
+        """Display the APK install settings dialog and persist updates."""
+        current_settings = self.config_manager.get_apk_install_settings()
+        dialog = ApkInstallSettingsDialog(current_settings, self)
+        dialog.exec()
+
+        updated_settings = dialog.get_settings()
+        if not updated_settings:
+            return
+
+        self.config_manager.set_apk_install_settings(updated_settings)
+        self.show_info(
+            'APK Install Settings Updated',
+            'New adb install flags will be applied to future installs.'
         )
 
     # Operation logging helpers moved to OperationLoggingMixin

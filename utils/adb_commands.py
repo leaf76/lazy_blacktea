@@ -144,7 +144,44 @@ def cmd_adb_reboot(serial_num: str):
 
 
 def cmd_adb_install(serial_num: str, apk_path: str):
-  return _build_adb_command(serial_num, 'install', '-d', '-r', '-g', f'"{apk_path}"')
+  """Build adb install command using persisted settings.
+
+  The default flags remain: -d -r -g (plus optional -t), unless changed in settings.
+  """
+  try:
+    # Lazy import to avoid any potential circular import issues
+    from config.config_manager import ConfigManager
+    settings = ConfigManager().get_apk_install_settings()
+  except Exception:
+    # Fallback to defaults if config cannot be loaded
+    class _F:
+      replace_existing = True
+      allow_downgrade = True
+      grant_permissions = True
+      allow_test_packages = False
+      extra_args = ''
+    settings = _F()
+
+  parts = ['install']
+  if getattr(settings, 'allow_downgrade', True):
+    parts.append('-d')
+  if getattr(settings, 'replace_existing', True):
+    parts.append('-r')
+  if getattr(settings, 'grant_permissions', True):
+    parts.append('-g')
+  if getattr(settings, 'allow_test_packages', False):
+    parts.append('-t')
+
+  extra = getattr(settings, 'extra_args', '') or ''
+  if extra.strip():
+    try:
+      parts.extend(shlex.split(extra))
+    except Exception:
+      # If parsing fails, append raw extra args to preserve behavior
+      parts.append(extra.strip())
+
+  parts.append(f'"{apk_path}"')
+  return _build_adb_command(serial_num, *parts)
 
 def cmd_extract_discovery_service_info(serial_num, root_folder):
   return (

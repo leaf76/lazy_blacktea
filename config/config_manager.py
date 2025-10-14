@@ -81,6 +81,23 @@ class ScrcpySettings:
 
 
 @dataclass
+class ApkInstallSettings:
+    """APK install configuration.
+
+    - replace_existing (-r): Replace existing application.
+    - allow_downgrade (-d): Allow versionCode downgrade.
+    - grant_permissions (-g): Grant all runtime permissions.
+    - allow_test_packages (-t): Allow test apks.
+    - extra_args: Additional adb install args.
+    """
+    replace_existing: bool = True
+    allow_downgrade: bool = True
+    grant_permissions: bool = True
+    allow_test_packages: bool = False
+    extra_args: str = ''
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     ui: UISettings
@@ -89,6 +106,7 @@ class AppConfig:
     logging: LoggingSettings
     logcat: LogcatSettings
     scrcpy: ScrcpySettings
+    apk_install: ApkInstallSettings
     command_history: list = None
     version: str = "1.0.0"
 
@@ -122,6 +140,7 @@ class ConfigManager:
             logging=LoggingSettings(),
             logcat=LogcatSettings(),
             scrcpy=ScrcpySettings(),
+            apk_install=ApkInstallSettings(),
         )
 
     def _validate_config(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -207,6 +226,13 @@ class ConfigManager:
         extra_args_value = scrcpy_settings.get('extra_args', '')
         scrcpy_settings['extra_args'] = str(extra_args_value) if extra_args_value is not None else ''
 
+        # Validate APK install settings
+        apk_settings = validated.setdefault('apk_install', {})
+        for flag in ('replace_existing', 'allow_downgrade', 'grant_permissions', 'allow_test_packages'):
+            apk_settings[flag] = bool(apk_settings.get(flag, getattr(ApkInstallSettings(), flag)))
+        apk_extra = apk_settings.get('extra_args', '')
+        apk_settings['extra_args'] = str(apk_extra) if apk_extra is not None else ''
+
         return validated
 
     def load_config(self) -> AppConfig:
@@ -229,6 +255,7 @@ class ConfigManager:
                     logging=LoggingSettings(**validated_dict['logging']),
                     logcat=LogcatSettings(**validated_dict['logcat']),
                     scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
+                    apk_install=ApkInstallSettings(**validated_dict['apk_install']),
                     command_history=validated_dict.get('command_history', []),
                     version=validated_dict.get('version', '1.0.0')
                 )
@@ -254,6 +281,7 @@ class ConfigManager:
                         logging=LoggingSettings(**validated_dict['logging']),
                         logcat=LogcatSettings(**validated_dict['logcat']),
                         scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
+                        apk_install=ApkInstallSettings(**validated_dict['apk_install']),
                         command_history=validated_dict.get('command_history', []),
                         version=validated_dict.get('version', '1.0.0')
                     )
@@ -320,6 +348,10 @@ class ConfigManager:
         """Get scrcpy mirroring settings."""
         return self.load_config().scrcpy
 
+    def get_apk_install_settings(self) -> ApkInstallSettings:
+        """Get APK install settings."""
+        return self.load_config().apk_install
+
     def update_ui_settings(self, **kwargs):
         """Update UI settings."""
         config = self.load_config()
@@ -360,10 +392,24 @@ class ConfigManager:
                 setattr(config.scrcpy, key, value)
         self.save_config(config)
 
+    def update_apk_install_settings(self, **kwargs):
+        """Update APK install settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.apk_install, key):
+                setattr(config.apk_install, key, value)
+        self.save_config(config)
+
     def set_scrcpy_settings(self, settings: ScrcpySettings):
         """Replace scrcpy settings with provided dataclass."""
         config = self.load_config()
         config.scrcpy = settings
+        self.save_config(config)
+
+    def set_apk_install_settings(self, settings: ApkInstallSettings):
+        """Replace APK install settings with provided dataclass."""
+        config = self.load_config()
+        config.apk_install = settings
         self.save_config(config)
 
     def reset_to_defaults(self):
@@ -401,6 +447,7 @@ class ConfigManager:
                 logging=LoggingSettings(**validated_dict['logging']),
                 logcat=LogcatSettings(**validated_dict['logcat']),
                 scrcpy=ScrcpySettings(**validated_dict['scrcpy']),
+                apk_install=ApkInstallSettings(**validated_dict['apk_install']),
                 command_history=validated_dict.get('command_history', []),
                 version=validated_dict.get('version', '1.0.0')
             )

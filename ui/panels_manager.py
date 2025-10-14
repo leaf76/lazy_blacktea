@@ -455,6 +455,13 @@ class PanelsManager(QObject):
             scrcpy_settings_action.setEnabled(False)
         settings_menu.addAction(scrcpy_settings_action)
 
+        apk_install_settings_action = QAction('APK Install Settings...', main_window)
+        if hasattr(main_window, 'open_apk_install_settings_dialog'):
+            apk_install_settings_action.triggered.connect(main_window.open_apk_install_settings_dialog)
+        else:  # pragma: no cover
+            apk_install_settings_action.setEnabled(False)
+        settings_menu.addAction(apk_install_settings_action)
+
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)
