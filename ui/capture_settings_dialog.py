@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QLineEdit,
+    QHBoxLayout,
     QSpinBox,
     QVBoxLayout,
     QGroupBox,
@@ -53,6 +54,16 @@ class CaptureSettingsDialog(QDialog):
         self.screenshot_extra_args = QLineEdit()
         self.screenshot_extra_args.setPlaceholderText('Additional args to screencap, e.g. -d 0')
         ss_form.addRow('Extra args', self.screenshot_extra_args)
+
+        did_row = QHBoxLayout()
+        self.screenshot_display_id = QSpinBox()
+        self.screenshot_display_id.setRange(-1, 64)
+        self.screenshot_display_id.setToolTip('Use -1 for default display')
+        did_row.addWidget(self.screenshot_display_id)
+        did_hint = QLabel('(-1 = default)')
+        did_hint.setStyleSheet('color: #6b7280;')
+        did_row.addWidget(did_hint)
+        ss_form.addRow('Display ID', did_row)
         ss_group.setLayout(ss_form)
         layout.addWidget(ss_group)
 
@@ -82,6 +93,25 @@ class CaptureSettingsDialog(QDialog):
         self.record_extra_args.setPlaceholderText('Additional args, e.g. --verbose --rot 90')
         rec_form.addRow('Extra args', self.record_extra_args)
 
+        self.record_use_hevc = QCheckBox('Use HEVC codec (device-dependent)')
+        rec_form.addRow('HEVC codec', self.record_use_hevc)
+
+        self.record_bugreport = QCheckBox('Include bugreport metadata (--bugreport)')
+        rec_form.addRow('Bugreport', self.record_bugreport)
+
+        self.record_verbose = QCheckBox('Verbose logging (--verbose)')
+        rec_form.addRow('Verbose', self.record_verbose)
+
+        rid_row = QHBoxLayout()
+        self.record_display_id = QSpinBox()
+        self.record_display_id.setRange(-1, 64)
+        self.record_display_id.setToolTip('Use -1 for default display')
+        rid_row.addWidget(self.record_display_id)
+        rid_hint = QLabel('(-1 = default)')
+        rid_hint.setStyleSheet('color: #6b7280;')
+        rid_row.addWidget(rid_hint)
+        rec_form.addRow('Display ID', rid_row)
+
         rec_group.setLayout(rec_form)
         layout.addWidget(rec_group)
 
@@ -92,20 +122,36 @@ class CaptureSettingsDialog(QDialog):
 
     def _populate_from_settings(self, screenshot: ScreenshotSettings, record: ScreenRecordSettings) -> None:
         self.screenshot_extra_args.setText(screenshot.extra_args)
+        try:
+            self.screenshot_display_id.setValue(int(getattr(screenshot, 'display_id', -1)))
+        except Exception:
+            self.screenshot_display_id.setValue(-1)
         self.record_bitrate.setText(record.bit_rate)
         self.record_time_limit.setValue(max(0, int(record.time_limit_sec or 0)))
         self.record_size.setText(record.size)
         self.record_extra_args.setText(record.extra_args)
+        self.record_use_hevc.setChecked(bool(getattr(record, 'use_hevc', False)))
+        self.record_bugreport.setChecked(bool(getattr(record, 'bugreport', False)))
+        self.record_verbose.setChecked(bool(getattr(record, 'verbose', False)))
+        try:
+            self.record_display_id.setValue(int(getattr(record, 'display_id', -1)))
+        except Exception:
+            self.record_display_id.setValue(-1)
 
     def _handle_accept(self) -> None:
         ss = ScreenshotSettings(
-            extra_args=self.screenshot_extra_args.text().strip()
+            extra_args=self.screenshot_extra_args.text().strip(),
+            display_id=int(self.screenshot_display_id.value()),
         )
         rec = ScreenRecordSettings(
             bit_rate=self.record_bitrate.text().strip(),
             time_limit_sec=int(self.record_time_limit.value()),
             size=self.record_size.text().strip(),
             extra_args=self.record_extra_args.text().strip(),
+            use_hevc=self.record_use_hevc.isChecked(),
+            bugreport=self.record_bugreport.isChecked(),
+            verbose=self.record_verbose.isChecked(),
+            display_id=int(self.record_display_id.value()),
         )
         self._result_screenshot = ss
         self._result_record = rec
@@ -116,4 +162,3 @@ class CaptureSettingsDialog(QDialog):
 
 
 __all__ = ["CaptureSettingsDialog"]
-

@@ -100,7 +100,10 @@ class ApkInstallSettings:
 @dataclass
 class ScreenshotSettings:
     """Screenshot capture configuration."""
-    extra_args: str = ''  # Additional args for 'screencap' (e.g., -d 0)
+    # Additional args for 'screencap' (e.g., -d 0)
+    extra_args: str = ''
+    # Display ID for multi-display devices (-1 = default primary)
+    display_id: int = -1
 
 
 @dataclass
@@ -110,6 +113,11 @@ class ScreenRecordSettings:
     time_limit_sec: int = 0   # 0 means unlimited
     size: str = ''            # e.g., 1280x720
     extra_args: str = ''      # Additional args for 'screenrecord'
+    # Advanced toggles
+    use_hevc: bool = False    # --codec hevc (device-dependent)
+    bugreport: bool = False   # --bugreport
+    verbose: bool = False     # --verbose
+    display_id: int = -1      # --display-id N (-1 = default)
 
 
 @dataclass
@@ -256,6 +264,11 @@ class ConfigManager:
         screenshot_settings = validated.setdefault('screenshot', {})
         screenshot_extra = screenshot_settings.get('extra_args', '')
         screenshot_settings['extra_args'] = str(screenshot_extra) if screenshot_extra is not None else ''
+        try:
+            did = int(screenshot_settings.get('display_id', -1))
+        except Exception:
+            did = -1
+        screenshot_settings['display_id'] = did
 
         # Validate screen record settings
         record_settings = validated.setdefault('screen_record', {})
@@ -273,6 +286,15 @@ class ConfigManager:
         record_settings['size'] = str(size_v) if size_v is not None else ''
         extra_v = record_settings.get('extra_args', '')
         record_settings['extra_args'] = str(extra_v) if extra_v is not None else ''
+        # Booleans
+        record_settings['use_hevc'] = bool(record_settings.get('use_hevc', False))
+        record_settings['bugreport'] = bool(record_settings.get('bugreport', False))
+        record_settings['verbose'] = bool(record_settings.get('verbose', False))
+        try:
+            rid = int(record_settings.get('display_id', -1))
+        except Exception:
+            rid = -1
+        record_settings['display_id'] = rid
 
         return validated
 

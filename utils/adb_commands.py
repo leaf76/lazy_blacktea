@@ -62,6 +62,10 @@ def cmd_screencap_capture(serial_num: str, remote_path: str) -> str:
         extra_tokens = [tok for tok in shlex.split(extra) if tok]
       except Exception:
         extra_tokens = [extra.strip()]
+    # display id
+    did = int(getattr(ss, 'display_id', -1) or -1)
+    if did >= 0:
+      extra_tokens = ['-d', str(did)] + extra_tokens
   except Exception:
     pass
 
@@ -383,6 +387,15 @@ def cmd_android_screen_record(serial_num, name) -> str:
     sz = (getattr(rs, 'size', '') or '').strip()
     if sz:
       opts.extend(['--size', sz])
+    did = int(getattr(rs, 'display_id', -1) or -1)
+    if did >= 0:
+      opts.extend(['--display-id', str(did)])
+    if bool(getattr(rs, 'use_hevc', False)):
+      opts.extend(['--codec', 'hevc'])
+    if bool(getattr(rs, 'bugreport', False)):
+      opts.append('--bugreport')
+    if bool(getattr(rs, 'verbose', False)):
+      opts.append('--verbose')
     extra = (getattr(rs, 'extra_args', '') or '').strip()
     if extra:
       try:
