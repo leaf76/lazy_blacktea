@@ -2204,10 +2204,10 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
         logger.info(f'Launching UI Inspector for device: {model} ({serial})')
 
-        # Create and show UI Inspector dialog
+        # Create and show UI Inspector window (non-modal)
         try:
             ui_inspector = UIInspectorDialog(self, serial, model)
-            ui_inspector.exec()
+            ui_inspector.show()
         except Exception as exc:
             self._log_operation_failure(operation, str(exc))
             raise

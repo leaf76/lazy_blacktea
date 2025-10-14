@@ -46,9 +46,11 @@ class BluetoothMonitorWindow(QDialog):
         parent: Optional[QDialog] = None,
     ) -> None:
         super().__init__(parent)
+        # Use conservative flags to keep native window decorations and resizability
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
         self.setSizeGripEnabled(True)
         self.serial = serial
         self.device = device

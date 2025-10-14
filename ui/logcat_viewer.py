@@ -14,11 +14,11 @@ from typing import Optional, Dict, List, Any, Callable
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
     QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox, QFrame, QMessageBox,
-    QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView,
+    QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView, QStyledItemDelegate,
     QSpinBox, QSizePolicy, QGroupBox, QFormLayout, QApplication, QMenu
 )
 from PyQt6.QtCore import (
-    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel
+    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel, QSize
 )
 from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut
 
@@ -363,6 +363,25 @@ class LogcatFilterProxyModel(QSortFilterProxyModel):
             return True
         return source_row in cache
 
+
+class _LogListItemDelegate(QStyledItemDelegate):
+    """Custom delegate ensuring long lines expand width for horizontal scrolling.
+
+    - Disables implicit eliding by providing a wider size hint based on text width.
+    - Keeps height from base delegate for consistent row height.
+    """
+
+    def sizeHint(self, option, index):  # type: ignore[override]
+        base = super().sizeHint(option, index)
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if text is None:
+            return base
+        fm = option.fontMetrics
+        # Add small padding to avoid clipping of last character
+        width = fm.horizontalAdvance(str(text)) + 12
+        height = base.height()
+        return QSize(width, height)
+
 class PerformanceSettingsDialog(QDialog):
     """Performance settings dialog for Logcat viewer."""
 
@@ -613,9 +632,15 @@ class LogcatWindow(QDialog):
         on_settings_changed: Optional[Callable[[Dict[str, int]], None]] = None,
     ):
         super().__init__(parent)
+        # Configure as a normal resizable window (not always-on-top of parent)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setWindowFlag(Qt.WindowType.Dialog, False)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
         self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setSizeGripEnabled(True)
 
         self.device = device
@@ -860,10 +885,25 @@ class LogcatWindow(QDialog):
         self.log_display = QListView()
         self.log_display.setModel(self.log_proxy)
         self.log_display.setFont(QFont('Consolas', 10))
-        self.log_display.setUniformItemSizes(True)
+        # Enable correct width calculation for long lines and allow horizontal scroll
+        self.log_display.setUniformItemSizes(False)
         self.log_display.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.log_display.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.log_display.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.log_display.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.log_display.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.log_display.setWordWrap(False)
+        try:
+            # Avoid eliding long log lines; show full width with horizontal scroll
+            from PyQt6.QtCore import Qt as _Qt
+            self.log_display.setTextElideMode(_Qt.TextElideMode.ElideNone)
+        except Exception:
+            pass
+        # Use custom delegate so the view knows the actual width per row
+        try:
+            self.log_display.setItemDelegate(_LogListItemDelegate(self.log_display))
+        except Exception:
+            pass
         self.log_display.setStyleSheet(
             """
             QListView {
@@ -1143,7 +1183,7 @@ class LogcatWindow(QDialog):
         self.filter_input.textChanged.connect(self.apply_live_filter)
         save_filter_btn = QPushButton('Save')
         save_filter_btn.setFixedWidth(64)
-        save_filter_btn.setToolTip('Save current filter pattern')
+        save_filter_btn.setToolTip('Save current filter pattern without naming')
         save_filter_btn.clicked.connect(self.save_current_filter)
 
         form_layout.addWidget(filter_label, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1206,21 +1246,40 @@ class LogcatWindow(QDialog):
         return panel
 
     def save_current_filter(self):
-        """Save current filter pattern."""
-        if not self.filter_input.text().strip():
+        """Save current filter pattern directly without naming.
+
+        - Uses the pattern itself as the identifier for persistence and selection.
+        - De-duplicates by pattern; if pattern already exists, select it instead of duplicating.
+        """
+        pattern = self.filter_input.text().strip()
+        if not pattern:
             QMessageBox.information(self, 'No Filter', 'Please enter a filter pattern first.')
             return
 
-        filter_name, ok = QInputDialog.getText(self, 'Save Filter', 'Enter filter name:')
-        if ok and filter_name.strip():
-            normalized_name = filter_name.strip()
-            self.filters[normalized_name] = self.filter_input.text().strip()
-            self.save_filters()
+        # If pattern already exists under any key, just select it.
+        existing_key = None
+        for name, saved in self.filters.items():
+            if saved == pattern:
+                existing_key = name
+                break
+
+        if existing_key is not None:
+            # Select the existing entry in combo box
             self.update_saved_filters_combo()
-            new_index = self.saved_filters_combo.findData(normalized_name, role=Qt.ItemDataRole.UserRole)
-            if new_index != -1:
-                self.saved_filters_combo.setCurrentIndex(new_index)
-            QMessageBox.information(self, 'Filter Saved', f'Filter "{filter_name}" saved successfully!')
+            index = self.saved_filters_combo.findData(existing_key, role=Qt.ItemDataRole.UserRole)
+            if index != -1:
+                self.saved_filters_combo.setCurrentIndex(index)
+            QMessageBox.information(self, 'Already Saved', 'This filter pattern already exists.')
+            return
+
+        # Save with pattern as key to simplify UX (no naming required)
+        self.filters[pattern] = pattern
+        self.save_filters()
+        self.update_saved_filters_combo()
+        new_index = self.saved_filters_combo.findData(pattern, role=Qt.ItemDataRole.UserRole)
+        if new_index != -1:
+            self.saved_filters_combo.setCurrentIndex(new_index)
+        QMessageBox.information(self, 'Filter Saved', 'Filter pattern saved successfully!')
 
     def delete_saved_filter(self):
         """Delete selected saved filter."""
@@ -1269,11 +1328,16 @@ class LogcatWindow(QDialog):
         self.saved_filters_combo.blockSignals(True)
         self.saved_filters_combo.clear()
 
+        # Display only the pattern (name is no longer required). Deduplicate by pattern value.
+        added_patterns = set()
         for name, pattern in self.filters.items():
-            display = f'{name}: {pattern}'
+            if not pattern or pattern in added_patterns:
+                continue
+            display = pattern
             self.saved_filters_combo.addItem(display, name)
             index = self.saved_filters_combo.count() - 1
             self.saved_filters_combo.setItemData(index, pattern, Qt.ItemDataRole.ToolTipRole)
+            added_patterns.add(pattern)
 
         target_index = -1
         if current_name:
@@ -1321,9 +1385,8 @@ class LogcatWindow(QDialog):
             return
 
         for filter_data in self.active_filters:
-            name = filter_data.get('name', 'Unnamed')
             pattern = filter_data.get('pattern', '')
-            item = QListWidgetItem(f'{name}: {pattern}')
+            item = QListWidgetItem(pattern)
             self.active_filters_list.addItem(item)
 
     def remove_selected_active_filters(self):
@@ -1790,7 +1853,7 @@ class LogcatWindow(QDialog):
         if pattern is None:
             return
 
-        self.saved_filters_combo.setToolTip(f'{actual_name}: {pattern}')
+        self.saved_filters_combo.setToolTip(f'{pattern}')
 
     def apply_selected_filter(self):
         """Apply the selected saved filter."""
@@ -1831,6 +1894,10 @@ class LogcatWindow(QDialog):
                 import json
                 with open(config_file, 'r', encoding='utf-8') as f:
                     self.filters = json.load(f)
+                # Migrate legacy {name: pattern} to {pattern: pattern} and deduplicate
+                if self._migrate_saved_filters_format():
+                    # Persist the normalized structure back to disk
+                    self.save_filters()
                 self.update_saved_filters_combo()
         except Exception as e:
             logger.warning(f'Failed to load filters: {e}')
@@ -1846,6 +1913,48 @@ class LogcatWindow(QDialog):
                 json.dump(self.filters, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.warning(f'Failed to save filters: {e}')
+
+    def _migrate_saved_filters_format(self) -> bool:
+        """Normalize saved filters to use pattern as key and value.
+
+        Legacy format stored {name: pattern}. New format stores {pattern: pattern}.
+        Migration also deduplicates identical patterns, preserving the first occurrence order.
+
+        Returns True if migration changed the in-memory structure.
+        """
+        try:
+            src = self.filters
+            if not isinstance(src, dict):
+                self.filters = {}
+                return True
+
+            # Already normalized if every key equals its value
+            all_equal = True
+            for k, v in src.items():
+                if not isinstance(v, str) or not isinstance(k, str) or k != v:
+                    all_equal = False
+                    break
+            if all_equal:
+                return False
+
+            seen: set[str] = set()
+            migrated: Dict[str, str] = {}
+            for _name, pattern in src.items():
+                if not isinstance(pattern, str):
+                    continue
+                p = pattern.strip()
+                if not p or p in seen:
+                    continue
+                migrated[p] = p
+                seen.add(p)
+
+            changed = migrated != src
+            if changed:
+                self.filters = migrated
+            return changed
+        except Exception as exc:
+            logger.debug('Saved filters migration skipped due to error: %s', exc)
+            return False
 
     def show_error(self, message):
         """Show error message dialog."""

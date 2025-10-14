@@ -81,7 +81,7 @@ class LogcatFacade:
 
             logcat_window = LogcatWindow(
                 device,
-                self.window,
+                None,
                 settings=settings_payload,
                 on_settings_changed=self.window.persist_logcat_settings,
             )
@@ -93,4 +93,3 @@ class LogcatFacade:
 
 
 __all__ = ["LogcatFacade"]
-

@@ -140,8 +140,14 @@ class UIInspectorDialog(QDialog):
         # Initialize UI Inspector factory for creating UI components
         self.ui_inspector_factory = UIInspectorFactory(parent_dialog=self)
 
+        # Configure as non-modal dialog with native decorations and resizability
         self.setWindowTitle(f'📱 UI Inspector - {device_model}')
-        self.setModal(True)
+        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
+        self.setModal(False)
+        self.setSizeGripEnabled(True)
         self.resize(1200, 800)
 
         self._task_handle: Optional[TaskHandle] = None
