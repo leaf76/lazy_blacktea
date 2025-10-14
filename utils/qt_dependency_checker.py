@@ -11,6 +11,23 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 
+def _is_ci() -> bool:
+    return any(env_var in os.environ for env_var in ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'])
+
+
+def _is_quiet() -> bool:
+    val = os.environ.get('QDC_QUIET', '').strip().lower()
+    if val in {'1', 'true', 'yes', 'on'}:
+        return True
+    # Default to quiet in CI to reduce log noise
+    return _is_ci()
+
+
+def _echo(msg: str) -> None:
+    if not _is_quiet():
+        print(msg)
+
+
 def get_linux_distro():
     """Get Linux distribution name."""
     try:
@@ -25,7 +42,7 @@ def get_linux_distro():
 
 def install_dependencies_ubuntu():
     """Install Qt dependencies on Ubuntu/Debian systems."""
-    print("📦 Installing Qt dependencies for Ubuntu/Debian...")
+    _echo("📦 Installing Qt dependencies for Ubuntu/Debian...")
 
     commands = [
         ['sudo', 'apt-get', 'update'],
@@ -41,49 +58,49 @@ def install_dependencies_ubuntu():
         try:
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            print(f"❌ Command failed: {' '.join(cmd)}")
-            print(f"Error: {e.stderr}")
+            _echo(f"❌ Command failed: {' '.join(cmd)}")
+            _echo(f"Error: {e.stderr}")
             return False
 
-    print("✅ Dependencies installed successfully!")
+    _echo("✅ Dependencies installed successfully!")
     return True
 
 
 def show_manual_installation_instructions(distro):
     """Show manual installation instructions for different distributions."""
-    print("\n🔧 Manual Installation Instructions")
-    print("=" * 40)
+    _echo("\n🔧 Manual Installation Instructions")
+    _echo("=" * 40)
 
     if distro in ['ubuntu', 'debian']:
-        print("\nUbuntu/Debian - Run these commands:")
-        print("sudo apt-get update")
-        print("sudo apt-get install -y libxcb-cursor0 libxcb1 libfontconfig1 libfreetype6")
+        _echo("\nUbuntu/Debian - Run these commands:")
+        _echo("sudo apt-get update")
+        _echo("sudo apt-get install -y libxcb-cursor0 libxcb1 libfontconfig1 libfreetype6")
     elif distro in ['centos', 'rhel', 'fedora']:
-        print("\nCentOS/RHEL/Fedora - Run these commands:")
-        print("sudo dnf install -y libxcb libxcb-devel xcb-util xcb-util-cursor")
-        print("sudo dnf install -y libXrender libXi fontconfig freetype libX11 dbus-libs mesa-libGL")
+        _echo("\nCentOS/RHEL/Fedora - Run these commands:")
+        _echo("sudo dnf install -y libxcb libxcb-devel xcb-util xcb-util-cursor")
+        _echo("sudo dnf install -y libXrender libXi fontconfig freetype libX11 dbus-libs mesa-libGL")
     elif distro in ['arch', 'manjaro']:
-        print("\nArch Linux - Run this command:")
-        print("sudo pacman -S libxcb xcb-util xcb-util-cursor libxrender libxi fontconfig freetype2 libx11 dbus mesa")
+        _echo("\nArch Linux - Run this command:")
+        _echo("sudo pacman -S libxcb xcb-util xcb-util-cursor libxrender libxi fontconfig freetype2 libx11 dbus mesa")
     else:
-        print(f"\nFor {distro}, install these Qt dependencies:")
-        print("- libxcb-cursor0 (or xcb-util-cursor)")
-        print("- libxcb and related packages")
-        print("- libX11, libXi, libXrender")
-        print("- fontconfig, freetype")
-        print("- dbus libraries")
-        print("- Mesa OpenGL libraries")
+        _echo(f"\nFor {distro}, install these Qt dependencies:")
+        _echo("- libxcb-cursor0 (or xcb-util-cursor)")
+        _echo("- libxcb and related packages")
+        _echo("- libX11, libXi, libXrender")
+        _echo("- fontconfig, freetype")
+        _echo("- dbus libraries")
+        _echo("- Mesa OpenGL libraries")
 
-    print("\n💡 Alternative: Run in headless mode")
-    print("export QT_QPA_PLATFORM=offscreen")
-    print("python lazy_blacktea_pyqt.py")
+    _echo("\n💡 Alternative: Run in headless mode")
+    _echo("export QT_QPA_PLATFORM=offscreen")
+    _echo("python lazy_blacktea_pyqt.py")
 
 
 def test_qt_platform_plugin():
     """Test if Qt platform plugin is available."""
     try:
         # Check if we're in a CI environment (GitHub Actions, etc.)
-        is_ci = any(env_var in os.environ for env_var in ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'])
+        is_ci = _is_ci()
 
         # Test Qt platform plugin by creating minimal QApplication
         test_app = QApplication.instance()
@@ -118,7 +135,7 @@ def check_and_fix_qt_dependencies():
         return True
 
     # Check if we're in a CI environment - if so, set offscreen mode immediately
-    is_ci = any(env_var in os.environ for env_var in ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'])
+    is_ci = _is_ci()
     if is_ci:
         os.environ['QT_QPA_PLATFORM'] = 'offscreen'
         return True
@@ -128,32 +145,34 @@ def check_and_fix_qt_dependencies():
     if qt_ok:
         return True
 
-    print("⚠️  Qt xcb platform plugin dependencies missing!")
-    print("This is required for the GUI to work properly.")
-    print()
+    _echo("⚠️  Qt xcb platform plugin dependencies missing!")
+    _echo("This is required for the GUI to work properly.")
+    _echo("")
 
     # Get distribution info
     distro = get_linux_distro()
 
     # Offer automatic fix for Ubuntu/Debian
     if distro in ['ubuntu', 'debian']:
-        response = input("🤔 Would you like to automatically install the dependencies? (y/N): ")
+        response = 'n'
+        if not _is_quiet():
+            response = input("🤔 Would you like to automatically install the dependencies? (y/N): ")
         if response.lower().strip() in ['y', 'yes']:
             if install_dependencies_ubuntu():
-                print("✅ Dependencies installed! Please restart the application.")
+                _echo("✅ Dependencies installed! Please restart the application.")
                 return False  # Need restart
             else:
-                print("❌ Failed to install dependencies automatically.")
+                _echo("❌ Failed to install dependencies automatically.")
 
     # Show manual installation instructions
     show_manual_installation_instructions(distro)
 
     # Ask about headless mode
-    print()
-    response = input("🤔 Try running in headless mode (no GUI)? (y/N): ")
+    _echo("")
+    response = 'y' if _is_quiet() else input("🤔 Try running in headless mode (no GUI)? (y/N): ")
     if response.lower().strip() in ['y', 'yes']:
         os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-        print("🖥️  Running in headless mode...")
+        _echo("🖥️  Running in headless mode...")
         return True
 
     return False
@@ -161,26 +180,26 @@ def check_and_fix_qt_dependencies():
 
 def print_qt_info():
     """Print Qt environment information for debugging."""
-    print("🔍 Qt Environment Information")
-    print("=" * 30)
+    _echo("🔍 Qt Environment Information")
+    _echo("=" * 30)
 
     try:
         from PyQt6 import QtCore
-        print(f"PyQt6 version: {QtCore.PYQT_VERSION_STR}")
-        print(f"Qt version: {QtCore.QT_VERSION_STR}")
+        _echo(f"PyQt6 version: {QtCore.PYQT_VERSION_STR}")
+        _echo(f"Qt version: {QtCore.QT_VERSION_STR}")
     except ImportError:
-        print("❌ PyQt6 not installed")
+        _echo("❌ PyQt6 not installed")
 
-    print(f"Platform: {platform.system()} {platform.release()}")
-    print(f"Architecture: {platform.machine()}")
+    _echo(f"Platform: {platform.system()} {platform.release()}")
+    _echo(f"Architecture: {platform.machine()}")
 
     if platform.system() == 'Linux':
         distro = get_linux_distro()
-        print(f"Linux Distribution: {distro}")
+        _echo(f"Linux Distribution: {distro}")
 
         # Check for Qt platform plugin environment
         qpa_platform = os.environ.get('QT_QPA_PLATFORM', 'default')
-        print(f"QT_QPA_PLATFORM: {qpa_platform}")
+        _echo(f"QT_QPA_PLATFORM: {qpa_platform}")
 
 
 if __name__ == "__main__":
