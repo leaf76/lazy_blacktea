@@ -19,6 +19,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
+  QDC_QUIET: '1'
 
 jobs:
   build:
