@@ -27,6 +27,7 @@ from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from config.constants import PanelConfig, PanelText
 from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
 from ui.device_overview_widget import DeviceOverviewWidget
+from ui.app_list_tab import AppListTab
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -75,6 +76,7 @@ class ToolsPanelController:
         self._create_shell_commands_tab(tab_widget)
         self._create_device_file_browser_tab(tab_widget)
         self._create_device_groups_tab(tab_widget)
+        self._create_apps_tab(tab_widget)
 
         parent.addWidget(tools_widget)
 
@@ -596,6 +598,14 @@ class ToolsPanelController:
         layout.addWidget(right_group, stretch=3)
 
         tab_widget.addTab(tab, PanelText.TAB_DEVICE_GROUPS)
+
+    def _create_apps_tab(self, tab_widget: QTabWidget) -> None:
+        """Create the Apps tab and attach it to the tab widget."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content = AppListTab(self.window)
+        scroll_area.setWidget(content)
+        tab_widget.addTab(scroll_area, PanelText.TAB_APPS)
 
 
 __all__ = ["ToolsPanelController"]

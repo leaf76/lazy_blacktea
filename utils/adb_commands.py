@@ -316,6 +316,98 @@ def cmd_get_apps_in_device(serial_num) -> str:
   return f'adb -s {serial_num} shell dumpsys package packages '
 
 
+def cmd_list_packages(
+    serial_num: str,
+    *,
+    include_path: bool = True,
+    third_party_only: bool | None = None,
+    user_id: int | None = None,
+) -> str:
+  """Build command for `pm list packages` with common flags.
+
+  Args:
+    serial_num: Device serial number
+    include_path: Include APK path via `-f`
+    third_party_only: True for `-3` (third-party), False for `-s` (system), None for all
+    user_id: Android user id (when provided, adds `--user <id>`)
+
+  Returns:
+    Command string to execute on the device.
+  """
+  parts: list[str] = ['pm', 'list', 'packages']
+  if include_path:
+    parts.append('-f')
+  if third_party_only is True:
+    parts.append('-3')
+  elif third_party_only is False:
+    parts.append('-s')
+  if user_id is not None:
+    parts.extend(['--user', str(user_id)])
+  return _build_adb_shell_command(serial_num, ' '.join(parts))
+
+
+def cmd_dumpsys_package(serial_num: str, package_name: str) -> str:
+  """Build command to dump package details for a specific app."""
+  return _build_adb_shell_command(serial_num, f'dumpsys package {shlex.quote(package_name)}')
+
+
+def cmd_adb_uninstall(serial_num: str, package_name: str, *, keep_data: bool = False) -> str:
+  """Build command to uninstall a package from the device.
+
+  Uses `adb uninstall` rather than shell pm to leverage host-side handling.
+  """
+  parts: list[str] = ['uninstall']
+  if keep_data:
+    parts.append('-k')
+  parts.append(package_name)
+  return _build_adb_command(serial_num, *parts)
+
+
+def cmd_am_force_stop(serial_num: str, package_name: str) -> str:
+  """Build command to force-stop an application."""
+  return _build_adb_shell_command(serial_num, f'am force-stop {shlex.quote(package_name)}')
+
+
+def cmd_pm_clear(serial_num: str, package_name: str) -> str:
+  """Build command to clear app userdata (equivalent to factory reset for the app)."""
+  return _build_adb_shell_command(serial_num, f'pm clear {shlex.quote(package_name)}')
+
+
+def cmd_pm_set_enabled(serial_num: str, package_name: str, enable: bool, user_id: int | None = None) -> str:
+  """Build command to enable or disable a package for a given user (if provided)."""
+  if enable:
+    base = f'pm enable {shlex.quote(package_name)}'
+  else:
+    # Prefer disable-user when possible to avoid requiring root
+    if user_id is not None:
+      base = f'pm disable-user --user {user_id} {shlex.quote(package_name)}'
+    else:
+      base = f'pm disable-user {shlex.quote(package_name)}'
+  return _build_adb_shell_command(serial_num, base)
+
+
+def cmd_open_app_info(serial_num: str, package_name: str) -> str:
+  """Build command to open the app info settings page for a package."""
+  uri = f'package:{package_name}'
+  return _build_adb_shell_command(
+      serial_num,
+      f'am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d {shlex.quote(uri)}'
+  )
+
+
+def cmd_open_app_info_legacy(serial_num: str, package_name: str) -> str:
+  """Fallback: directly start the InstalledAppDetails activity with extras.
+
+  Some OEM builds are picky with the ACTION + data URI approach. This legacy
+  fallback targets the known Settings component and passes the package extra.
+  """
+  pkg = shlex.quote(package_name)
+  return _build_adb_shell_command(
+      serial_num,
+      f'am start -n com.android.settings/.applications.InstalledAppDetails -e package {pkg}'
+  )
+
+
 def cmd_cp_file(source, destination):
   return f'cp {source} {destination}'
 

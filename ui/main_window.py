@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QMessageBox,
+    QProgressDialog,
 )
 from PyQt6.QtCore import (Qt, QTimer, QPoint, QRect, pyqtSignal)
 from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
@@ -2411,6 +2412,23 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         # Process any pending events to ensure UI updates
         QApplication.processEvents()
 
+        # Optional: show a brief closing indicator while shutting down
+        closing_dialog = None
+        try:
+            from config.constants import ApplicationConstants as _AC
+            if getattr(_AC, 'SHOW_CLOSING_INDICATOR', True):
+                closing_dialog = QProgressDialog('Closing Lazy Blacktea...','', 0, 0, self)
+                closing_dialog.setWindowTitle('Closing')
+                closing_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                closing_dialog.setMinimumDuration(0)
+                closing_dialog.setAutoClose(False)
+                closing_dialog.setAutoReset(False)
+                closing_dialog.setCancelButton(None)
+                closing_dialog.show()
+                QApplication.processEvents()
+        except Exception:
+            closing_dialog = None
+
         self.save_config()
 
         # Clean up timers to prevent memory leaks
@@ -2418,6 +2436,16 @@ After installation, restart lazy blacktea to use device mirroring functionality.
             self.recording_timer.stop()
         if hasattr(self, 'battery_info_manager'):
             self.battery_info_manager.stop()
+
+        # Cancel background task handles to avoid late UI callbacks
+        try:
+            for handle in list(getattr(self, '_background_task_handles', [])):
+                try:
+                    handle.cancel()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # Clean up new modular components
         if hasattr(self, 'device_manager'):
@@ -2430,8 +2458,23 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         if hasattr(self, 'device_file_controller'):
             self.device_file_controller.shutdown()
 
-        # Clean up device management threads aggressively for immediate shutdown
-        # (already handled above)
+        # Attempt to shutdown task dispatcher (bounded wait)
+        try:
+            if hasattr(self, '_task_dispatcher') and self._task_dispatcher is not None:
+                from config.constants import ApplicationConstants as _AC
+                timeout_ms = int(getattr(_AC, 'SHUTDOWN_TIMEOUT_MS', 700) or 0)
+                if timeout_ms > 0:
+                    self._task_dispatcher.shutdown(timeout_ms=timeout_ms)
+        except Exception:
+            pass
+
+        # Dismiss closing indicator
+        try:
+            if closing_dialog is not None:
+                closing_dialog.close()
+                QApplication.processEvents()
+        except Exception:
+            pass
 
         logger.info('Application shutdown complete')
         event.accept()

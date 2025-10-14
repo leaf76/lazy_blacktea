@@ -216,6 +216,24 @@ class TaskDispatcher(QObject):
         self._pool.start(runnable)
         return handle
 
+    # ------------------------------------------------------------------
+    # Shutdown helpers
+    # ------------------------------------------------------------------
+    def shutdown(self, timeout_ms: int = 1500) -> bool:
+        """Wait for queued tasks to complete for up to timeout_ms milliseconds.
+
+        Returns True if all tasks finished within the timeout, else False.
+        """
+        try:
+            logger.info('Shutting down task dispatcher (timeout=%sms)', timeout_ms)
+            ok = self._pool.waitForDone(timeout_ms)
+            if not ok:
+                logger.warning('Task dispatcher did not finish within timeout')
+            return bool(ok)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception('Task dispatcher shutdown error: %s', exc)
+            return False
+
 
 _dispatcher: Optional[TaskDispatcher] = None
 

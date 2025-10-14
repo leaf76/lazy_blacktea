@@ -774,6 +774,203 @@ def generate_bug_report_device(
   return result
 
 
+# ---------------------------------------------------------------------------
+# App/package helpers
+# ---------------------------------------------------------------------------
+def parse_pm_list_packages_output(lines: List[str]) -> List[dict]:
+  """Parse lines from `pm list packages -f`.
+
+  Each input line typically looks like one of:
+    - 'package:/data/app/.../base.apk=com.example.app'
+    - 'package:/system/app/.../Sys.apk=com.android.sys'
+
+  Returns a list of dicts with keys: package, apk_path, is_system.
+  """
+  apps: List[dict] = []
+  for raw in lines or []:
+    line = (raw or '').strip()
+    if not line:
+      continue
+    if not line.startswith('package:'):
+      # Some Android builds omit prefix in rare cases; tolerate pure 'com.pkg'
+      if '=' not in line:
+        pkg = line
+        apk_path = ''
+      else:
+        # Fallback generic parse
+        try:
+          apk_path, pkg = line.split('=', 1)
+        except ValueError:
+          continue
+      is_system = apk_path.startswith(('/system/', '/product/', '/vendor/', '/system_ext/'))
+      apps.append({'package': pkg, 'apk_path': apk_path, 'is_system': is_system})
+      continue
+
+    # Normal form: package:<path>=<pkg>
+    try:
+      payload = line[len('package:'):]
+      # Some paths may contain '=' (e.g., modern base paths encode with '=='),
+      # so split from the rightmost '='
+      apk_path, pkg = payload.rsplit('=', 1)
+    except ValueError:
+      continue
+    apk_path = apk_path.strip()
+    pkg = pkg.strip()
+    is_system = apk_path.startswith(('/system/', '/product/', '/vendor/', '/system_ext/'))
+    apps.append({'package': pkg, 'apk_path': apk_path, 'is_system': is_system})
+  return apps
+
+
+def parse_dumpsys_package_permissions(lines: List[str]) -> dict:
+  """Parse permissions from `dumpsys package <pkg>` output.
+
+  Extracts two sets:
+    - requested: permissions listed under 'requested permissions:'
+    - granted: permissions with 'granted=true' under install/runtime sections
+  """
+  requested: set[str] = set()
+  granted: set[str] = set()
+
+  section = None
+  for raw in lines or []:
+    line = (raw or '').strip()
+    if not line:
+      continue
+    lower = line.lower()
+    if lower.endswith('requested permissions:'):
+      section = 'requested'
+      continue
+    if lower.endswith('install permissions:') or lower.endswith('runtime permissions:'):
+      section = 'grants'
+      continue
+
+    if section == 'requested':
+      # Lines are permission names (possibly indented)
+      # Filter obviously invalid tokens
+      if ' ' not in line and '.' in line:
+        requested.add(line)
+      continue
+
+    if section == 'grants':
+      # Format: <perm>: granted=true/false
+      # Accept variations like '<perm>: granted=true, flags=0xX'
+      if ':' in line:
+        perm, _, tail = line.partition(':')
+        perm = perm.strip()
+        if perm:
+          if 'granted=true' in tail.replace(' ', '').lower():
+            granted.add(perm)
+      continue
+
+  return {'requested': sorted(requested), 'granted': sorted(granted)}
+
+
+def list_installed_packages(
+    serial_num: str,
+    *,
+    include_path: bool = True,
+    third_party_only: bool | None = None,
+    user_id: int | None = None,
+) -> List[dict]:
+  """Return parsed package list for the given device.
+
+  See `parse_pm_list_packages_output` for the returned item format.
+  """
+  cmd = adb_commands.cmd_list_packages(
+      serial_num,
+      include_path=include_path,
+      third_party_only=third_party_only,
+      user_id=user_id,
+  )
+  lines = common.run_command(cmd)
+  return parse_pm_list_packages_output(lines)
+
+
+def get_app_version_name(serial_num: str, package_name: str) -> str:
+  """Return versionName for the package or empty string if unavailable.
+
+  Use dumpsys output and parse in Python for better cross-device compatibility
+  (avoid relying on device-side grep/cut).
+  """
+  cmd = adb_commands.cmd_dumpsys_package(serial_num, package_name)
+  lines = common.run_command(cmd)
+  version = ''
+  for raw in lines:
+    line = (raw or '').strip()
+    if not line:
+      continue
+    if 'versionName' in line:
+      # Accept both 'versionName=1.2.3' and 'versionName: 1.2.3'
+      if '=' in line:
+        version = line.split('=', 1)[1].strip()
+      elif ':' in line:
+        version = line.split(':', 1)[1].strip()
+      # Trim any surrounding quotes
+      version = version.strip('"\'')
+      if version:
+        return version
+  return version
+
+
+def get_package_permissions(serial_num: str, package_name: str) -> dict:
+  """Return requested/granted permissions for the given package."""
+  cmd = adb_commands.cmd_dumpsys_package(serial_num, package_name)
+  lines = common.run_command(cmd)
+  return parse_dumpsys_package_permissions(lines)
+
+
+def uninstall_app(serial_num: str, package_name: str, *, keep_data: bool = False) -> bool:
+  """Uninstall the given package. Returns True on success."""
+  cmd = adb_commands.cmd_adb_uninstall(serial_num, package_name, keep_data=keep_data)
+  lines = common.run_command(cmd)
+  normalized = '\n'.join((l or '').strip() for l in lines)
+  return 'success' in normalized.lower()
+
+
+def force_stop_app(serial_num: str, package_name: str) -> bool:
+  """Force stop a running app. Returns True if command executed without error."""
+  cmd = adb_commands.cmd_am_force_stop(serial_num, package_name)
+  _ = common.run_command(cmd)
+  # If the command executed (return code 0), treat as success
+  return True
+
+
+def clear_app_data(serial_num: str, package_name: str) -> bool:
+  """Clear app data; returns True if 'Success' was reported."""
+  cmd = adb_commands.cmd_pm_clear(serial_num, package_name)
+  lines = common.run_command(cmd)
+  normalized = '\n'.join((l or '').strip() for l in lines)
+  return 'success' in normalized.lower()
+
+
+def set_app_enabled(serial_num: str, package_name: str, enable: bool, *, user_id: int | None = None) -> bool:
+  """Enable or disable a package. Returns True on apparent success."""
+  cmd = adb_commands.cmd_pm_set_enabled(serial_num, package_name, enable, user_id)
+  lines = common.run_command(cmd)
+  text = '\n'.join((l or '').lower() for l in lines)
+  if 'error' in text:
+    return False
+  # Typical outputs include 'new state: enabled/disabled' or nothing
+  if enable:
+    return 'enabled' in text or text.strip() == ''
+  return 'disabled' in text or text.strip() == ''
+
+
+def open_app_info(serial_num: str, package_name: str) -> bool:
+  """Open the app details settings page for the package with fallbacks.
+
+  Returns True if the start command was issued; fallbacks are attempted if
+  the ACTION-based command appears to error out.
+  """
+  primary = adb_commands.cmd_open_app_info(serial_num, package_name)
+  out = common.run_command(primary)
+  text = '\n'.join(out).lower()
+  if 'error' in text or 'unable to' in text:
+    legacy = adb_commands.cmd_open_app_info_legacy(serial_num, package_name)
+    _ = common.run_command(legacy)
+  return True
+
+
 def generate_bug_report_device_streaming(
     serial_num: str,
     output_path: str,

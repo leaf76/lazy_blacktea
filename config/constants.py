@@ -264,6 +264,13 @@ class ApplicationConstants:
     ENABLE_DEBUG_MODE = False
     ENABLE_PERFORMANCE_MONITORING = False
 
+    # Shutdown behavior
+    # If set to >0, the app will wait up to this many milliseconds for
+    # background tasks to finish when closing. Set to 0 to skip waiting.
+    SHUTDOWN_TIMEOUT_MS = 700
+    # If True, show a brief, non-blocking closing indicator during shutdown
+    SHOW_CLOSING_INDICATOR = True
+
 
 class PanelText:
     """Shared labels and titles for UI panels."""
@@ -273,6 +280,7 @@ class PanelText:
     TAB_SHELL_COMMANDS = 'Shell Commands'
     TAB_DEVICE_FILES = 'Device Files'
     TAB_DEVICE_GROUPS = 'Device Groups'
+    TAB_APPS = 'Apps'
 
     GROUP_OUTPUT_PATH = 'Output Path'
     GROUP_LOGCAT = 'Logcat'
@@ -286,12 +294,15 @@ class PanelText:
     GROUP_DEVICE_FILE_OUTPUT = '💾 Download'
     GROUP_CREATE_UPDATE = 'Create/Update Group'
     GROUP_EXISTING = 'Existing Groups'
+    GROUP_APPS = '📦 Installed Apps'
+    GROUP_APPS_ACTIONS = '⚙️ App Actions'
 
     PLACEHOLDER_OUTPUT_DIR = 'Select output path (screenshots, recordings, etc.)'
     PLACEHOLDER_GROUP_NAME = 'Enter group name...'
     PLACEHOLDER_DEVICE_FILE_PATH = '/sdcard'
     PLACEHOLDER_DEVICE_FILE_OUTPUT = 'Select download destination...'
     PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
+    PLACEHOLDER_APP_SEARCH = 'Search by package, version...'
 
     BUTTON_BROWSE = 'Browse'
     BUTTON_CLEAR = 'Clear'
@@ -313,6 +324,14 @@ class PanelText:
     BUTTON_CLEAR_PREVIEW_CACHE = 'Clear Preview Cache'
     BUTTON_OPEN_EXTERNALLY = 'Open Externally'
     BUTTON_GENERATE_BUG_REPORT = 'Generate Bug Report'
+    BUTTON_REFRESH_APPS = 'Refresh'
+    BUTTON_UNINSTALL_APP = 'Uninstall'
+    BUTTON_SHOW_PERMISSIONS = 'Show Permissions'
+    BUTTON_FORCE_STOP = 'Force Stop'
+    BUTTON_CLEAR_DATA = 'Clear Data'
+    BUTTON_ENABLE_APP = 'Enable'
+    BUTTON_DISABLE_APP = 'Disable'
+    BUTTON_OPEN_APP_INFO = 'Open App Info'
 
     LABEL_NO_RECORDING = 'No active recordings'
     LABEL_RECORDING_PREFIX = '🔴 Recording: {count} device(s)'
