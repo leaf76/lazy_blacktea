@@ -105,6 +105,7 @@ class DeviceListController:
     """Encapsulates device list updates to keep the main window lean."""
 
     _SORT_MODE_BY_COLUMN: Dict[int, str] = {
+        0: 'selected',
         1: 'name',
         2: 'serial',
         3: 'android',

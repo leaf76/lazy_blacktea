@@ -12,6 +12,24 @@ from utils import adb_models
 from ui.style_manager import StyleManager
 
 
+class _CheckboxSortItem(QTableWidgetItem):
+    """Item that sorts checked rows before unchecked ones."""
+
+    _CHECK_PRIORITY = {
+        Qt.CheckState.Checked: 0,
+        Qt.CheckState.PartiallyChecked: 1,
+        Qt.CheckState.Unchecked: 2,
+    }
+
+    def __lt__(self, other: object) -> bool:
+        if isinstance(other, QTableWidgetItem):
+            left = self._CHECK_PRIORITY.get(self.checkState(), 1)
+            right = self._CHECK_PRIORITY.get(other.checkState(), 1)
+            if left != right:
+                return left < right
+        return super().__lt__(other)
+
+
 class DeviceTableWidget(QTableWidget):
     """Table-based device list with sortable columns and checkbox selection."""
 
@@ -188,7 +206,7 @@ class DeviceTableWidget(QTableWidget):
                 self.setColumnWidth(index, width)
 
     def _set_checkbox_item(self, row: int, serial: str) -> None:
-        item = QTableWidgetItem('')
+        item = _CheckboxSortItem('')
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked if serial in self._checked_serials else Qt.CheckState.Unchecked)
         item.setData(self._SERIAL_ROLE, serial)

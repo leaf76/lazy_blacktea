@@ -10,6 +10,7 @@ os.environ['HOME'] = str(PROJECT_ROOT / '.test_home')
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from ui.device_list_controller import DeviceListController
@@ -83,6 +84,43 @@ class DeviceSelectionControllerTest(unittest.TestCase):
         self.controller.update_selection_count()
         self.assertIn('Connected Devices (1/3)', self.window.title_label.text_value)
         self.assertIn('Selected: 1', self.window.title_label.text_value)
+
+    def test_sort_by_selected_groups_checked_devices_first(self):
+        """Sorting by the checkbox column should group checked devices."""
+        selected_order = ['C', 'A']
+        self.controller._set_selection(selected_order)
+
+        # Simulate the user clicking the checkbox column header.
+        self.controller._on_sort_indicator_changed(0, Qt.SortOrder.AscendingOrder)
+        self.controller.filter_and_sort_devices()
+
+        table = self.window.device_table
+        selected_serials = set(self.window.device_selection_manager.get_selected_serials())
+
+        self.assertTrue(selected_serials, 'Selection should not be empty for the test')
+        self.assertNotEqual(len(selected_serials), table.rowCount(), 'Need both selected and unselected devices')
+
+        # Ensure Qt's own sorting honours the checkbox priority.
+        table.sortItems(0, Qt.SortOrder.AscendingOrder)
+
+        seen_unselected = False
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            serial = item.data(DeviceTableWidget._SERIAL_ROLE)
+            is_selected = serial in selected_serials
+            if seen_unselected:
+                self.assertFalse(
+                    is_selected,
+                    f'Selected device {serial} must not appear after unselected rows when sorting by selection',
+                )
+            if not is_selected:
+                seen_unselected = True
+
+        self.assertTrue(seen_unselected, 'Device list should contain at least one unselected row')
+        self.assertTrue(
+            self.window.device_search_manager.get_sort_mode().startswith('selected'),
+            'Sort mode should be mapped to the checkbox column',
+        )
 
 
 if __name__ == '__main__':
