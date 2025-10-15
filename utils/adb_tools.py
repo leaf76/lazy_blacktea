@@ -911,7 +911,6 @@ def get_app_version_name(serial_num: str, package_name: str) -> str:
         return version
   return version
 
-
 def get_package_permissions(serial_num: str, package_name: str) -> dict:
   """Return requested/granted permissions for the given package."""
   cmd = adb_commands.cmd_dumpsys_package(serial_num, package_name)

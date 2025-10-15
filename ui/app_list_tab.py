@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6 import sip
@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from config.constants import PanelText
 from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
 from utils import common, adb_tools
-from utils.task_dispatcher import TaskContext
+from utils.task_dispatcher import TaskContext, TaskHandle
 
 
 logger = common.get_logger('apps_tab')
@@ -37,7 +37,7 @@ class AppListTab(QWidget):
         super().__init__(parent=main_window)
         self.window = main_window
         self._apps: List[dict] = []
-        self._version_task_handle = None
+        self._detail_handles: Dict[str, TaskHandle] = {}
         self._destroyed = False
 
         layout = QVBoxLayout(self)
@@ -75,10 +75,10 @@ class AppListTab(QWidget):
 
         # Apps list
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['Package', 'Version', 'Type', 'Path'])
+        self.tree.setHeaderLabels(['Package', 'Type', 'Path'])
         self.tree.setRootIsDecorated(False)
         self.tree.setSortingEnabled(True)
-        self.tree.setColumnWidth(0, 320)
+        self.tree.setColumnWidth(0, 360)
         self.tree.setColumnWidth(1, 120)
         # Default sort: Type column with 'User' first (descending alphabetical)
         try:
@@ -89,6 +89,10 @@ class AppListTab(QWidget):
         except Exception:
             pass
         layout.addWidget(self.tree)
+        try:
+            self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        except Exception:
+            pass
 
         # Actions (grid layout with 3 columns)
         actions_group = QGroupBox(PanelText.GROUP_APPS_ACTIONS)
@@ -158,13 +162,15 @@ class AppListTab(QWidget):
             self.destroyed.connect(self._on_destroyed)  # type: ignore[arg-type]
         except Exception:
             pass
+        
+        
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def refresh_apps(self) -> None:
-        # Cancel previous background version resolver if any
-        self._cancel_version_resolver()
+        # Cancel previous detail tasks before reloading
+        self._cancel_detail_tasks()
 
         serial = self.window.device_selection_manager.get_active_serial()
         if not serial:
@@ -185,9 +191,8 @@ class AppListTab(QWidget):
             self.window.show_error('List Apps Failed', str(exc))
             return
 
-        # Populate rows with placeholder version; resolve versions progressively
+        # Populate rows; versions resolved on demand
         self._populate_tree(self._apps)
-        self._resolve_versions_async(serial)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -207,15 +212,15 @@ class AppListTab(QWidget):
             pkg = app.get('package', '')
             path = app.get('apk_path', '')
             app_type = 'System' if app.get('is_system') else 'User'
-            item = QTreeWidgetItem([pkg, '', app_type, path])
+            item = QTreeWidgetItem([pkg, app_type, path])
             # store pkg to retrieve later
             item.setData(0, Qt.ItemDataRole.UserRole, pkg)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, app)
             self.tree.addTopLevelItem(item)
 
         # Auto-resize columns except path
-        self.tree.header().resizeSection(0, 320)
+        self.tree.header().resizeSection(0, 360)
         self.tree.header().resizeSection(1, 120)
-        self.tree.header().resizeSection(2, 100)
         self.tree.setSortingEnabled(True)
         try:
             self.tree.sortItems(2, Qt.SortOrder.DescendingOrder)
@@ -227,38 +232,9 @@ class AppListTab(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             pkg = (item.text(0) or '').lower()
-            ver = (item.text(1) or '').lower()
-            visible = (query in pkg) or (query in ver)
+            visible = query in pkg
             # QTreeWidget supports per-item visibility via setHidden; avoid setRowHidden
             item.setHidden(not visible if query else False)
-
-    def _resolve_versions_async(self, serial: str) -> None:
-        dispatcher = self.window._task_dispatcher
-
-        # Snapshot package list on main thread to avoid using GUI objects off-thread
-        pkgs = self._collect_package_list()
-
-        def resolve_all(task_handle=None, progress_callback=None):  # pragma: no cover - runs in thread pool
-            total = len(pkgs)
-            for idx, pkg in enumerate(pkgs):
-                if task_handle and task_handle.is_cancelled():
-                    raise RuntimeError('Operation cancelled')
-                try:
-                    ver = adb_tools.get_app_version_name(serial, str(pkg))
-                except Exception:
-                    ver = ''
-                # Schedule UI update on main thread using a safe updater
-                QTimer.singleShot(0, lambda p=pkg, v=(ver or 'N/A'): self._safe_set_version(str(p), v))
-                if progress_callback:
-                    progress_callback(int((idx + 1) / max(1, total) * 100), f'{pkg}')
-
-        handle = dispatcher.submit(resolve_all, context=TaskContext(name='resolve_app_versions', device_serial=serial))
-        self._version_task_handle = handle
-        self.window._background_task_handles.append(handle)
-        try:
-            handle.finished.connect(lambda: setattr(self, '_version_task_handle', None))
-        except Exception:
-            pass
 
     def _get_selected_package(self) -> Optional[str]:
         item = self.tree.currentItem()
@@ -288,8 +264,8 @@ class AppListTab(QWidget):
             self._last_active_serial = current
             self._sync_active_device_label()
             if current:
-                # Cancel previous resolver for old device before refresh
-                self._cancel_version_resolver()
+                # Cancel previous detail loaders for old device before refresh
+                self._cancel_detail_tasks()
                 self.refresh_apps()
             else:
                 self.tree.clear()
@@ -304,49 +280,90 @@ class AppListTab(QWidget):
                 self._active_watch.stop()
         except Exception:
             pass
-        self._cancel_version_resolver()
+        self._cancel_detail_tasks()
 
-    def _cancel_version_resolver(self) -> None:
-        handle = getattr(self, '_version_task_handle', None)
-        try:
-            if handle is not None:
+    def _cancel_detail_tasks(self) -> None:
+        handles = list(self._detail_handles.values())
+        for handle in handles:
+            try:
                 handle.cancel()
-        except Exception:
-            pass
-        self._version_task_handle = None
+            except Exception:
+                pass
+        self._detail_handles.clear()
 
-    def _collect_package_list(self) -> List[str]:
-        pkgs: List[str] = []
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        if item is None:
+            return
+        serial = self.window.device_selection_manager.get_active_serial()
+        if not serial:
+            self.window.show_warning('Device Selection', 'Select a device first.')
+            return
+        pkg = item.data(0, Qt.ItemDataRole.UserRole)
+        if not pkg:
+            return
+        pkg_str = str(pkg)
+        cached_version = item.data(1, Qt.ItemDataRole.UserRole)
+        app_data = item.data(0, Qt.ItemDataRole.UserRole + 1) or {}
+        if cached_version:
+            self._show_details_dialog(pkg_str, str(cached_version), app_data)
+            return
+        if pkg_str in self._detail_handles:
+            self.window.show_info('App Details', 'Loading app details, please wait.')
+            return
+        self._load_app_details(serial, pkg_str, item, app_data)
+
+    def _load_app_details(self, serial: str, package: str, item: QTreeWidgetItem, app_data: dict) -> None:
+        dispatcher = self.window._task_dispatcher
+
+        def resolve_details(task_handle=None, progress_callback=None):  # pragma: no cover - runs in thread pool
+            try:
+                version = adb_tools.get_app_version_name(serial, package)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error('Failed to fetch version for %s: %s', package, exc)
+                version = ''
+            return version or 'N/A'
+
+        handle = dispatcher.submit(resolve_details, context=TaskContext(name='resolve_app_details', device_serial=serial))
+        self._detail_handles[package] = handle
+        self.window._background_task_handles.append(handle)
         try:
-            count = self.tree.topLevelItemCount()
-            for i in range(count):
-                it = self.tree.topLevelItem(i)
-                val = it.data(0, Qt.ItemDataRole.UserRole)
-                if val:
-                    pkgs.append(str(val))
+            handle.completed.connect(lambda version, it=item, data=app_data, pkg=package: self._on_details_ready(it, data, pkg, version))
+            handle.failed.connect(lambda exc, pkg=package: self._on_details_failed(pkg, exc))
+            handle.finished.connect(lambda pkg=package: self._detail_handles.pop(pkg, None))
         except Exception:
             pass
-        return pkgs
 
-    def _safe_set_version(self, package: str, version: str) -> None:
-        # Avoid touching UI if widget is already deleted or destroyed
+    def _on_details_ready(self, item: QTreeWidgetItem, app_data: dict, package: str, version: str) -> None:
+        if item is None:
+            return
+        # Avoid UI updates if the widget is gone
         try:
             if self._destroyed or sip.isdeleted(self) or sip.isdeleted(self.tree):
                 return
         except Exception:
             return
+        # cache version in hidden role
+        item.setData(1, Qt.ItemDataRole.UserRole, version)
+        app_data = dict(app_data or {})
+        app_data['version'] = version
+        item.setData(0, Qt.ItemDataRole.UserRole + 1, app_data)
+        self._show_details_dialog(package, version, app_data)
 
-        # Find the item by package and set the version text
-        try:
-            count = self.tree.topLevelItemCount()
-            for i in range(count):
-                it = self.tree.topLevelItem(i)
-                pkg = it.data(0, Qt.ItemDataRole.UserRole)
-                if str(pkg) == package:
-                    it.setText(1, version)
-                    break
-        except Exception:
-            pass
+    def _on_details_failed(self, package: str, exc: Exception) -> None:
+        logger.error('Failed to resolve app details for %s: %s', package, exc)
+        self.window.show_error('App Details', f'Failed to load details for {package}.')
+
+    def _show_details_dialog(self, package: str, version: str, app_data: dict) -> None:
+        app_type = 'System' if app_data.get('is_system') else 'User'
+        path = app_data.get('apk_path') or '(unknown)'
+        message = (
+            f'Package: {package}\n'
+            f'Version: {version}\n'
+            f'Type: {app_type}\n'
+            f'Path: {path}'
+        )
+        title = f'App Details - {package}'
+        QMessageBox.information(self, title, message)
 
     def _on_uninstall(self) -> None:
         serial = self.window.device_selection_manager.get_active_serial()
