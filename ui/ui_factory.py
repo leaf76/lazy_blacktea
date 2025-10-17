@@ -18,13 +18,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
     QCheckBox, QLineEdit, QProgressBar, QComboBox, QListWidget,
-    QStatusBar, QToolBar, QFrame, QSizePolicy, QTreeWidget
+    QStatusBar, QToolBar, QFrame, QSizePolicy, QTreeWidget, QToolButton
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtGui import QFont, QAction, QPixmap
 
 from utils import common
 from .style_manager import StyleManager, ButtonStyle, LabelStyle
+from .tool_icon_factory import get_tile_tool_icon
 
 
 class UIFactory:
@@ -143,86 +144,120 @@ class UIFactory:
         self.logger.debug('Tools panel created')
         return tools_widget
 
+    def _create_tile_button(
+        self,
+        label: str,
+        action: str,
+        *,
+        icon_key: Optional[str] = None,
+        primary: bool = False,
+    ) -> QWidget:
+        """建立共享的 tile 樣式按鈕，保持與 Screen Capture 區塊一致。"""
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(6)
+
+        button = QToolButton()
+        button.setObjectName(action)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setText(label)
+        button.setIcon(get_tile_tool_icon(icon_key or action, label, primary=primary))
+        button.setIconSize(QSize(48, 48))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        StyleManager.apply_tile_button_style(button, primary=primary)
+
+        container_layout.addWidget(button)
+        return container
+
     def create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
         """創建ADB工具標籤頁"""
         adb_tab = QWidget()
         layout = QVBoxLayout(adb_tab)
+        layout.setSpacing(20)
 
         # 設備控制區域
         device_control_group = QGroupBox("📱 Device Control")
+        StyleManager.apply_panel_frame(device_control_group)
         device_control_layout = QGridLayout(device_control_group)
+        device_control_layout.setContentsMargins(16, 24, 16, 16)
+        device_control_layout.setHorizontalSpacing(16)
+        device_control_layout.setVerticalSpacing(12)
 
         device_buttons = [
-            ("🔌 Reboot Device", "reboot_device"),
-            ("🔌 Reboot to Recovery", "reboot_recovery"),
-            ("🔌 Reboot to Bootloader", "reboot_bootloader"),
-            ("🔄 Restart ADB", "restart_adb"),
+            ("Reboot Device", "reboot_device", "reboot", True),
+            ("Reboot to Recovery", "reboot_recovery", "recovery", False),
+            ("Reboot to Bootloader", "reboot_bootloader", "bootloader", False),
+            ("Restart ADB", "restart_adb", "restart", False),
         ]
 
-        for i, (text, action) in enumerate(device_buttons):
-            btn = QPushButton(text)
-            btn.setObjectName(action)
-            btn.setMinimumHeight(35)
-            row, col = divmod(i, 2)
-            device_control_layout.addWidget(btn, row, col)
+        for index, (label, action, icon_key, primary) in enumerate(device_buttons):
+            tile = self._create_tile_button(label, action, icon_key=icon_key, primary=primary)
+            row, col = divmod(index, 2)
+            device_control_layout.addWidget(tile, row, col)
 
         layout.addWidget(device_control_group)
 
         # 連接性控制區域
         connectivity_group = QGroupBox("📶 Connectivity")
+        StyleManager.apply_panel_frame(connectivity_group)
         connectivity_layout = QGridLayout(connectivity_group)
+        connectivity_layout.setContentsMargins(16, 24, 16, 16)
+        connectivity_layout.setHorizontalSpacing(16)
+        connectivity_layout.setVerticalSpacing(12)
 
         connectivity_buttons = [
-            ("📶 Enable WiFi", "enable_wifi"),
-            ("📶 Disable WiFi", "disable_wifi"),
-            ("🔵 Enable Bluetooth", "enable_bluetooth"),
-            ("🔵 Disable Bluetooth", "disable_bluetooth"),
+            ("Enable WiFi", "enable_wifi", "wifi_on"),
+            ("Disable WiFi", "disable_wifi", "wifi_off"),
+            ("Enable Bluetooth", "enable_bluetooth", "bt_on"),
+            ("Disable Bluetooth", "disable_bluetooth", "bt_off"),
         ]
 
-        for i, (text, action) in enumerate(connectivity_buttons):
-            btn = QPushButton(text)
-            btn.setObjectName(action)
-            btn.setMinimumHeight(35)
-            row, col = divmod(i, 2)
-            connectivity_layout.addWidget(btn, row, col)
+        for index, (label, action, icon_key) in enumerate(connectivity_buttons):
+            tile = self._create_tile_button(label, action, icon_key=icon_key)
+            row, col = divmod(index, 2)
+            connectivity_layout.addWidget(tile, row, col)
 
         layout.addWidget(connectivity_group)
 
         # 系統工具區域
         system_group = QGroupBox("🔧 System Tools")
+        StyleManager.apply_panel_frame(system_group)
         system_layout = QGridLayout(system_group)
+        system_layout.setContentsMargins(16, 24, 16, 16)
+        system_layout.setHorizontalSpacing(16)
+        system_layout.setVerticalSpacing(12)
 
         system_buttons = [
-            ("ℹ️ Device Info", "device_info"),
-            ("🏠 Go Home", "go_home"),
-            ("📸 Take Screenshot", "take_screenshot"),
-            ("🎬 Start Recording", "start_recording"),
-            ("⏹️ Stop Recording", "stop_recording"),
-            ("🔍 Launch UI Inspector", "launch_ui_inspector"),
+            ("Device Info", "device_info", "device_info"),
+            ("Go Home", "go_home", "home"),
+            ("Take Screenshot", "take_screenshot", "screenshot"),
+            ("Start Recording", "start_recording", "record_start"),
+            ("Stop Recording", "stop_recording", "record_stop"),
+            ("Launch UI Inspector", "launch_ui_inspector", "inspector"),
         ]
 
-        for i, (text, action) in enumerate(system_buttons):
-            btn = QPushButton(text)
-            btn.setObjectName(action)
-            btn.setMinimumHeight(35)
-            row, col = divmod(i, 2)
-            system_layout.addWidget(btn, row, col)
+        for index, (label, action, icon_key) in enumerate(system_buttons):
+            tile = self._create_tile_button(label, action, icon_key=icon_key, primary=(action == "take_screenshot"))
+            row, col = divmod(index, 3)
+            system_layout.addWidget(tile, row, col)
 
         layout.addWidget(system_group)
 
         # 安裝工具區域
         install_group = QGroupBox("📦 Installation")
-        install_layout = QVBoxLayout(install_group)
+        StyleManager.apply_panel_frame(install_group)
+        install_layout = QGridLayout(install_group)
+        install_layout.setContentsMargins(16, 24, 16, 16)
+        install_layout.setHorizontalSpacing(16)
+        install_layout.setVerticalSpacing(12)
 
-        install_btn = QPushButton("📱 Install APK")
-        install_btn.setObjectName("install_apk")
-        install_btn.setMinimumHeight(40)
-        install_layout.addWidget(install_btn)
+        install_tile = self._create_tile_button("Install APK", "install_apk", icon_key="install_apk", primary=True)
+        install_layout.addWidget(install_tile, 0, 0)
 
-        scrcpy_btn = QPushButton("🖥️ Launch scrcpy")
-        scrcpy_btn.setObjectName("launch_scrcpy")
-        scrcpy_btn.setMinimumHeight(40)
-        install_layout.addWidget(scrcpy_btn)
+        scrcpy_tile = self._create_tile_button("Launch scrcpy", "launch_scrcpy", icon_key="scrcpy")
+        install_layout.addWidget(scrcpy_tile, 0, 1)
 
         layout.addWidget(install_group)
 

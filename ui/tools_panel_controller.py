@@ -23,12 +23,12 @@ from PyQt6.QtWidgets import (
     QProgressBar,
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
 from config.constants import PanelConfig, PanelText
 from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
 from ui.device_overview_widget import DeviceOverviewWidget
 from ui.app_list_tab import AppListTab
+from ui.tool_icon_factory import get_tile_tool_icon
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -40,7 +40,6 @@ class ToolsPanelController:
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
         self._default_button_height = 38
-        self._icon_cache: Dict[str, QIcon] = {}
 
     def _style_button(
         self,
@@ -262,7 +261,7 @@ class ToolsPanelController:
         button = QToolButton()
         button.setObjectName('adb_tools_icon_button')
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        button.setIcon(self._get_tool_icon(icon_key, label, primary=primary))
+        button.setIcon(get_tile_tool_icon(icon_key, label, primary=primary))
         button.setIconSize(QSize(48, 48))
         button.setText(label)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -292,73 +291,6 @@ class ToolsPanelController:
             self.window.install_apk_button = button  # type: ignore[attr-defined]
 
         return container, button, progress_bar
-
-    def _get_tool_icon(self, icon_key: str, label: str, *, primary: bool = False) -> QIcon:
-        cache_key = f"{icon_key}|{primary}"
-        cached = self._icon_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        size = 64
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        palette = self._resolve_icon_palette(icon_key, primary)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(palette['background']))
-        painter.drawRoundedRect(pixmap.rect().adjusted(4, 4, -4, -4), 16, 16)
-
-        monogram = self._extract_monogram(label)
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(18)
-        painter.setFont(font)
-        painter.setPen(QColor(palette['foreground']))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, monogram)
-        painter.end()
-
-        icon = QIcon(pixmap)
-        self._icon_cache[cache_key] = icon
-        return icon
-
-    @staticmethod
-    def _extract_monogram(label: str) -> str:
-        tokens = [token for token in label.split() if token]
-        if not tokens:
-            return '??'
-        if len(tokens) == 1:
-            cleaned = ''.join(ch for ch in tokens[0] if ch.isalnum())
-            return cleaned[:2].upper() or tokens[0][:2].upper()
-        return (tokens[0][0] + tokens[1][0]).upper()
-
-    @staticmethod
-    def _resolve_icon_palette(icon_key: str, primary: bool) -> Dict[str, str]:
-        base_palettes: Dict[str, Dict[str, str]] = {
-            'bug_report': {'background': '#fee2e2', 'foreground': '#b91c1c'},
-            'reboot': {'background': '#dbeafe', 'foreground': '#1d4ed8'},
-            'install_apk': {'background': '#dcfce7', 'foreground': '#047857'},
-            'bt_on': {'background': '#e0f2fe', 'foreground': '#0369a1'},
-            'bt_off': {'background': '#f1f5f9', 'foreground': '#475569'},
-            'scrcpy': {'background': '#ede9fe', 'foreground': '#6d28d9'},
-            'screenshot': {'background': '#eef2ff', 'foreground': '#3730a3'},
-            'record_start': {'background': '#fee2e2', 'foreground': '#b91c1c'},
-            'record_stop': {'background': '#f1f5f9', 'foreground': '#1f2937'},
-        }
-
-        palette = base_palettes.get(icon_key, None)
-        if palette is None:
-            palette = {'background': '#f1f5f9', 'foreground': '#1f2937'}
-
-        if primary:
-            palette = {
-                'background': '#e0e7ff',
-                'foreground': '#312e81',
-            }
-
-        return palette
 
     def _create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
         scroll_area = QScrollArea()
