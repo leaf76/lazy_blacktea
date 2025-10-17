@@ -689,6 +689,7 @@ class LogcatWindow(QDialog):
 
         self.init_ui()
         self._setup_copy_features()
+        self._setup_search_shortcut()
         self.load_filters()
 
     def _get_status_prefix(self):
@@ -965,6 +966,36 @@ class LogcatWindow(QDialog):
 
         self._copy_all_shortcut = QShortcut(copy_all_sequence, self.log_display)
         self._copy_all_shortcut.activated.connect(self.copy_all_logs)
+
+    def _setup_search_shortcut(self) -> None:
+        """Register a find shortcut that focuses the live filter input."""
+        find_sequence = QKeySequence(QKeySequence.StandardKey.Find)
+        self._find_shortcut = QShortcut(find_sequence, self)
+        self._find_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._find_shortcut.activated.connect(self._handle_find_shortcut)
+        self._find_shortcut.activatedAmbiguously.connect(self._handle_find_shortcut)
+
+    def _handle_find_shortcut(self) -> None:
+        """Expand the Filters panel and focus the live filter input."""
+        if hasattr(self, 'filters_panel') and self.filters_panel:
+            self.filters_panel.set_collapsed(False)
+            if hasattr(self, 'filters_toggle_btn'):
+                self.filters_toggle_btn.setChecked(True)
+
+        if hasattr(self, 'filter_input') and self.filter_input:
+            target = self.filter_input
+
+            def _focus_on_filter():
+                if not target or target.parent() is None:
+                    return
+                target.setFocus(Qt.FocusReason.ShortcutFocusReason)
+                target.selectAll()
+
+            if not self.isActiveWindow():
+                self.activateWindow()
+
+            QTimer.singleShot(0, _focus_on_filter)
+
 
     def _build_log_context_menu(self) -> QMenu:
         """Create the context menu used by the log view."""

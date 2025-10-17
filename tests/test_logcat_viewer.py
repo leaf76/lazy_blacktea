@@ -486,6 +486,26 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertIn('Copy All', action_texts)
         self.assertIn('Select All', action_texts)
 
+    def test_ctrl_f_shortcut_expands_filters_and_focuses_input(self):
+        self.window.filters_panel.set_collapsed(True)
+        if hasattr(self.window, 'filters_toggle_btn'):
+            self.window.filters_toggle_btn.setChecked(False)
+        self.window.filter_input.setText('needle')
+        self.window.filter_input.clearFocus()
+        self.window.show()
+        QApplication.processEvents()
+
+        self.assertTrue(self.window.filters_panel.is_collapsed())
+
+        self.window._handle_find_shortcut()
+        QApplication.processEvents()
+
+        self.assertFalse(self.window.filters_panel.is_collapsed())
+        if hasattr(self.window, 'filters_toggle_btn'):
+            self.assertTrue(self.window.filters_toggle_btn.isChecked())
+        self.assertTrue(self.window.filter_input.hasFocus())
+        self.assertEqual(self.window.filter_input.selectedText(), 'needle')
+
 
 class FakeSignal:
     """Minimal signal stub for intercepting connections in tests."""
