@@ -193,7 +193,6 @@ class UIFactory:
         system_layout = QGridLayout(system_group)
 
         system_buttons = [
-            ("🗑️ Clear Logcat", "clear_logcat"),
             ("ℹ️ Device Info", "device_info"),
             ("🏠 Go Home", "go_home"),
             ("📸 Take Screenshot", "take_screenshot"),

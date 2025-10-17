@@ -13,9 +13,10 @@
 import os
 import shlex
 import threading
+from dataclasses import dataclass
 from typing import List, Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
-from PyQt6.QtWidgets import QFileDialog, QInputDialog, QProgressDialog
+from PyQt6.QtWidgets import QFileDialog, QInputDialog
 
 from utils import adb_models, adb_tools, adb_commands
 from config.config_manager import ScrcpySettings
@@ -243,6 +244,14 @@ class ScrcpyManager(QObject):
             self.parent_window.select_only_device(device_serial)
 
 
+@dataclass
+class InstallationProgressState:
+    mode: str = 'idle'
+    current: int = 0
+    total: int = 0
+    message: str = ''
+
+
 class ApkInstallationManager(QObject):
     """APK安裝管理器"""
 
@@ -254,8 +263,9 @@ class ApkInstallationManager(QObject):
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
-        self.progress_dialog = None
         self._apk_cancelled = False
+        self._installation_in_progress = False
+        self._installation_progress_state = InstallationProgressState()
 
     def install_apk_dialog(self):
         """顯示APK選擇對話框並開始安裝"""
@@ -319,43 +329,16 @@ class ApkInstallationManager(QObject):
         except Exception:
             pass
 
-        # 創建進度對話框
-        self.progress_dialog = QProgressDialog(
-            f"🚀 Installing {apk_name}...\n\nPreparing installation...",
-            "Cancel",
-            0, len(devices),
-            self.parent_window
+        total_devices = len(devices)
+        self._installation_in_progress = True
+        self._apk_cancelled = False
+
+        preparing_message = (
+            f"🚀 Installing {apk_name}...\n"
+            f"Preparing installation..."
         )
-        self.progress_dialog.setWindowTitle("📦 APK Installation Progress")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setAutoClose(False)
-        self.progress_dialog.setAutoReset(False)
-
-        # 初始以「未知進度」模式顯示，待首個進度更新時再切換為可量測進度
-        # Qt 規範：setRange(0, 0) 會顯示無限循環（busy）狀態
-        try:
-            self.progress_dialog.setRange(0, 0)
-        except Exception:
-            # fallback 保護：若環境不支援 setRange
-            pass
-
-        # 設置進度條樣式（暗色友善）
-        self.progress_dialog.setStyleSheet("""
-            QProgressDialog { font-size: 12px; min-width: 460px; min-height: 160px; background-color: #111827; color: #e5e7eb; }
-            QLabel { color: #e5e7eb; }
-            QPushButton { padding: 6px 12px; border: 1px solid #6b7280; border-radius: 4px; background: #374151; color: #e5e7eb; margin-top: 12px; }
-            QPushButton:hover { background: #4b5563; }
-            QPushButton:pressed { background: #1f2937; }
-            QProgressBar { border: 2px solid #3b82f6; border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px; color: #e5e7eb; background: #1f2937; margin-top: 8px; margin-bottom: 14px; }
-            QProgressBar::chunk { background-color: #60a5fa; border-radius: 4px; }
-        """)
-
-        self.progress_dialog.show()
-        try:
-            self.progress_dialog.canceled.connect(self._on_installation_cancelled)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        self._update_progress(preparing_message, current=0, total=total_devices, mode='busy')
+        self.installation_progress_signal.emit(preparing_message, 0, total_devices)
 
         def install_with_progress():
             try:
@@ -365,7 +348,13 @@ class ApkInstallationManager(QObject):
                 if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
                     self.parent_window.logger.error(error_msg)
                 self.installation_error_signal.emit(error_msg)
-                QTimer.singleShot(0, self._close_progress_dialog)
+                self._update_progress(
+                    f'❌ APK installation failed: {str(e)}',
+                    current=self._installation_progress_state.current,
+                    total=self._installation_progress_state.total,
+                    mode='failed',
+                )
+                QTimer.singleShot(1500, self._ensure_installation_reset)
 
         # 在背景執行緒中運行
         threading.Thread(target=install_with_progress, daemon=True).start()
@@ -373,46 +362,42 @@ class ApkInstallationManager(QObject):
         if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
             self.parent_window.logger.info(f'Installing APK {apk_file} to {len(devices)} devices')
 
-    def _close_progress_dialog(self):
-        """關閉進度對話框"""
-        if self.progress_dialog:
-            self.progress_dialog.close()
-            self.progress_dialog = None
-        self._apk_cancelled = False
+    def _update_progress(
+        self,
+        message: str,
+        current: int,
+        total: int,
+        *,
+        mode: Optional[str] = None,
+    ) -> None:
+        """更新按鈕進度狀態"""
+        inferred_mode = mode or ('progress' if total and total > 0 else 'busy')
+        safe_current = max(0, int(current))
+        safe_total = max(0, int(total))
+        self._installation_progress_state = InstallationProgressState(
+            mode=inferred_mode,
+            current=safe_current,
+            total=safe_total,
+            message=message,
+        )
 
-    def _update_progress(self, message: str, current: int, total: int):
-        """更新進度對話框
+    def _ensure_installation_reset(self) -> None:
+        if self._installation_in_progress or self._installation_progress_state.mode != 'idle':
+            self._installation_in_progress = False
+            self._apk_cancelled = False
+            self._installation_progress_state = InstallationProgressState()
+            try:
+                refresh_cb = getattr(self.parent_window, 'on_apk_install_progress_reset', None)
+                if callable(refresh_cb):
+                    refresh_cb()
+            except Exception:
+                pass
 
-        - 若 total <= 0，切換為無限循環（不確定進度）模式。
-        - 若 total > 0，設定為可量測進度並更新 value。
-        """
-        if self.progress_dialog:
-            def update_ui():
-                if not self.progress_dialog:  # 再次檢查，防止對話框已關閉
-                    return
+    def is_installation_in_progress(self) -> bool:
+        return self._installation_in_progress
 
-                # 切換顯示模式（未知進度 → 無限循環；可量測 → 設定範圍）
-                try:
-                    if total and total > 0:
-                        self.progress_dialog.setRange(0, total)
-                    else:
-                        self.progress_dialog.setRange(0, 0)
-                except Exception:
-                    # 容錯：某些 stub 或測試替身可能未實作 setRange
-                    pass
-
-                # 更新文案與當前值（無限循環模式下 value 會被忽略）
-                try:
-                    self.progress_dialog.setLabelText(message)
-                except Exception:
-                    pass
-
-                try:
-                    self.progress_dialog.setValue(max(0, current))
-                except Exception:
-                    pass
-
-            QTimer.singleShot(0, update_ui)
+    def get_installation_progress_state(self) -> InstallationProgressState:
+        return self._installation_progress_state
 
     def _install_apk_with_progress(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
         """帶進度的APK安裝"""
@@ -423,7 +408,7 @@ class ApkInstallationManager(QObject):
         for index, device in enumerate(devices, 1):
             try:
                 # 檢查是否取消
-                if (self.progress_dialog and self.progress_dialog.wasCanceled()) or self._apk_cancelled:
+                if self._apk_cancelled:
                     break
 
                 # 更新進度對話框
@@ -498,7 +483,16 @@ class ApkInstallationManager(QObject):
                     )
 
         # 顯示完成狀態
-        if self.progress_dialog:
+        if self._apk_cancelled:
+            cancel_msg = '⏹️ APK installation cancelled by user'
+            self._update_progress(
+                cancel_msg,
+                current=successful_installs,
+                total=total_devices,
+                mode='cancelled',
+            )
+            self.installation_progress_signal.emit(cancel_msg, successful_installs, total_devices)
+        else:
             completion_msg = (
                 f'✅ Installation Complete!\n\n'
                 f'📦 APK: {apk_name}\n'
@@ -506,23 +500,35 @@ class ApkInstallationManager(QObject):
                 f'❌ Failed: {failed_installs}\n'
                 f'📊 Total: {total_devices}'
             )
-            self._update_progress(completion_msg, total_devices, total_devices)
-
-            # 延遲關閉對話框
-            QTimer.singleShot(2000, self._close_progress_dialog)
+            self._update_progress(
+                completion_msg,
+                current=total_devices,
+                total=total_devices,
+                mode='completed',
+            )
+            self.installation_progress_signal.emit(completion_msg, total_devices, total_devices)
+        QTimer.singleShot(1500, self._ensure_installation_reset)
 
         # 發送完成信號
         self.installation_completed_signal.emit(successful_installs, failed_installs, apk_name)
 
-    def _on_installation_cancelled(self):
+    def cancel_installation(self):
         """使用者取消安裝時的 UI 與狀態更新"""
+        if not self._installation_in_progress:
+            return
         self._apk_cancelled = True
-        try:
-            if self.progress_dialog:
-                self.progress_dialog.setRange(0, 0)
-                self.progress_dialog.setLabelText('Cancelling installation...')
-        except Exception:
-            pass
+        cancel_msg = 'Cancelling APK installation...'
+        self._update_progress(
+            cancel_msg,
+            current=self._installation_progress_state.current,
+            total=self._installation_progress_state.total,
+            mode='cancelling',
+        )
+        self.installation_progress_signal.emit(
+            cancel_msg,
+            self._installation_progress_state.current,
+            self._installation_progress_state.total,
+        )
 
 
 class AppManagementManager(QObject):
@@ -587,6 +593,10 @@ class AppManagementManager(QObject):
     def install_apk_to_devices(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
         """安裝APK到設備"""
         self.apk_manager.install_apk_to_devices(devices, apk_file, apk_name)
+
+    def cancel_apk_installation(self):
+        """取消 APK 安裝作業"""
+        self.apk_manager.cancel_installation()
 
     # 屬性訪問器
     @property

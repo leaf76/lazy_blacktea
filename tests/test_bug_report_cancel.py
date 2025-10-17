@@ -19,26 +19,11 @@ class DummyHandle:
         self.cancel_called = True
 
 
-class DummyProgressDialog:
-    def __init__(self):
-        self.min = None
-        self.max = None
-        self.label_text = ''
-
-    def setRange(self, minimum, maximum):
-        self.min = minimum
-        self.max = maximum
-
-    def setLabelText(self, text):
-        self.label_text = text
-
-
 class BugReportCancelTest(unittest.TestCase):
     def setUp(self):
         from ui.file_operations_manager import FileOperationsManager
         self.window = object()
         self.manager = FileOperationsManager(self.window)
-        self.manager.progress_dialog = DummyProgressDialog()
 
         self.handle = DummyHandle()
         self.manager._bug_report_handle = self.handle
@@ -53,11 +38,12 @@ class BugReportCancelTest(unittest.TestCase):
 
         self.assertTrue(self.manager._bug_report_cancel_event.is_set())
         self.assertTrue(self.handle.cancel_called)
-        self.assertEqual(self.manager.progress_dialog.min, 0)
-        self.assertEqual(self.manager.progress_dialog.max, 0)
-        self.assertEqual(self.manager.progress_dialog.label_text, 'Cancelling bug report generation...')
+        state = self.manager._bug_report_progress_state
+        self.assertEqual(state.mode, 'cancelling')
+        self.assertEqual(state.total, 0)
+        self.assertEqual(state.current, 0)
+        self.assertEqual(state.message, 'Cancelling bug report generation...')
 
 
 if __name__ == '__main__':
     unittest.main()
-

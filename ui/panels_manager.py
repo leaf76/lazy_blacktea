@@ -143,7 +143,6 @@ class PanelsManager(QObject):
                 ("🔵 Disable Bluetooth", "disable_bluetooth")
             ]),
             ("🔧 System Tools", [
-                ("🗑️ Clear Logcat", "clear_logcat"),
                 ("ℹ️ Device Info", "device_info"),
                 ("🏠 Go Home", "go_home")
             ])

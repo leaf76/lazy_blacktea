@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QGroupBox,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QToolButton,
+    QProgressBar,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
@@ -133,13 +134,12 @@ class ToolsPanelController:
         output_layout.addWidget(quick_actions_label)
 
         logcat_items = [
-            {'icon': 'clear_logcat', 'label': 'Clear Logcat', 'handler': self.window.clear_logcat},
             {'icon': 'bug_report', 'label': 'Bug Report', 'handler': self.window.generate_android_bug_report},
         ]
         logcat_grid = QGridLayout()
         logcat_grid.setHorizontalSpacing(16)
         logcat_grid.setVerticalSpacing(12)
-        self._populate_icon_grid(logcat_grid, logcat_items, columns=2)
+        self._populate_icon_grid(logcat_grid, logcat_items, columns=1)
         output_layout.addLayout(logcat_grid)
 
         output_layout.addSpacing(16)
@@ -152,17 +152,23 @@ class ToolsPanelController:
         capture_grid.setHorizontalSpacing(16)
         capture_grid.setVerticalSpacing(12)
 
-        screenshot_btn = self._create_icon_tool_button('screenshot', 'Screenshot', self.window.take_screenshot, primary=True)
+        screenshot_widget, screenshot_btn, _ = self._create_icon_tool_widget(
+            'screenshot', 'Screenshot', self.window.take_screenshot, primary=True
+        )
         self.window.screenshot_btn = screenshot_btn
-        capture_grid.addWidget(screenshot_btn, 0, 0)
+        capture_grid.addWidget(screenshot_widget, 0, 0)
 
-        start_record_btn = self._create_icon_tool_button('record_start', 'Start Record', self.window.start_screen_record)
+        start_record_widget, start_record_btn, _ = self._create_icon_tool_widget(
+            'record_start', 'Start Record', self.window.start_screen_record
+        )
         self.window.start_record_btn = start_record_btn
-        capture_grid.addWidget(start_record_btn, 0, 1)
+        capture_grid.addWidget(start_record_widget, 0, 1)
 
-        stop_record_btn = self._create_icon_tool_button('record_stop', 'Stop Record', self.window.stop_screen_record)
+        stop_record_widget, stop_record_btn, _ = self._create_icon_tool_widget(
+            'record_stop', 'Stop Record', self.window.stop_screen_record
+        )
         self.window.stop_record_btn = stop_record_btn
-        capture_grid.addWidget(stop_record_btn, 0, 2)
+        capture_grid.addWidget(stop_record_widget, 0, 2)
 
         capture_grid.setColumnStretch(3, 1)
         output_layout.addLayout(capture_grid)
@@ -227,24 +233,32 @@ class ToolsPanelController:
     ) -> None:
         for index, item in enumerate(items):
             row, column = divmod(index, columns)
-            button = self._create_icon_tool_button(
-                icon_key=str(item['icon']),
+            icon_key = str(item['icon'])
+            widget, button, progress_bar = self._create_icon_tool_widget(
+                icon_key=icon_key,
                 label=str(item['label']),
                 handler=item['handler'],
+                with_progress=icon_key in {'bug_report', 'install_apk'},
             )
-            layout.addWidget(button, row, column)
+            layout.addWidget(widget, row, column)
 
         for column in range(columns):
             layout.setColumnStretch(column, 1)
 
-    def _create_icon_tool_button(
+    def _create_icon_tool_widget(
         self,
         icon_key: str,
         label: str,
         handler,
         *,
         primary: bool = False,
-    ) -> QToolButton:
+        with_progress: bool = False,
+    ) -> Tuple[QWidget, QToolButton, Optional[QProgressBar]]:
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(6 if with_progress else 0)
+
         button = QToolButton()
         button.setObjectName('adb_tools_icon_button')
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -255,8 +269,29 @@ class ToolsPanelController:
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         StyleManager.apply_tile_button_style(button, primary=primary)
 
-        button.clicked.connect(lambda checked=False, func=handler: func())
-        return button
+        progress_bar: Optional[QProgressBar] = None
+        if with_progress:
+            progress_bar = QProgressBar()
+            progress_bar.setObjectName('adb_tools_progress_bar')
+            progress_bar.setRange(0, 0)
+            progress_bar.setTextVisible(False)
+            progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            progress_bar.setFixedHeight(10)
+            progress_bar.hide()
+
+        button.clicked.connect(lambda checked=False, key=icon_key: self.window.handle_tool_action(key))
+        self.window.register_tool_action(icon_key, handler, button, progress_bar)
+
+        container_layout.addWidget(button)
+        if progress_bar is not None:
+            container_layout.addWidget(progress_bar)
+
+        if icon_key == 'bug_report':
+            self.window.bug_report_button = button  # type: ignore[attr-defined]
+        if icon_key == 'install_apk':
+            self.window.install_apk_button = button  # type: ignore[attr-defined]
+
+        return container, button, progress_bar
 
     def _get_tool_icon(self, icon_key: str, label: str, *, primary: bool = False) -> QIcon:
         cache_key = f"{icon_key}|{primary}"
@@ -302,7 +337,6 @@ class ToolsPanelController:
     @staticmethod
     def _resolve_icon_palette(icon_key: str, primary: bool) -> Dict[str, str]:
         base_palettes: Dict[str, Dict[str, str]] = {
-            'clear_logcat': {'background': '#fef3c7', 'foreground': '#92400e'},
             'bug_report': {'background': '#fee2e2', 'foreground': '#b91c1c'},
             'reboot': {'background': '#dbeafe', 'foreground': '#1d4ed8'},
             'install_apk': {'background': '#dcfce7', 'foreground': '#047857'},

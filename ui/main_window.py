@@ -85,6 +85,7 @@ from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
 from ui.device_actions_facade import DeviceActionsFacade
 from ui.logcat_facade import LogcatFacade
+from ui.button_progress_overlay import ButtonProgressOverlay
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -142,6 +143,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_groups_facade = DeviceGroupsFacade(self)
         self.commands_facade = CommandsFacade(self)
         self.device_selection_manager = DeviceSelectionManager()
+
+        self.tool_action_handlers: Dict[str, Callable[[], None]] = {}
+        self.tool_buttons: Dict[str, Any] = {}
+        self.tool_progress_bars: Dict[str, Any] = {}
+        self._operation_overlays: Dict[str, ButtonProgressOverlay] = {}
+        self._tool_cancel_hooks: Dict[str, Callable[[], None]] = {}
+        self.bug_report_button = None
+        self.install_apk_button = None
 
         self.show_console_panel = self._initial_ui_settings.show_console_panel
         self.console_panel_action: Optional[QAction] = None
@@ -446,6 +455,101 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning('Failed to apply initial selection mode: %s', exc)
+
+    # ------------------------------------------------------------------
+    # Tools panel button registration & progress overlays
+    # ------------------------------------------------------------------
+    def register_tool_action(self, action_key: str, handler: Callable[[], None], button, progress_bar=None) -> None:
+        """Register a tools panel button for centralized action handling."""
+        self.tool_action_handlers[action_key] = handler
+        self.tool_buttons[action_key] = button
+
+        if progress_bar is not None:
+            self.tool_progress_bars[action_key] = progress_bar
+        else:
+            self.tool_progress_bars.pop(action_key, None)
+
+        if action_key in {'bug_report', 'install_apk'}:
+            self._tool_cancel_hooks[action_key] = lambda key=action_key: self._invoke_cancel_for_action(key)
+
+    def handle_tool_action(self, action_key: str) -> None:
+        """Dispatch tool button clicks with support for cancellation."""
+        overlay = self._operation_overlays.get(action_key)
+        if overlay and overlay.is_active:
+            cancel_hook = self._tool_cancel_hooks.get(action_key)
+            if cancel_hook and overlay.is_cancellable:
+                cancel_hook()
+                return
+            # Ignore double clicks when the operation is busy and not cancellable.
+            return
+
+        if action_key == 'bug_report' and self.file_operations_manager.is_bug_report_in_progress():
+            cancel = self._tool_cancel_hooks.get(action_key)
+            if cancel:
+                cancel()
+            return
+
+        if action_key == 'install_apk' and self.app_management_manager.apk_manager.is_installation_in_progress():
+            cancel = self._tool_cancel_hooks.get(action_key)
+            if cancel:
+                cancel()
+            return
+
+        handler = self.tool_action_handlers.get(action_key)
+        if handler:
+            handler()
+
+    def _invoke_cancel_for_action(self, action_key: str) -> None:
+        if action_key == 'bug_report':
+            self.file_operations_manager.cancel_bug_report_generation()
+        elif action_key == 'install_apk':
+            self.app_management_manager.cancel_apk_installation()
+
+    def _ensure_operation_overlay(self, action_key: str) -> Optional[ButtonProgressOverlay]:
+        if action_key not in {'bug_report', 'install_apk'}:
+            return None
+        overlay = self._operation_overlays.get(action_key)
+        if overlay is not None:
+            return overlay
+        button = self.tool_buttons.get(action_key)
+        progress_bar = self.tool_progress_bars.get(action_key)
+        if button is None:
+            return None
+        overlay = ButtonProgressOverlay(button, progress_bar)
+        overlay.set_cancellable(True)
+        self._operation_overlays[action_key] = overlay
+        return overlay
+
+    def _apply_progress_state_to_overlay(self, action_key: str, state) -> None:
+        overlay = self._ensure_operation_overlay(action_key)
+        if overlay is None or state is None:
+            return
+
+        mode = getattr(state, 'mode', 'idle') or 'idle'
+        message = getattr(state, 'message', '')
+        current = getattr(state, 'current', 0) or 0
+        total = getattr(state, 'total', 0) or 0
+
+        if mode == 'idle':
+            overlay.reset()
+        elif mode == 'busy':
+            overlay.set_busy(message)
+        elif mode == 'progress':
+            overlay.set_progress(current, max(1, total), message)
+        elif mode == 'cancelling':
+            overlay.set_cancelling(message)
+        elif mode in {'completed', 'cancelled'}:
+            overlay.finish(message or None)
+        elif mode == 'failed':
+            overlay.fail(message or None)
+
+    def on_bug_report_progress_reset(self) -> None:
+        state = self.file_operations_manager.get_bug_report_progress_state()
+        self._apply_progress_state_to_overlay('bug_report', state)
+
+    def on_apk_install_progress_reset(self) -> None:
+        state = self.app_management_manager.apk_manager.get_installation_progress_state()
+        self._apply_progress_state_to_overlay('install_apk', state)
 
     # ------------------------------------------------------------------
     # Device selection mode
@@ -1622,6 +1726,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Handle file generation completed signal in main thread."""
         logger.info(f'{icon} [SIGNAL] _on_file_generation_completed executing in main thread')
 
+        state = self.file_operations_manager.get_bug_report_progress_state()
+        self._apply_progress_state_to_overlay('bug_report', state)
+
         self._reset_file_generation_progress()
 
         output_path = getattr(self.file_operations_manager, 'last_generation_output_path', '')
@@ -1644,6 +1751,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         logger.info(f'🐛 [PROGRESS] Bug report {current}/{total}: {message}')
 
         self.status_bar_manager.update_progress(current=current, total=total, message=message)
+        state = self.file_operations_manager.get_bug_report_progress_state()
+        self._apply_progress_state_to_overlay('bug_report', state)
 
         if total and current >= total:
             QTimer.singleShot(1500, self._reset_file_generation_progress)
@@ -1668,6 +1777,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def _handle_installation_completed(self, successful_installs: int, failed_installs: int, apk_name: str):
         """處理APK安裝完成信號"""
         try:
+            state = self.app_management_manager.apk_manager.get_installation_progress_state()
+            self._apply_progress_state_to_overlay('install_apk', state)
+
             total_devices = successful_installs + failed_installs
 
             if successful_installs > 0 and failed_installs == 0:
@@ -1700,11 +1812,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def _handle_installation_progress(self, message: str, current: int, total: int):
         """處理APK安裝進度信號（可選，用於額外的進度處理）"""
-        pass
+        try:
+            state = self.app_management_manager.apk_manager.get_installation_progress_state()
+            self._apply_progress_state_to_overlay('install_apk', state)
+        except Exception as exc:
+            logger.error(f'Error in _handle_installation_progress: {exc}')
 
     def _handle_installation_error(self, error_message: str):
         """處理APK安裝錯誤信號"""
         try:
+            state = self.app_management_manager.apk_manager.get_installation_progress_state()
+            self._apply_progress_state_to_overlay('install_apk', state)
             self.show_error('APK Installation Error', error_message)
             logger.error(f'APK installation error: {error_message}')
         except Exception as e:
@@ -2162,9 +2280,13 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
         def handle_complete(summary: str | None = None) -> None:
             self._log_operation_complete(operation, summary or '')
+            state = self.file_operations_manager.get_bug_report_progress_state()
+            self._apply_progress_state_to_overlay('bug_report', state)
 
         def handle_failure(message: str | None = None) -> None:
             self._log_operation_failure(operation, message or 'Generation failed')
+            state = self.file_operations_manager.get_bug_report_progress_state()
+            self._apply_progress_state_to_overlay('bug_report', state)
 
         active_serials = set(self.file_operations_manager.get_active_bug_report_devices())
         current_serials = {device.device_serial_num for device in devices}
@@ -2190,6 +2312,9 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         if not started:
             # Failure callback will be scheduled by file operations manager; no further action.
             return
+
+        state = self.file_operations_manager.get_bug_report_progress_state()
+        self._apply_progress_state_to_overlay('bug_report', state)
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):
