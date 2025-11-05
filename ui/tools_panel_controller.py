@@ -342,9 +342,9 @@ class ToolsPanelController:
                 handler=item['handler'],
                 with_progress=icon_key in {'bug_report', 'install_apk'},
             )
-            layout.addWidget(widget, row, column)
+            layout.addWidget(widget, row, column, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
-        # Set column stretches
+        # Set equal column stretches for consistent width
         for column in range(columns):
             layout.setColumnStretch(column, 1)
 
@@ -375,7 +375,7 @@ class ToolsPanelController:
     ) -> Tuple[QWidget, QFrame, Optional[QProgressBar]]:
         """Create a Material Design card-style tool widget.
 
-        Returns a card with icon, title, and description following Figma/Material Design style.
+        Returns a compact horizontal card with icon on left and text on right.
         """
         # Get metadata for this tool
         metadata = get_tool_metadata(icon_key, fallback_label=label)
@@ -384,42 +384,54 @@ class ToolsPanelController:
         card = QFrame()
         card.setObjectName(f'material_card_{icon_key}')
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        card.setMinimumHeight(150)  # Adequate size for card content
-        card.setMinimumWidth(180)  # Minimum width for description readability
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        card.setFixedHeight(72)  # Fixed height for consistency
+        card.setMinimumWidth(200)  # Wider minimum for text
 
         # Apply Material Design card styling
         StyleManager.apply_material_card_frame_style(card, primary=primary)
 
-        # Card layout
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 24, 24, 24)  # Material Design spacing
+        # Main horizontal layout
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(14, 14, 14, 14)  # Balanced padding
         card_layout.setSpacing(12)
-        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Icon container (圓形背景 + 圖示)
+        # Icon container (圓形背景 + 圖示) - 置左
         icon_container = QLabel()
         icon_container.setObjectName(f'icon_container_{icon_key}')
         icon_container.setProperty('iconContainer', True)
-        icon_container.setPixmap(get_svg_tool_icon(metadata.icon_key, metadata.label, primary=primary, size=56).pixmap(QSize(56, 56)))
+        icon_container.setPixmap(get_svg_tool_icon(metadata.icon_key, metadata.label, primary=primary, size=40).pixmap(QSize(40, 40)))
         icon_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_container.setFixedSize(56, 56)
-        card_layout.addWidget(icon_container, alignment=Qt.AlignmentFlag.AlignCenter)
+        icon_container.setFixedSize(40, 40)
+        card_layout.addWidget(icon_container, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # Title label
+        # Text container (title + description) - 置右
+        text_container = QVBoxLayout()
+        text_container.setSpacing(2)
+        text_container.setContentsMargins(0, 0, 0, 0)
+
+        # Title label with forced dark text
         title_label = QLabel(metadata.label)
         title_label.setProperty('materialCardTitle', True)
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         title_label.setWordWrap(False)
-        card_layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # Force dark text color with inline style
+        title_label.setStyleSheet("QLabel { color: #1A1A1A; background-color: transparent; }")
+        text_container.addWidget(title_label)
 
-        # Description label
+        # Description label with forced dark text
         description_label = QLabel(metadata.description)
         description_label.setProperty('materialCardDescription', True)
-        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         description_label.setWordWrap(True)
-        description_label.setMaximumWidth(160)  # Limit width for better readability
-        card_layout.addWidget(description_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        description_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # Force dark text color with inline style
+        description_label.setStyleSheet("QLabel { color: #424242; background-color: transparent; }")
+        text_container.addWidget(description_label)
+        text_container.addStretch()
+
+        card_layout.addLayout(text_container, 1)
 
         # Enhanced tooltip with keyboard shortcut if available
         tooltip_text = metadata.tooltip

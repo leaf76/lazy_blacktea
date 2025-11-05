@@ -1167,45 +1167,50 @@ class StyleManager:
         object_name = frame.objectName() or f'material_card_{id(frame)}'
         frame.setObjectName(object_name)
 
-        # Material Design card colors
-        card_bg = '#FFFFFF'
-        card_border = '#E9ECEF'
-        card_hover_border = '#DEE2E6'
-        icon_container_bg = '#E7F5FF' if primary else '#F1F3F5'
-        icon_color = '#1971C2' if primary else '#495057'
-        title_color = '#212529'
-        description_color = '#6C757D'
+        # High contrast colors for Dark Mode compatibility
+        card_bg = '#FFFFFF'  # Pure white card background
+        card_border = '#E0E0E0'
+        card_hover_border = '#BDBDBD'
+        icon_container_bg = '#E3F2FD' if primary else '#ECEFF1'
+        title_color = '#1A1A1A'  # Near black for maximum contrast
+        description_color = '#424242'  # Dark gray for good contrast
 
         css = f"""
-#{object_name} {{
+QFrame#{object_name} {{
     background-color: {card_bg};
     border: 1px solid {card_border};
-    border-radius: 16px;
-    padding: 0px;  /* Padding handled by inner layout */
+    border-radius: 14px;
+    padding: 0px;
 }}
 
-#{object_name}:hover {{
+QFrame#{object_name}:hover {{
     border: 1px solid {card_hover_border};
     box-shadow: {MD_SHADOW_3};
 }}
 
-#{object_name} QLabel[materialCardTitle="true"] {{
+QFrame#{object_name} QLabel[materialCardTitle="true"] {{
+    background-color: transparent;
     color: {title_color};
     font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
+    font-weight: 700;
+    letter-spacing: 0.1px;
 }}
 
-#{object_name} QLabel[materialCardDescription="true"] {{
+QFrame#{object_name} QLabel[materialCardDescription="true"] {{
+    background-color: transparent;
     color: {description_color};
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.4;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
 }}
 
-#{object_name} QLabel[iconContainer="true"] {{
+QFrame#{object_name} QLabel[iconContainer="true"] {{
     background-color: {icon_container_bg};
-    border-radius: 28px;
+    border-radius: 20px;
+}}
+
+QFrame#{object_name} QLabel {{
+    background-color: transparent;
 }}
 """
         frame.setStyleSheet(dedent(css).strip())
