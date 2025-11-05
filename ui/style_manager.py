@@ -1082,7 +1082,7 @@ class StyleManager:
 
     @classmethod
     def apply_tile_button_style(cls, button, *, primary: bool = False, state: str = 'default') -> None:
-        """套用格狀工具按鈕樣式。"""
+        """套用格狀工具按鈕樣式，包含增強的狀態反饋和動畫效果。"""
 
         palette = cls._resolve_tile_palette(primary, state)
         selector = button.metaObject().className()
@@ -1093,6 +1093,9 @@ class StyleManager:
         disabled_fg = cls.COLORS.get('status_disabled_text', '#9A9A9A')
         disabled_border = cls.COLORS.get('status_disabled_border', '#D1D1D1')
 
+        # Enhanced focus color for better keyboard navigation visibility
+        focus_border = cls.COLORS.get('secondary', '#1976D2')
+
         css = f"""
 {selector} {{
     background-color: {palette['bg']};
@@ -1101,22 +1104,40 @@ class StyleManager:
     padding: 12px;
     color: {palette['fg']};
     font-weight: 600;
+    transition: all 0.2s ease-in-out;
 }}
 
 {selector}:hover {{
     background-color: {palette['hover']};
     border: 2px solid {palette['border']};
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }}
 
 {selector}:pressed {{
     background-color: {palette['pressed']};
     border: 2px solid {palette['border']};
+    transform: translateY(0px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}}
+
+{selector}:focus {{
+    outline: none;
+    border: 3px solid {focus_border};
+    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.2);
 }}
 
 {selector}:disabled {{
     background-color: {disabled_bg};
     color: {disabled_fg};
     border: 2px solid {disabled_border};
+    opacity: 0.6;
+    cursor: not-allowed;
+}}
+
+{selector}:disabled:hover {{
+    transform: none;
+    box-shadow: none;
 }}
 """
         button.setStyleSheet(dedent(css).strip())

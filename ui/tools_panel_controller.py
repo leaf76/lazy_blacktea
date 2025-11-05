@@ -28,7 +28,8 @@ from config.constants import PanelConfig, PanelText
 from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
 from ui.device_overview_widget import DeviceOverviewWidget
 from ui.app_list_tab import AppListTab
-from ui.tool_icon_factory import get_tile_tool_icon
+from ui.svg_icon_factory import get_svg_tool_icon
+from ui.tool_metadata import get_tool_metadata
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -89,27 +90,31 @@ class ToolsPanelController:
     # Individual tab creation helpers
     # ------------------------------------------------------------------
     def _create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
+        """Create the ADB Tools tab with enhanced layout and spacing."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)  # Remove margins for scroll area
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)  # Remove frame for cleaner look
         layout.addWidget(scroll_area)
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(4, 8, 4, 16)
-        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(12, 16, 12, 24)  # Balanced margins
+        content_layout.setSpacing(24)  # Increased spacing for better visual separation
         scroll_area.setWidget(content_widget)
 
         output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
         output_group.setObjectName('adb_tools_output_group')
         StyleManager.apply_panel_frame(output_group)
         output_layout = QVBoxLayout(output_group)
-        output_layout.setSpacing(10)
+        output_layout.setContentsMargins(20, 24, 20, 20)  # Professional padding
+        output_layout.setSpacing(14)  # Consistent vertical spacing
 
         output_row = QHBoxLayout()
-        output_row.setSpacing(10)
+        output_row.setSpacing(12)  # Better horizontal spacing
 
         self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
         output_row.addWidget(self.window.output_path_edit)
@@ -137,7 +142,8 @@ class ToolsPanelController:
         ]
         logcat_grid = QGridLayout()
         logcat_grid.setHorizontalSpacing(16)
-        logcat_grid.setVerticalSpacing(12)
+        logcat_grid.setVerticalSpacing(16)
+        logcat_grid.setContentsMargins(0, 8, 0, 8)
         self._populate_icon_grid(logcat_grid, logcat_items, columns=1)
         output_layout.addLayout(logcat_grid)
 
@@ -148,8 +154,9 @@ class ToolsPanelController:
         output_layout.addWidget(capture_label)
 
         capture_grid = QGridLayout()
-        capture_grid.setHorizontalSpacing(16)
-        capture_grid.setVerticalSpacing(12)
+        capture_grid.setHorizontalSpacing(16)  # Adequate space between tiles
+        capture_grid.setVerticalSpacing(16)  # Balanced vertical spacing
+        capture_grid.setContentsMargins(0, 8, 0, 8)  # Breathing room
 
         screenshot_widget, screenshot_btn, _ = self._create_icon_tool_widget(
             'screenshot', 'Screenshot', self.window.take_screenshot, primary=True
@@ -181,14 +188,14 @@ class ToolsPanelController:
         output_layout.addWidget(self.window.recording_timer_label)
 
         content_layout.addWidget(output_group)
-        content_layout.addSpacing(8)
+
         device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
         device_control_group.setObjectName('adb_tools_device_control_group')
         StyleManager.apply_panel_frame(device_control_group)
         device_control_layout = QGridLayout(device_control_group)
-        device_control_layout.setContentsMargins(16, 24, 16, 16)
-        device_control_layout.setHorizontalSpacing(16)
-        device_control_layout.setVerticalSpacing(12)
+        device_control_layout.setContentsMargins(20, 28, 20, 20)  # Professional padding
+        device_control_layout.setHorizontalSpacing(18)  # Better tile separation
+        device_control_layout.setVerticalSpacing(18)  # Consistent with horizontal
 
         device_actions = list(PanelConfig.DEVICE_ACTIONS)
         if self.window.scrcpy_available:
@@ -253,29 +260,65 @@ class ToolsPanelController:
         primary: bool = False,
         with_progress: bool = False,
     ) -> Tuple[QWidget, QToolButton, Optional[QProgressBar]]:
+        """Create an enhanced icon tool widget with tooltips, shortcuts, and accessibility."""
+        # Get metadata for this tool
+        metadata = get_tool_metadata(icon_key, fallback_label=label)
+
         container = QWidget()
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(6 if with_progress else 0)
 
         button = QToolButton()
-        button.setObjectName('adb_tools_icon_button')
+        button.setObjectName(f'adb_tool_{icon_key}')
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        button.setIcon(get_tile_tool_icon(icon_key, label, primary=primary))
-        button.setIconSize(QSize(48, 48))
-        button.setText(label)
+
+        # Use SVG icons for better visual quality
+        button.setIcon(get_svg_tool_icon(metadata.icon_key, metadata.label, primary=primary, size=56))
+        button.setIconSize(QSize(56, 56))
+        button.setText(metadata.label)
+
+        # Enhanced tooltip with keyboard shortcut if available
+        tooltip_text = metadata.tooltip
+        if metadata.shortcut:
+            tooltip_text = f"{metadata.tooltip}\n\nShortcut: {metadata.shortcut}"
+        button.setToolTip(tooltip_text)
+
+        # Accessibility improvements
+        if metadata.accessible_name:
+            button.setAccessibleName(metadata.accessible_name)
+        if metadata.accessible_description:
+            button.setAccessibleDescription(metadata.accessible_description)
+
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        button.setMinimumHeight(90)  # Ensure adequate touch target size
+
+        # Apply enhanced tile button styling
         StyleManager.apply_tile_button_style(button, primary=primary)
+
+        # Enhanced focus indication for keyboard navigation
+        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         progress_bar: Optional[QProgressBar] = None
         if with_progress:
             progress_bar = QProgressBar()
-            progress_bar.setObjectName('adb_tools_progress_bar')
+            progress_bar.setObjectName(f'progress_{icon_key}')
             progress_bar.setRange(0, 0)
             progress_bar.setTextVisible(False)
             progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             progress_bar.setFixedHeight(10)
+            progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid #ccc;
+                    border-radius: 5px;
+                    background-color: #f0f0f0;
+                }
+                QProgressBar::chunk {
+                    background-color: #4CAF50;
+                    border-radius: 4px;
+                }
+            """)
             progress_bar.hide()
 
         button.clicked.connect(lambda checked=False, key=icon_key: self.window.handle_tool_action(key))
