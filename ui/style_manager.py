@@ -124,6 +124,19 @@ _THEME_ALIASES = {
     'default': 'light',
 }
 
+# Unified spacing system constants (based on 8px grid)
+SPACING_UNIT = 8
+SPACING_SMALL = 8     # For inner element spacing
+SPACING_MEDIUM = 16   # For spacing between elements in the same group
+SPACING_LARGE = 24    # For spacing between different groups
+SPACING_XLARGE = 32   # For spacing between major sections
+
+# Material Design elevation (shadow) levels
+MD_SHADOW_1 = '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)'  # Resting elevation
+MD_SHADOW_2 = '0 2px 8px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.06)'  # Card/button elevation
+MD_SHADOW_3 = '0 4px 16px rgba(0,0,0,0.16), 0 4px 8px rgba(0,0,0,0.08)'  # Raised/hover elevation
+MD_SHADOW_4 = '0 8px 24px rgba(0,0,0,0.18), 0 8px 12px rgba(0,0,0,0.10)'  # Dialog/modal elevation
+
 
 CSSDeclaration = Tuple[str, str]
 CSSBlock = Tuple[str, Sequence[CSSDeclaration]]
@@ -1082,56 +1095,54 @@ class StyleManager:
 
     @classmethod
     def apply_tile_button_style(cls, button, *, primary: bool = False, state: str = 'default') -> None:
-        """套用格狀工具按鈕樣式，包含增強的狀態反饋和動畫效果。"""
+        """套用格狀工具按鈕樣式，使用透明背景突出 SVG 圖示的語意化色彩。"""
 
         palette = cls._resolve_tile_palette(primary, state)
         selector = button.metaObject().className()
         object_name = button.objectName()
         if object_name:
             selector = f"{selector}#{object_name}"
-        disabled_bg = cls.COLORS.get('status_disabled_bg', '#EBEBEB')
         disabled_fg = cls.COLORS.get('status_disabled_text', '#9A9A9A')
-        disabled_border = cls.COLORS.get('status_disabled_border', '#D1D1D1')
 
         # Enhanced focus color for better keyboard navigation visibility
         focus_border = cls.COLORS.get('secondary', '#1976D2')
 
         css = f"""
 {selector} {{
-    background-color: {palette['bg']};
-    border: 2px solid {palette['border']};
+    background-color: transparent;
+    border: none;
     border-radius: 14px;
     padding: 12px;
     color: {palette['fg']};
     font-weight: 600;
-    transition: all 0.2s ease-in-out;
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
 }}
 
 {selector}:hover {{
-    background-color: {palette['hover']};
-    border: 2px solid {palette['border']};
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    background-color: transparent;
+    border: none;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
 }}
 
 {selector}:pressed {{
-    background-color: {palette['pressed']};
-    border: 2px solid {palette['border']};
-    transform: translateY(0px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background-color: transparent;
+    border: none;
+    transform: translateY(-1px) scale(1.0);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.12);
 }}
 
 {selector}:focus {{
     outline: none;
-    border: 3px solid {focus_border};
+    border: 2px solid {focus_border};
     box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.2);
 }}
 
 {selector}:disabled {{
-    background-color: {disabled_bg};
+    background-color: transparent;
     color: {disabled_fg};
-    border: 2px solid {disabled_border};
-    opacity: 0.6;
+    border: none;
+    opacity: 0.4;
     cursor: not-allowed;
 }}
 
@@ -1144,6 +1155,62 @@ class StyleManager:
         button.setProperty('_lazy_tile_primary', bool(primary))
         button.setProperty('_lazy_tile_state', state)
         button.setProperty('_lazy_status_role', None)
+
+    @classmethod
+    def apply_material_card_frame_style(cls, frame, *, primary: bool = False) -> None:
+        """Apply Material Design card style to a frame container.
+
+        Args:
+            frame: QFrame or QWidget to style as a card
+            primary: Whether this is a primary/featured card
+        """
+        object_name = frame.objectName() or f'material_card_{id(frame)}'
+        frame.setObjectName(object_name)
+
+        # Material Design card colors
+        card_bg = '#FFFFFF'
+        card_border = '#E9ECEF'
+        card_hover_border = '#DEE2E6'
+        icon_container_bg = '#E7F5FF' if primary else '#F1F3F5'
+        icon_color = '#1971C2' if primary else '#495057'
+        title_color = '#212529'
+        description_color = '#6C757D'
+
+        css = f"""
+#{object_name} {{
+    background-color: {card_bg};
+    border: 1px solid {card_border};
+    border-radius: 16px;
+    padding: 0px;  /* Padding handled by inner layout */
+}}
+
+#{object_name}:hover {{
+    border: 1px solid {card_hover_border};
+    box-shadow: {MD_SHADOW_3};
+}}
+
+#{object_name} QLabel[materialCardTitle="true"] {{
+    color: {title_color};
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}}
+
+#{object_name} QLabel[materialCardDescription="true"] {{
+    color: {description_color};
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.4;
+}}
+
+#{object_name} QLabel[iconContainer="true"] {{
+    background-color: {icon_container_bg};
+    border-radius: 28px;
+}}
+"""
+        frame.setStyleSheet(dedent(css).strip())
+        frame.setProperty('_lazy_material_card', True)
+        frame.setProperty('_lazy_material_primary', bool(primary))
 
     @classmethod
     def apply_status_style(cls, widget, status_key: str) -> None:

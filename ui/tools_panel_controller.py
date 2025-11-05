@@ -21,11 +21,19 @@ from PyQt6.QtWidgets import (
     QWidget,
     QToolButton,
     QProgressBar,
+    QFrame,
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QEvent, QObject
 
 from config.constants import PanelConfig, PanelText
-from ui.style_manager import LabelStyle, PanelButtonVariant, StyleManager
+from ui.style_manager import (
+    LabelStyle,
+    PanelButtonVariant,
+    StyleManager,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE,
+)
 from ui.device_overview_widget import DeviceOverviewWidget
 from ui.app_list_tab import AppListTab
 from ui.svg_icon_factory import get_svg_tool_icon
@@ -35,12 +43,58 @@ if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
 
 
+class ResizeEventFilter(QObject):
+    """Event filter to handle resize events for responsive layout."""
+
+    def __init__(self, controller: "ToolsPanelController") -> None:
+        super().__init__()
+        self.controller = controller
+        self._last_width = 0
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Filter resize events and trigger grid re-layout."""
+        if event.type() == QEvent.Type.Resize:
+            # Get the new width
+            new_width = event.size().width()  # type: ignore[attr-defined]
+
+            # Only re-layout if width changed significantly (>50px to avoid too frequent updates)
+            if abs(new_width - self._last_width) > 50:
+                self._last_width = new_width
+                # Trigger re-layout for all cached grids
+                for grid_id in list(getattr(self.controller, '_grid_cache', {}).keys()):
+                    self.controller._relayout_grid(grid_id, new_width)
+
+        return super().eventFilter(obj, event)
+
+
 class ToolsPanelController:
     """Builds the tools panel and its tabs for the main window."""
 
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
         self._default_button_height = 38
+        # Track current column count for responsive layout
+        self._current_columns: Dict[str, int] = {}
+
+    def _calculate_grid_columns(self, width: int, section: str = 'default') -> int:
+        """Calculate optimal grid columns based on viewport width.
+
+        Args:
+            width: Viewport width in pixels
+            section: Section identifier for tracking column changes
+
+        Returns:
+            Number of columns (2-4)
+        """
+        if width < 768:
+            columns = 2  # Small screens (mobile, small tablets)
+        elif width < 1200:
+            columns = 3  # Medium screens (tablets, small desktops)
+        else:
+            columns = 4  # Large screens (desktops)
+
+        self._current_columns[section] = columns
+        return columns
 
     def _style_button(
         self,
@@ -98,20 +152,29 @@ class ToolsPanelController:
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)  # Remove frame for cleaner look
+
+        # Install resize event filter for responsive layout
+        resize_filter = ResizeEventFilter(self)
+        scroll_area.installEventFilter(resize_filter)
+        # Store reference to prevent garbage collection
+        if not hasattr(self, '_event_filters'):
+            self._event_filters = []
+        self._event_filters.append(resize_filter)
+
         layout.addWidget(scroll_area)
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(12, 16, 12, 24)  # Balanced margins
-        content_layout.setSpacing(24)  # Increased spacing for better visual separation
+        content_layout.setContentsMargins(12, SPACING_MEDIUM, 12, SPACING_LARGE)  # Balanced margins
+        content_layout.setSpacing(SPACING_LARGE)  # Consistent group separation
         scroll_area.setWidget(content_widget)
 
         output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
         output_group.setObjectName('adb_tools_output_group')
         StyleManager.apply_panel_frame(output_group)
         output_layout = QVBoxLayout(output_group)
-        output_layout.setContentsMargins(20, 24, 20, 20)  # Professional padding
-        output_layout.setSpacing(14)  # Consistent vertical spacing
+        output_layout.setContentsMargins(20, 20, 20, 20)  # Symmetric padding
+        output_layout.setSpacing(SPACING_MEDIUM)  # Consistent vertical spacing
 
         output_row = QHBoxLayout()
         output_row.setSpacing(12)  # Better horizontal spacing
@@ -141,22 +204,22 @@ class ToolsPanelController:
             {'icon': 'bug_report', 'label': 'Bug Report', 'handler': self.window.generate_android_bug_report},
         ]
         logcat_grid = QGridLayout()
-        logcat_grid.setHorizontalSpacing(16)
-        logcat_grid.setVerticalSpacing(16)
-        logcat_grid.setContentsMargins(0, 8, 0, 8)
+        logcat_grid.setHorizontalSpacing(20)  # Material Design card spacing
+        logcat_grid.setVerticalSpacing(20)
+        logcat_grid.setContentsMargins(0, SPACING_SMALL, 0, SPACING_SMALL)
         self._populate_icon_grid(logcat_grid, logcat_items, columns=1)
         output_layout.addLayout(logcat_grid)
 
-        output_layout.addSpacing(16)
+        output_layout.addSpacing(SPACING_LARGE)
 
         capture_label = QLabel(PanelText.GROUP_CAPTURE)
         StyleManager.apply_label_style(capture_label, LabelStyle.SUBHEADER)
         output_layout.addWidget(capture_label)
 
         capture_grid = QGridLayout()
-        capture_grid.setHorizontalSpacing(16)  # Adequate space between tiles
-        capture_grid.setVerticalSpacing(16)  # Balanced vertical spacing
-        capture_grid.setContentsMargins(0, 8, 0, 8)  # Breathing room
+        capture_grid.setHorizontalSpacing(20)  # Material Design card spacing
+        capture_grid.setVerticalSpacing(20)  # Generous vertical spacing for cards
+        capture_grid.setContentsMargins(0, SPACING_SMALL, 0, SPACING_SMALL)  # Breathing room
 
         screenshot_widget, screenshot_btn, _ = self._create_icon_tool_widget(
             'screenshot', 'Screenshot', self.window.take_screenshot, primary=True
@@ -193,9 +256,9 @@ class ToolsPanelController:
         device_control_group.setObjectName('adb_tools_device_control_group')
         StyleManager.apply_panel_frame(device_control_group)
         device_control_layout = QGridLayout(device_control_group)
-        device_control_layout.setContentsMargins(20, 28, 20, 20)  # Professional padding
-        device_control_layout.setHorizontalSpacing(18)  # Better tile separation
-        device_control_layout.setVerticalSpacing(18)  # Consistent with horizontal
+        device_control_layout.setContentsMargins(20, 20, 20, 20)  # Symmetric padding
+        device_control_layout.setHorizontalSpacing(20)  # Material Design card spacing
+        device_control_layout.setVerticalSpacing(20)  # Generous vertical spacing for cards
 
         device_actions = list(PanelConfig.DEVICE_ACTIONS)
         if self.window.scrcpy_available:
@@ -218,7 +281,16 @@ class ToolsPanelController:
             )
             control_items.append({'icon': icon, 'label': label, 'handler': handler})
 
-        self._populate_icon_grid(device_control_layout, control_items, columns=3)
+        # Use responsive layout with initial 3 columns
+        initial_width = self.window.width() if hasattr(self.window, 'width') else 1024
+        initial_columns = self._calculate_grid_columns(initial_width, 'device_control')
+        self._populate_icon_grid(
+            device_control_layout,
+            control_items,
+            columns=initial_columns,
+            store_items=True,
+            grid_id='device_control'
+        )
 
         content_layout.addWidget(device_control_group)
         content_layout.addSpacing(8)
@@ -236,7 +308,31 @@ class ToolsPanelController:
         items: List[Dict[str, object]],
         *,
         columns: int = 3,
+        store_items: bool = False,
+        grid_id: str = '',
     ) -> None:
+        """Populate a grid layout with icon tool widgets.
+
+        Args:
+            layout: The grid layout to populate
+            items: List of tool items (icon, label, handler)
+            columns: Number of columns (can be updated later for responsive layout)
+            store_items: Whether to store items for later re-layout
+            grid_id: Unique identifier for this grid (for responsive updates)
+        """
+        if store_items and grid_id:
+            # Store grid info for responsive updates
+            if not hasattr(self, '_grid_cache'):
+                self._grid_cache: Dict[str, Tuple[QGridLayout, List[Dict[str, object]]]] = {}
+            self._grid_cache[grid_id] = (layout, items)
+
+        # Clear existing widgets
+        while layout.count():
+            item = layout.takeAt(0)
+            if item and item.widget():
+                item.widget().setParent(None)
+
+        # Populate grid with current column count
         for index, item in enumerate(items):
             row, column = divmod(index, columns)
             icon_key = str(item['icon'])
@@ -248,8 +344,25 @@ class ToolsPanelController:
             )
             layout.addWidget(widget, row, column)
 
+        # Set column stretches
         for column in range(columns):
             layout.setColumnStretch(column, 1)
+
+    def _relayout_grid(self, grid_id: str, width: int) -> None:
+        """Re-layout a grid based on viewport width.
+
+        Args:
+            grid_id: Identifier of the grid to re-layout
+            width: Current viewport width
+        """
+        if not hasattr(self, '_grid_cache') or grid_id not in self._grid_cache:
+            return
+
+        layout, items = self._grid_cache[grid_id]
+        new_columns = self._calculate_grid_columns(width, grid_id)
+
+        # Re-populate with new column count
+        self._populate_icon_grid(layout, items, columns=new_columns)
 
     def _create_icon_tool_widget(
         self,
@@ -259,47 +372,71 @@ class ToolsPanelController:
         *,
         primary: bool = False,
         with_progress: bool = False,
-    ) -> Tuple[QWidget, QToolButton, Optional[QProgressBar]]:
-        """Create an enhanced icon tool widget with tooltips, shortcuts, and accessibility."""
+    ) -> Tuple[QWidget, QFrame, Optional[QProgressBar]]:
+        """Create a Material Design card-style tool widget.
+
+        Returns a card with icon, title, and description following Figma/Material Design style.
+        """
         # Get metadata for this tool
         metadata = get_tool_metadata(icon_key, fallback_label=label)
 
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(6 if with_progress else 0)
+        # Create card frame (clickable container)
+        card = QFrame()
+        card.setObjectName(f'material_card_{icon_key}')
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        card.setMinimumHeight(150)  # Adequate size for card content
+        card.setMinimumWidth(180)  # Minimum width for description readability
 
-        button = QToolButton()
-        button.setObjectName(f'adb_tool_{icon_key}')
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        # Apply Material Design card styling
+        StyleManager.apply_material_card_frame_style(card, primary=primary)
 
-        # Use SVG icons for better visual quality
-        button.setIcon(get_svg_tool_icon(metadata.icon_key, metadata.label, primary=primary, size=56))
-        button.setIconSize(QSize(56, 56))
-        button.setText(metadata.label)
+        # Card layout
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)  # Material Design spacing
+        card_layout.setSpacing(12)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Icon container (圓形背景 + 圖示)
+        icon_container = QLabel()
+        icon_container.setObjectName(f'icon_container_{icon_key}')
+        icon_container.setProperty('iconContainer', True)
+        icon_container.setPixmap(get_svg_tool_icon(metadata.icon_key, metadata.label, primary=primary, size=56).pixmap(QSize(56, 56)))
+        icon_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_container.setFixedSize(56, 56)
+        card_layout.addWidget(icon_container, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Title label
+        title_label = QLabel(metadata.label)
+        title_label.setProperty('materialCardTitle', True)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setWordWrap(False)
+        card_layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Description label
+        description_label = QLabel(metadata.description)
+        description_label.setProperty('materialCardDescription', True)
+        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label.setWordWrap(True)
+        description_label.setMaximumWidth(160)  # Limit width for better readability
+        card_layout.addWidget(description_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Enhanced tooltip with keyboard shortcut if available
         tooltip_text = metadata.tooltip
         if metadata.shortcut:
             tooltip_text = f"{metadata.tooltip}\n\nShortcut: {metadata.shortcut}"
-        button.setToolTip(tooltip_text)
+        card.setToolTip(tooltip_text)
 
         # Accessibility improvements
         if metadata.accessible_name:
-            button.setAccessibleName(metadata.accessible_name)
+            card.setAccessibleName(metadata.accessible_name)
         if metadata.accessible_description:
-            button.setAccessibleDescription(metadata.accessible_description)
+            card.setAccessibleDescription(metadata.accessible_description)
 
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        button.setMinimumHeight(90)  # Ensure adequate touch target size
+        # Focus policy for keyboard navigation
+        card.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        # Apply enhanced tile button styling
-        StyleManager.apply_tile_button_style(button, primary=primary)
-
-        # Enhanced focus indication for keyboard navigation
-        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
+        # Progress bar (if needed)
         progress_bar: Optional[QProgressBar] = None
         if with_progress:
             progress_bar = QProgressBar()
@@ -307,33 +444,34 @@ class ToolsPanelController:
             progress_bar.setRange(0, 0)
             progress_bar.setTextVisible(False)
             progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            progress_bar.setFixedHeight(10)
+            progress_bar.setFixedHeight(6)  # Thinner progress bar
             progress_bar.setStyleSheet("""
                 QProgressBar {
-                    border: 1px solid #ccc;
-                    border-radius: 5px;
-                    background-color: #f0f0f0;
+                    border: none;
+                    border-radius: 3px;
+                    background-color: #E9ECEF;
                 }
                 QProgressBar::chunk {
-                    background-color: #4CAF50;
-                    border-radius: 4px;
+                    background-color: #1971C2;
+                    border-radius: 3px;
                 }
             """)
             progress_bar.hide()
+            card_layout.addWidget(progress_bar)
 
-        button.clicked.connect(lambda checked=False, key=icon_key: self.window.handle_tool_action(key))
-        self.window.register_tool_action(icon_key, handler, button, progress_bar)
+        # Make entire card clickable
+        card.mousePressEvent = lambda event: handler() if event.button() == Qt.MouseButton.LeftButton else None
 
-        container_layout.addWidget(button)
-        if progress_bar is not None:
-            container_layout.addWidget(progress_bar)
+        # Register tool action
+        self.window.register_tool_action(icon_key, handler, card, progress_bar)
 
+        # Store button references for compatibility
         if icon_key == 'bug_report':
-            self.window.bug_report_button = button  # type: ignore[attr-defined]
+            self.window.bug_report_button = card  # type: ignore[attr-defined]
         if icon_key == 'install_apk':
-            self.window.install_apk_button = button  # type: ignore[attr-defined]
+            self.window.install_apk_button = card  # type: ignore[attr-defined]
 
-        return container, button, progress_bar
+        return card, card, progress_bar
 
     def _create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
         scroll_area = QScrollArea()

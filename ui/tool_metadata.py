@@ -12,6 +12,7 @@ class ToolMetadata:
     icon_key: str
     label: str
     tooltip: str
+    description: str = ''  # Short description for Material Design cards
     shortcut: Optional[str] = None
     accessible_name: Optional[str] = None
     accessible_description: Optional[str] = None
@@ -24,6 +25,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='screenshot',
         label='Screenshot',
         tooltip='Take a screenshot of the device screen (Ctrl+S)',
+        description='Capture screen instantly',
         shortcut='Ctrl+S',
         accessible_name='Take Screenshot',
         accessible_description='Captures the current device screen and saves it to the output directory'
@@ -32,6 +34,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='record_start',
         label='Start Record',
         tooltip='Start screen recording (Ctrl+R)',
+        description='Begin screen recording',
         shortcut='Ctrl+R',
         accessible_name='Start Screen Recording',
         accessible_description='Begins recording the device screen. Press Stop Record to end recording'
@@ -40,6 +43,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='record_stop',
         label='Stop Record',
         tooltip='Stop screen recording (Ctrl+Shift+R)',
+        description='End current recording',
         shortcut='Ctrl+Shift+R',
         accessible_name='Stop Screen Recording',
         accessible_description='Stops the current screen recording and saves the video file'
@@ -50,6 +54,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bug_report',
         label='Bug Report',
         tooltip='Generate a comprehensive bug report including logs, system info, and diagnostics',
+        description='Generate system diagnostics',
         accessible_name='Generate Bug Report',
         accessible_description='Creates a detailed bug report package with system logs and device information'
     ),
@@ -59,6 +64,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='reboot',
         label='Reboot',
         tooltip='Reboot the device normally',
+        description='Restart the device',
         accessible_name='Reboot Device',
         accessible_description='Restarts the device with a normal boot'
     ),
@@ -66,6 +72,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='recovery',
         label='Recovery',
         tooltip='Reboot device into recovery mode',
+        description='Boot to recovery mode',
         accessible_name='Reboot to Recovery',
         accessible_description='Restarts the device in recovery mode for advanced operations'
     ),
@@ -73,6 +80,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bootloader',
         label='Bootloader',
         tooltip='Reboot device into bootloader/fastboot mode',
+        description='Boot to fastboot mode',
         accessible_name='Reboot to Bootloader',
         accessible_description='Restarts the device in bootloader mode for firmware operations'
     ),
@@ -80,6 +88,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='restart',
         label='Restart ADB',
         tooltip='Restart the ADB server to fix connection issues',
+        description='Fix connection issues',
         accessible_name='Restart ADB Server',
         accessible_description='Restarts the Android Debug Bridge server to resolve connectivity problems'
     ),
@@ -89,6 +98,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bt_on',
         label='BT On',
         tooltip='Enable Bluetooth on the device',
+        description='Enable Bluetooth',
         accessible_name='Enable Bluetooth',
         accessible_description='Turns on Bluetooth connectivity on the device'
     ),
@@ -96,6 +106,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bt_off',
         label='BT Off',
         tooltip='Disable Bluetooth on the device',
+        description='Disable Bluetooth',
         accessible_name='Disable Bluetooth',
         accessible_description='Turns off Bluetooth connectivity on the device'
     ),
@@ -103,6 +114,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='wifi_on',
         label='WiFi On',
         tooltip='Enable WiFi on the device',
+        description='Enable WiFi',
         accessible_name='Enable WiFi',
         accessible_description='Turns on WiFi connectivity on the device'
     ),
@@ -110,6 +122,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='wifi_off',
         label='WiFi Off',
         tooltip='Disable WiFi on the device',
+        description='Disable WiFi',
         accessible_name='Disable WiFi',
         accessible_description='Turns off WiFi connectivity on the device'
     ),
@@ -119,6 +132,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='install_apk',
         label='Install APK',
         tooltip='Install an APK file on the device (Ctrl+I)',
+        description='Install application package',
         shortcut='Ctrl+I',
         accessible_name='Install APK',
         accessible_description='Opens a file dialog to select and install an APK file on the device'
@@ -129,6 +143,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='device_info',
         label='Device Info',
         tooltip='Show detailed device information and properties',
+        description='View device details',
         accessible_name='Show Device Information',
         accessible_description='Displays comprehensive information about the device hardware and software'
     ),
@@ -136,6 +151,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='home',
         label='Home',
         tooltip='Navigate to the home screen (Ctrl+H)',
+        description='Go to home screen',
         shortcut='Ctrl+H',
         accessible_name='Go to Home Screen',
         accessible_description='Navigates the device to the home screen'
@@ -144,6 +160,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='inspector',
         label='UI Inspector',
         tooltip='Launch UI hierarchy inspector for analyzing app layouts',
+        description='Analyze app layouts',
         accessible_name='Launch UI Inspector',
         accessible_description='Opens the UI Inspector tool to examine app element hierarchies'
     ),
@@ -153,6 +170,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='scrcpy',
         label='scrcpy',
         tooltip='Launch scrcpy for device mirroring and control (Ctrl+M)',
+        description='Mirror screen to computer',
         shortcut='Ctrl+M',
         accessible_name='Launch scrcpy',
         accessible_description='Starts scrcpy application for real-time device screen mirroring and control'
@@ -163,6 +181,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bt_on',
         label='BT On',
         tooltip='Enable Bluetooth on the device',
+        description='Enable Bluetooth',
         accessible_name='Enable Bluetooth',
         accessible_description='Turns on Bluetooth connectivity'
     ),
@@ -170,6 +189,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='bt_off',
         label='BT Off',
         tooltip='Disable Bluetooth on the device',
+        description='Disable Bluetooth',
         accessible_name='Disable Bluetooth',
         accessible_description='Turns off Bluetooth connectivity'
     ),
@@ -177,6 +197,7 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         icon_key='scrcpy',
         label='scrcpy',
         tooltip='Launch scrcpy for device mirroring',
+        description='Mirror screen to computer',
         accessible_name='Launch scrcpy',
         accessible_description='Starts scrcpy for screen mirroring'
     ),
