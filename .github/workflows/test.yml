@@ -55,15 +55,16 @@ jobs:
           libxcb-xinerama0 \
           libxcb-xfixes0
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
     - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      run: uv sync
 
     - name: Verify installation
       run: |
-        python -c "from PyQt6 import QtCore; print(f'PyQt6 version: {QtCore.PYQT_VERSION_STR}')"
-        python -c "from PyQt6 import QtWidgets; print('PyQt6.QtWidgets imported successfully')"
+        uv run python -c "from PyQt6 import QtCore; print(f'PyQt6 version: {QtCore.PYQT_VERSION_STR}')"
+        uv run python -c "from PyQt6 import QtWidgets; print('PyQt6.QtWidgets imported successfully')"
 
     - name: Set up display (Linux)
       if: matrix.platform == 'linux'
@@ -75,15 +76,15 @@ jobs:
 
     - name: Lint with flake8 (if available)
       run: |
-        pip install flake8 || echo "flake8 not installed, skipping lint"
+        uv pip install flake8 || echo "flake8 not installed, skipping lint"
         if command -v flake8 &> /dev/null; then
-          flake8 --max-line-length=120 --ignore=E501,W503 *.py utils/ ui/ config/ || echo "Linting completed with warnings"
+          uv run flake8 --max-line-length=120 --ignore=E501,W503 *.py utils/ ui/ config/ || echo "Linting completed with warnings"
         fi
       continue-on-error: true
 
     - name: Test application imports
       run: |
-        python -c "
+        uv run python -c "
         import sys
         sys.path.insert(0, '.')
         try:
@@ -100,7 +101,7 @@ jobs:
       env:
         QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
       run: |
-        python - <<'PY'
+        uv run python - <<'PY'
         import os
         import subprocess
         import sys
@@ -119,12 +120,12 @@ jobs:
         QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
         COVERAGE_RUN_CHILD: '1'
       run: |
-        python -m pip install coverage
-        python -m coverage erase
-        python -m coverage run -m tests.run_tests
-        python -m coverage combine
-        python -m coverage xml -o coverage.xml
-        python -m coverage report -m
+        uv pip install coverage
+        uv run python -m coverage erase
+        uv run python -m coverage run -m tests.run_tests
+        uv run python -m coverage combine
+        uv run python -m coverage xml -o coverage.xml
+        uv run python -m coverage report -m
 
     - name: Upload coverage
       uses: actions/upload-artifact@v4
@@ -135,7 +136,7 @@ jobs:
 
     - name: Test utilities modules
       run: |
-        python -c "
+        uv run python -c "
         import sys
         sys.path.insert(0, '.')
 
@@ -160,7 +161,7 @@ jobs:
     - name: Test build preparation (quick)
       run: |
         # Test that PyInstaller can analyze the main script
-        python -c "
+        uv run python -c "
         import PyInstaller.utils.hooks
         import PyInstaller.building.build_main
         print('✅ PyInstaller can analyze the application')
@@ -168,8 +169,8 @@ jobs:
 
     - name: Check for syntax errors
       run: |
-        python -m py_compile lazy_blacktea_pyqt.py
-        find utils/ ui/ config/ -name "*.py" -exec python -m py_compile {} \; 2>/dev/null || true
+        uv run python -m py_compile lazy_blacktea_pyqt.py
+        find utils/ ui/ config/ -name "*.py" -exec uv run python -m py_compile {} \; 2>/dev/null || true
         echo "✅ Python syntax check completed"
 
   security-scan:
@@ -184,20 +185,23 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
     - name: Install security scanning tools
       run: |
-        pip install safety bandit || echo "Security tools installation completed"
+        uv pip install safety bandit || echo "Security tools installation completed"
 
     - name: Check dependencies for security vulnerabilities
       run: |
-        pip install -r requirements.txt
-        safety check || echo "Safety check completed with warnings"
+        uv sync
+        uv run safety check || echo "Safety check completed with warnings"
       continue-on-error: true
 
     - name: Run Bandit security scan
       run: |
-        bandit -r . -f json -o bandit-report.json || echo "Bandit scan completed"
-        bandit -r . || echo "Bandit scan completed with warnings"
+        uv run bandit -r . -f json -o bandit-report.json || echo "Bandit scan completed"
+        uv run bandit -r . || echo "Bandit scan completed with warnings"
       continue-on-error: true
 
     - name: Upload security scan results
@@ -221,21 +225,27 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Install dependencies
+      run: uv sync
+
     - name: Validate build.py syntax
       run: |
-        python -m py_compile build-scripts/build.py
-        python -c "import sys; sys.path.insert(0, 'build-scripts'); import build; print('✅ build.py can be imported')"
+        uv run python -m py_compile build-scripts/build.py
+        uv run python -c "import sys; sys.path.insert(0, 'build-scripts'); import build; print('✅ build.py can be imported')"
 
     - name: Check build script help
       run: |
-        python build-scripts/build.py --help || echo "Build script help check completed"
+        uv run python build-scripts/build.py --help || echo "Build script help check completed"
       continue-on-error: true
 
     - name: Validate spec files
       run: |
         # Check if spec files are valid Python files
-        python -m py_compile build-scripts/build_macos.spec
-        python -m py_compile build-scripts/build_linux.spec
+        uv run python -m py_compile build-scripts/build_macos.spec
+        uv run python -m py_compile build-scripts/build_linux.spec
         echo "✅ PyInstaller spec files are valid"
 
   dependency-check:
@@ -250,19 +260,22 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt
-        pip install pipdeptree
+        uv sync
+        uv pip install pipdeptree
 
     - name: Generate dependency tree
       run: |
-        pipdeptree --json > dependency-tree.json
-        pipdeptree
+        uv run pipdeptree --json > dependency-tree.json
+        uv run pipdeptree
 
     - name: Check for dependency conflicts
       run: |
-        pip check && echo "✅ No dependency conflicts found" || echo "⚠️ Dependency conflicts detected"
+        uv pip check && echo "✅ No dependency conflicts found" || echo "⚠️ Dependency conflicts detected"
       continue-on-error: true
 
     - name: Upload dependency information

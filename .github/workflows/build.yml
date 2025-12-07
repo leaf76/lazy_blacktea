@@ -106,15 +106,16 @@ jobs:
         # Update Homebrew
         brew update
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
     - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      run: uv sync
 
     - name: Verify PyQt6 installation
       run: |
-        python -c "from PyQt6 import QtCore; print(f'PyQt6 version: {QtCore.PYQT_VERSION_STR}')"
-        python -c "from PyQt6 import QtWidgets; print('PyQt6.QtWidgets imported successfully')"
+        uv run python -c "from PyQt6 import QtCore; print(f'PyQt6 version: {QtCore.PYQT_VERSION_STR}')"
+        uv run python -c "from PyQt6 import QtWidgets; print('PyQt6.QtWidgets imported successfully')"
 
     - name: Set up display (Linux)
       if: matrix.platform == 'linux'
@@ -130,7 +131,7 @@ jobs:
         QT_QPA_PLATFORM: ${{ matrix.platform == 'linux' && 'offscreen' || '' }}
         DISPLAY: ${{ matrix.platform == 'linux' && ':99' || '' }}
       run: |
-        python - <<'PY'
+        uv run python - <<'PY'
         import os
         import subprocess
         import sys
@@ -154,7 +155,7 @@ jobs:
         echo "Starting build for platform: ${{ matrix.platform }}"
         echo "Architecture: ${{ matrix.arch }}"
         echo "Working directory: $(pwd)"
-        python build-scripts/build.py
+        uv run python build-scripts/build.py
         echo "Build script completed with exit code: $?"
         echo "Contents of dist/ after build:"
         ls -la dist/ || echo "No dist directory created"
@@ -184,7 +185,7 @@ jobs:
         DISPLAY: ${{ matrix.platform == 'linux' && ':99' || '' }}
         MATRIX_PLATFORM: ${{ matrix.platform }}
       run: |
-        python - <<'PY'
+        uv run python - <<'PY'
         import os
         import subprocess
 
