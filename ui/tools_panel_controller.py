@@ -105,9 +105,6 @@ class ToolsPanelController:
         content_layout.setSpacing(10)
         scroll_area.setWidget(content_widget)
 
-        # Output Path Section
-        self._create_output_path_section(content_layout)
-
         # Monitoring Section (single device operations)
         self._create_monitoring_section(content_layout)
 
@@ -160,63 +157,6 @@ class ToolsPanelController:
             layout.addWidget(hint_label)
 
         return container
-
-    def _create_output_path_section(self, parent_layout: QVBoxLayout) -> None:
-        """Create the output path configuration section."""
-        colors = StyleManager.COLORS
-        panel_bg = colors.get('panel_background', '#252A37')
-        panel_border = colors.get('panel_border', '#3E4455')
-
-        container = QFrame()
-        container.setObjectName('output_path_container')
-        container.setStyleSheet(f"""
-            QFrame#output_path_container {{
-                background-color: {panel_bg};
-                border: 1px solid {panel_border};
-                border-radius: 8px;
-                padding: 8px;
-            }}
-        """)
-
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
-
-        header = QLabel(PanelText.GROUP_OUTPUT_PATH)
-        header.setStyleSheet(f"""
-            QLabel {{
-                font-size: 11px;
-                font-weight: 600;
-                color: {colors.get('text_primary', '#EAEAEA')};
-            }}
-        """)
-        layout.addWidget(header)
-
-        row = QHBoxLayout()
-        row.setSpacing(8)
-
-        self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
-        row.addWidget(self.window.output_path_edit)
-
-        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
-        browse_btn.setToolTip('Select output directory')
-        browse_btn.clicked.connect(lambda: self.window.browse_output_path())
-        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, height=32, min_width=100)
-        row.addWidget(browse_btn)
-
-        layout.addLayout(row)
-
-        hint = QLabel('Screenshots, recordings, and exports will be saved here.')
-        hint.setStyleSheet(f"""
-            QLabel {{
-                font-size: 10px;
-                color: {colors.get('text_hint', '#9DA5B3')};
-                font-style: italic;
-            }}
-        """)
-        layout.addWidget(hint)
-
-        parent_layout.addWidget(container)
 
     def _create_monitoring_section(self, parent_layout: QVBoxLayout) -> None:
         """Create the monitoring tools section (single device operations)."""
@@ -584,25 +524,18 @@ class ToolsPanelController:
             device_label=device_label,
         )
 
-        output_group = QGroupBox(PanelText.GROUP_DEVICE_FILE_OUTPUT)
-        output_layout = QHBoxLayout(output_group)
-
-        self.window.file_gen_output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_DEVICE_FILE_OUTPUT)
-        output_layout.addWidget(self.window.file_gen_output_path_edit)
-
-        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
-        browse_btn.setToolTip('Select local download destination')
-        browse_btn.clicked.connect(lambda: self.window.browse_file_generation_output_path())
-        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
-        output_layout.addWidget(browse_btn)
+        # Download action row
+        action_layout = QHBoxLayout()
+        action_layout.setSpacing(8)
 
         download_btn = QPushButton(PanelText.BUTTON_DOWNLOAD_SELECTED)
-        download_btn.setToolTip('Download the checked files or folders')
+        download_btn.setToolTip('Download the checked files or folders to the configured output path')
         download_btn.clicked.connect(lambda: self.window.download_selected_device_files())
         self._style_button(download_btn, PanelButtonVariant.PRIMARY, height=34, min_width=160)
-        output_layout.addWidget(download_btn)
+        action_layout.addWidget(download_btn)
+        action_layout.addStretch()
 
-        content_layout.addWidget(output_group)
+        content_layout.addLayout(action_layout)
         content_layout.addStretch()
 
         tab_widget.addTab(scroll_area, PanelText.TAB_DEVICE_FILES)

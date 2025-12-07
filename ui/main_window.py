@@ -80,6 +80,7 @@ from ui.signal_payloads import RecordingProgressEvent
 from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
 from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
 from ui.capture_settings_dialog import CaptureSettingsDialog
+from ui.output_settings_dialog import OutputSettingsDialog
 from ui.device_files_facade import DeviceFilesFacade
 from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
@@ -799,7 +800,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.config_manager.set_screen_record_settings(new_rec)
             changed = True
         if changed:
-            self.show_info('Capture Settings Updated', 'New screenshot and recording parameters will apply to future actions.')
+            self.show_info('Capture Settings Updated', 'New settings will apply to future actions.')
+
+    def open_output_settings_dialog(self) -> None:
+        """Display the Output Settings dialog for configuring global output path."""
+        current_path = self.config_manager.get_ui_settings().default_output_path
+        dialog = OutputSettingsDialog(current_path, self)
+        dialog.exec()
+
+        new_path = dialog.get_output_path()
+        if new_path is not None:
+            self.config_manager.update_ui_settings(default_output_path=new_path)
+            self.show_info('Output Settings Updated', f'Output path set to: {new_path or "(default)"}')
 
     # Operation logging helpers moved to OperationLoggingMixin
 
@@ -2186,31 +2198,22 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     # File generation methods
     def _get_file_generation_output_path(self) -> str:
         """Retrieve preferred output path for file generation workflows."""
-        if hasattr(self, 'output_path_manager'):
-            return self.output_path_manager.get_file_generation_output_path()
-
-        if hasattr(self, 'file_gen_output_path_edit'):
-            candidate = self.file_gen_output_path_edit.text().strip()
-            if candidate:
-                return candidate
-
-        if hasattr(self, 'output_path_edit'):
-            return self.output_path_edit.text().strip()
-
-        return ''
+        return self._get_global_output_path()
 
     def _get_adb_tools_output_path(self) -> str:
-        """Return the output directory configured in the ADB Tools tab."""
-        if hasattr(self, 'output_path_manager'):
-            return self.output_path_manager.ensure_primary_output_path()
+        """Return the output directory configured in Settings."""
+        return self._get_global_output_path()
 
-        if hasattr(self, 'output_path_edit'):
-            path = self.output_path_edit.text().strip()
-            if path:
-                return path
-            return self._ensure_output_path_initialized()
-
-        return ''
+    def _get_global_output_path(self) -> str:
+        """Return the global output path from ConfigManager."""
+        path = self.config_manager.get_ui_settings().default_output_path
+        if path and os.path.isdir(path):
+            return path
+        # Fall back to Desktop or home directory
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        if os.path.isdir(desktop):
+            return desktop
+        return os.path.expanduser("~")
 
 
 

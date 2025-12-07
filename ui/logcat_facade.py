@@ -81,6 +81,8 @@ class LogcatFacade:
 
             # Pass device_manager for graceful disconnection handling
             device_manager = getattr(self.window, "device_manager", None)
+            # Pass config_manager for shared settings (output path, etc.)
+            config_manager = getattr(self.window, "config_manager", None)
 
             logcat_window = LogcatWindow(
                 device,
@@ -88,6 +90,7 @@ class LogcatFacade:
                 settings=settings_payload,
                 on_settings_changed=self.window.persist_logcat_settings,
                 device_manager=device_manager,
+                config_manager=config_manager,
             )
             self.window.logcat_window = logcat_window
             logcat_window.show()

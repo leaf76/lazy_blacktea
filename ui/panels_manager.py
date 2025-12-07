@@ -470,6 +470,13 @@ class PanelsManager(QObject):
             capture_settings_action.setEnabled(False)
         settings_menu.addAction(capture_settings_action)
 
+        output_settings_action = QAction('Output Directory...', main_window)
+        if hasattr(main_window, 'open_output_settings_dialog'):
+            output_settings_action.triggered.connect(main_window.open_output_settings_dialog)
+        else:  # pragma: no cover
+            output_settings_action.setEnabled(False)
+        settings_menu.addAction(output_settings_action)
+
         # Refresh Interval submenu
         refresh_menu = settings_menu.addMenu('Refresh Interval')
         refresh_group = QActionGroup(main_window)

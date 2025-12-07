@@ -30,10 +30,12 @@ from ui.logcat.preset_manager import PresetManager
 from ui.logcat.device_watcher import DeviceWatcher
 from ui.logcat.filter_panel_widget import FilterPanelWidget
 from ui.logcat.search_bar_widget import SearchBarWidget
+from ui.logcat.scrcpy_preview_panel import ScrcpyPreviewPanel
 from ui.toast_notification import ToastNotification
 
 if TYPE_CHECKING:
     from ui.device_manager import DeviceManager
+    from config.config_manager import ConfigManager
 
 try:
     from utils import adb_tools
@@ -667,6 +669,7 @@ class LogcatWindow(QDialog):
         settings: Optional[Dict[str, int]] = None,
         on_settings_changed: Optional[Callable[[Dict[str, int]], None]] = None,
         device_manager: Optional["DeviceManager"] = None,
+        config_manager: Optional["ConfigManager"] = None,
     ):
         super().__init__(parent)
         # Configure as a normal resizable window (not always-on-top of parent)
@@ -685,6 +688,7 @@ class LogcatWindow(QDialog):
         self.is_running = False
         self.max_lines = 1000
         self._settings_callback = on_settings_changed
+        self._config_manager = config_manager
 
         # Device monitoring for graceful disconnection handling
         self._device_manager = device_manager
@@ -986,15 +990,45 @@ class LogcatWindow(QDialog):
         # Install event filter on log_display to handle resize events
         self.log_display.installEventFilter(self)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(top_panel)
-        splitter.addWidget(log_container)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setCollapsible(0, False)
-        splitter.setCollapsible(1, False)
+        # Create vertical splitter for logcat area (top controls + log display)
+        vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+        vertical_splitter.addWidget(top_panel)
+        vertical_splitter.addWidget(log_container)
+        vertical_splitter.setStretchFactor(0, 0)
+        vertical_splitter.setStretchFactor(1, 1)
+        vertical_splitter.setCollapsible(0, False)
+        vertical_splitter.setCollapsible(1, False)
 
-        layout.addWidget(splitter)
+        # Create left panel container for logcat content
+        left_panel = QWidget()
+        left_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(vertical_splitter)
+
+        # Create scrcpy preview panel on the right
+        self._preview_panel = ScrcpyPreviewPanel(
+            device=self.device,
+            log_model=self.log_model,
+            config_manager=self._config_manager,
+            parent=self,
+        )
+        self._preview_panel.error_occurred.connect(self._on_preview_error)
+        self._preview_panel.recording_stopped.connect(self._on_recording_stopped)
+
+        # Create horizontal splitter for main layout (logcat | preview)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.addWidget(left_panel)
+        main_splitter.addWidget(self._preview_panel)
+        main_splitter.setStretchFactor(0, 3)  # Logcat takes more space
+        main_splitter.setStretchFactor(1, 1)  # Preview panel smaller
+        main_splitter.setCollapsible(0, False)
+        main_splitter.setCollapsible(1, True)  # Preview can be collapsed
+
+        # Store splitter reference for state persistence
+        self._main_splitter = main_splitter
+
+        layout.addWidget(main_splitter)
 
     def _setup_copy_features(self) -> None:
         """Enable context menu and keyboard shortcuts for copying logs."""
@@ -1231,6 +1265,13 @@ class LogcatWindow(QDialog):
         self.filters_toggle_btn.clicked.connect(self.toggle_filters_visibility)
         primary_row.addWidget(self.filters_toggle_btn)
 
+        self.preview_toggle_btn = QPushButton('Preview')
+        self.preview_toggle_btn.setCheckable(True)
+        self.preview_toggle_btn.setChecked(True)
+        self.preview_toggle_btn.setToolTip('Toggle device preview and recording panel')
+        self.preview_toggle_btn.clicked.connect(self.toggle_preview_visibility)
+        primary_row.addWidget(self.preview_toggle_btn)
+
         primary_row.addStretch(1)
         layout.addLayout(primary_row)
         return layout
@@ -1248,6 +1289,32 @@ class LogcatWindow(QDialog):
             self.filters_panel.set_collapsed(not self.filters_panel.is_collapsed())
             if hasattr(self, 'filters_toggle_btn'):
                 self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
+
+    def toggle_preview_visibility(self):
+        """Toggle the visibility of the preview panel."""
+        if hasattr(self, '_preview_panel') and self._preview_panel:
+            is_visible = self._preview_panel.isVisible()
+            self._preview_panel.setVisible(not is_visible)
+            if hasattr(self, 'preview_toggle_btn'):
+                self.preview_toggle_btn.setChecked(not is_visible)
+
+    def _on_preview_error(self, message: str) -> None:
+        """Handle errors from the preview panel."""
+        if self._toast:
+            self._toast.show_toast(
+                message,
+                style=ToastNotification.STYLE_ERROR,
+                duration_ms=4000,
+            )
+
+    def _on_recording_stopped(self, video_path: str) -> None:
+        """Handle recording completion notification."""
+        if self._toast and video_path:
+            self._toast.show_toast(
+                f"Recording saved: {os.path.basename(video_path)}",
+                style=ToastNotification.STYLE_SUCCESS,
+                duration_ms=5000,
+            )
 
     def _create_levels_widget(self) -> QWidget:
         """Create content widget for log levels checkboxes."""
@@ -1907,7 +1974,11 @@ class LogcatWindow(QDialog):
 
     def eventFilter(self, watched: QObject, event) -> bool:
         """Handle resize events to reposition the search bar."""
-        if watched is self.log_display and event.type() == QEvent.Type.Resize:
+        if (
+            hasattr(self, 'log_display')
+            and watched is self.log_display
+            and event.type() == QEvent.Type.Resize
+        ):
             self._position_search_bar()
 
         return super().eventFilter(watched, event)
@@ -1930,6 +2001,10 @@ class LogcatWindow(QDialog):
         if self._device_watcher:
             self._device_watcher.cleanup()
             self._device_watcher = None
+
+        # Cleanup preview panel (scrcpy and recording)
+        if hasattr(self, '_preview_panel') and self._preview_panel:
+            self._preview_panel.cleanup()
 
         super().closeEvent(event)
 

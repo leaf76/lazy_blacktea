@@ -25,6 +25,8 @@ class UISettings:
     show_console_panel: bool = False
     # Device list selection mode: True means Single-select, False means Multi-select
     single_selection: bool = True
+    # Global default output path for screenshots, recordings, etc.
+    default_output_path: str = ""
 
 
 @dataclass
