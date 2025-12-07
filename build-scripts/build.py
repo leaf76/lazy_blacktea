@@ -128,6 +128,21 @@ def fix_app_signing(app_path):
         print_warning(f"Some signing fixes may have failed: {e}")
         return True  # Don't fail the build for signing issues
 
+def is_uv_environment():
+    """Check if running in a uv-managed environment"""
+    # uv environments typically don't have pip installed
+    # Also check for UV_* environment variables
+    if os.environ.get('UV_CACHE_DIR') or os.environ.get('UV_PROJECT_ENVIRONMENT'):
+        return True
+
+    # Check if pip module is available
+    try:
+        import pip
+        return False
+    except ImportError:
+        return True
+
+
 def install_dependencies():
     """Install dependencies"""
     print_step("Installing dependencies...")
@@ -143,7 +158,21 @@ def install_dependencies():
         if not run_command("sudo apt-get install -y python3-dev build-essential libgl1-mesa-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0"):
             print_warning("Failed to install system dependencies (continuing anyway)")
 
-    # Install Python dependencies
+    # Check if running in uv environment (dependencies already installed via uv sync)
+    if is_uv_environment():
+        print("Detected uv environment - dependencies already installed via uv sync")
+        # Verify critical dependencies are available
+        try:
+            importlib.import_module("PyQt6")
+            importlib.import_module("PyInstaller")
+            print_success("Dependencies verified successfully")
+            return True
+        except ImportError as e:
+            print_error(f"Missing dependency in uv environment: {e}")
+            print("Please run 'uv sync' first to install dependencies")
+            return False
+
+    # Install Python dependencies using pip (non-uv environment)
     if not run_command([sys.executable, "-m", "pip", "install", "--upgrade", "pip"]):
         print_error("Failed to upgrade pip")
         return False
