@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
     QCheckBox, QLineEdit, QProgressBar, QApplication,
-    QTreeWidget, QStackedWidget, QSizePolicy
+    QTreeWidget, QStackedWidget, QSizePolicy, QToolButton, QMenu
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QAction, QActionGroup
@@ -13,6 +13,8 @@ from PyQt6.QtGui import QFont, QAction, QActionGroup
 from utils import common
 from ui.style_manager import PanelButtonVariant, StyleManager
 from ui.device_table_widget import DeviceTableWidget
+from ui.components.filter_bar import FilterBar
+from ui.components.expandable_device_list import ExpandableDeviceList
 
 
 class PanelsManager(QObject):
@@ -489,80 +491,126 @@ class PanelsManager(QObject):
         main_window._update_refresh_interval_actions(getattr(main_window, 'refresh_interval', 30))
 
     def create_device_panel(self, parent, main_window) -> dict:
-        """Create the device list panel."""
+        """Create the device list panel with modern UI design."""
         device_widget = QWidget()
+        device_widget.setObjectName('device_panel')
         device_layout = QVBoxLayout(device_widget)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(8)
 
-        # Title with device count
-        title_label = QLabel('Connected Devices (0)')
-        title_label.setFont(QFont('Arial', 12, QFont.Weight.Bold))
-        device_layout.addWidget(title_label)
+        # ============================================================
+        # Header area: Title + Icon buttons
+        # ============================================================
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(8, 8, 8, 4)
 
-        # Search and sort controls
-        search_layout = QHBoxLayout()
+        # Title and subtitle container
+        title_container = QVBoxLayout()
+        title_container.setSpacing(2)
 
-        # Search field with icon
-        search_label = QLabel('🔍')
-        search_layout.addWidget(search_label)
+        # Main title: "3 Devices • 2 Selected"
+        title_label = QLabel('0 Devices')
+        title_label.setObjectName('compact_header_title')
+        title_label.setFont(QFont('Arial', 14, QFont.Weight.Bold))
+        title_container.addWidget(title_label)
+
+        # Subtitle: "Active: SM_G9860 (R5CN700...)"
+        subtitle_label = QLabel('Active: None')
+        subtitle_label.setObjectName('compact_header_subtitle')
+        subtitle_label.setStyleSheet('color: #666666; font-size: 11px;')
+        title_container.addWidget(subtitle_label)
+
+        header_layout.addLayout(title_container)
+        header_layout.addStretch()
+
+        # Refresh icon button
+        refresh_btn = QToolButton()
+        refresh_btn.setText('\u21bb')  # Refresh symbol
+        refresh_btn.setObjectName('header_refresh_btn')
+        refresh_btn.setToolTip('Refresh device list')
+        refresh_btn.setStyleSheet(StyleManager.get_icon_button_style())
+        refresh_btn.clicked.connect(lambda: main_window.refresh_device_list())
+        header_layout.addWidget(refresh_btn)
+
+        # Expand/Collapse all button
+        expand_btn = QToolButton()
+        expand_btn.setText('\u2195')  # Up-down arrow symbol
+        expand_btn.setObjectName('header_expand_btn')
+        expand_btn.setToolTip('Expand/Collapse all devices')
+        expand_btn.setStyleSheet(StyleManager.get_icon_button_style())
+        header_layout.addWidget(expand_btn)
+
+        # Selection menu button
+        menu_btn = QToolButton()
+        menu_btn.setText('\u2630')  # Menu symbol
+        menu_btn.setObjectName('header_menu_btn')
+        menu_btn.setToolTip('Selection options')
+        menu_btn.setStyleSheet(StyleManager.get_icon_button_style())
+        menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+        # Create selection menu
+        selection_menu = QMenu(menu_btn)
+        select_all_action = selection_menu.addAction('Select All')
+        if hasattr(main_window, 'handle_select_all_action'):
+            select_all_action.triggered.connect(main_window.handle_select_all_action)
+        else:
+            select_all_action.triggered.connect(main_window.select_all_devices)
+
+        select_none_action = selection_menu.addAction('Select None')
+        select_none_action.triggered.connect(main_window.select_no_devices)
+
+        selection_menu.addSeparator()
+
+        single_mode_action = selection_menu.addAction('Single Select Mode')
+        single_mode_action.setCheckable(True)
+        single_mode_action.setChecked(False)
+        if hasattr(main_window, 'handle_selection_mode_toggle'):
+            single_mode_action.toggled.connect(main_window.handle_selection_mode_toggle)
+
+        menu_btn.setMenu(selection_menu)
+        header_layout.addWidget(menu_btn)
+
+        device_layout.addLayout(header_layout)
+
+        # ============================================================
+        # Search field
+        # ============================================================
+        search_container = QHBoxLayout()
+        search_container.setContentsMargins(8, 0, 8, 0)
 
         search_field = QLineEdit()
-        search_field.setPlaceholderText('Search devices (model, serial, android 13, wifi on, selected, etc.)...')
+        search_field.setPlaceholderText('Search devices...')
+        search_field.setStyleSheet(StyleManager.get_search_input_style())
         search_field.textChanged.connect(lambda text: main_window.on_search_changed(text))
-        search_layout.addWidget(search_field)
+        search_container.addWidget(search_field)
 
-        device_layout.addLayout(search_layout)
+        device_layout.addLayout(search_container)
 
-        # Control buttons
-        control_layout = QHBoxLayout()
+        # ============================================================
+        # Filter bar with chips
+        # ============================================================
+        filter_bar = FilterBar()
+        if hasattr(main_window, 'on_filter_changed'):
+            filter_bar.filter_changed.connect(main_window.on_filter_changed)
+        device_layout.addWidget(filter_bar)
 
-        refresh_btn = QPushButton('Refresh')
-        refresh_btn.clicked.connect(lambda checked: main_window.refresh_device_list())
-        control_layout.addWidget(refresh_btn)
+        # ============================================================
+        # Device list (expandable)
+        # ============================================================
+        device_list = ExpandableDeviceList()
+        device_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        select_all_btn = QPushButton('Select All')
-        # Route to context-aware handler if available; fallback to legacy select_all
-        if hasattr(main_window, 'handle_select_all_action'):
-            select_all_btn.clicked.connect(lambda checked: main_window.handle_select_all_action())
-        else:  # pragma: no cover - legacy compatibility
-            select_all_btn.clicked.connect(lambda checked: main_window.select_all_devices())
-        control_layout.addWidget(select_all_btn)
+        # Connect signals
+        if hasattr(main_window, 'on_device_selection_changed'):
+            device_list.selection_changed.connect(main_window.on_device_selection_changed)
+        if hasattr(main_window, 'show_device_context_menu'):
+            device_list.context_menu_requested.connect(
+                lambda pos, serial: main_window.show_device_context_menu(pos, serial, device_list)
+            )
+        if hasattr(main_window, 'show_device_list_context_menu'):
+            device_list.list_context_menu_requested.connect(main_window.show_device_list_context_menu)
 
-        select_none_btn = QPushButton('Select None')
-        select_none_btn.clicked.connect(lambda checked: main_window.select_no_devices())
-        control_layout.addWidget(select_none_btn)
-
-        # Selection mode toggle (single vs multi)
-        selection_mode_checkbox = QCheckBox('Single Select')
-        selection_mode_checkbox.setToolTip('Toggle between single and multiple device selection modes')
-        try:
-            selection_mode_checkbox.toggled.connect(lambda checked: main_window.handle_selection_mode_toggle(checked))
-        except Exception:  # pragma: no cover - compatibility
-            pass
-        control_layout.addWidget(selection_mode_checkbox)
-
-        device_layout.addLayout(control_layout)
-
-        # Selection summary and helper hint
-        selection_summary_label = QLabel('Selected 0 of 0 · Active: None')
-        selection_summary_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        selection_summary_label.setStyleSheet('font-weight: 600;')
-
-        hint_label = QLabel('Tip: Use the checkboxes for multi-select. Toggle a device last to mark it active for single-device actions.')
-        hint_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        hint_label.setWordWrap(True)
-        hint_label.setStyleSheet('color: #666666; font-size: 11px; margin-top: 2px;')
-
-        selection_container = QVBoxLayout()
-        selection_container.setContentsMargins(0, 6, 0, 6)
-        selection_container.addWidget(selection_summary_label)
-        selection_container.addWidget(hint_label)
-
-        device_layout.addLayout(selection_container)
-
-        device_table = DeviceTableWidget()
-        device_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        device_table.list_context_menu_requested.connect(main_window.show_device_list_context_menu)
-
+        # Empty state label (hidden inside stack)
         no_devices_label = QLabel('No devices found')
         no_devices_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         no_devices_label.setWordWrap(True)
@@ -572,21 +620,63 @@ class PanelsManager(QObject):
         device_stack = QStackedWidget()
         device_stack.setObjectName('device_list_stack')
         device_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        device_stack.addWidget(device_table)
+        device_stack.addWidget(device_list)
         device_stack.addWidget(no_devices_label)
-        device_stack.setCurrentWidget(device_table)
+        device_stack.setCurrentWidget(device_list)
 
         device_layout.addWidget(device_stack)
 
+        # Connect expand button to device list
+        def on_expand_toggle():
+            is_expanded = device_list.toggle_expand_all()
+            # Update button icon: ⬇ when expanded (can collapse), ⬆ when collapsed (can expand)
+            expand_btn.setText('\u2b07' if is_expanded else '\u2b06')
+            expand_btn.setToolTip('Collapse all' if is_expanded else 'Expand all')
+
+        expand_btn.clicked.connect(on_expand_toggle)
+
         parent.addWidget(device_widget)
 
-        # Return references to components that need to be accessed by main window
+        # ============================================================
+        # Backward compatibility: Create hidden legacy components
+        # ============================================================
+        # Hidden checkbox for compatibility with existing code
+        selection_mode_checkbox = QCheckBox('Single Select')
+        selection_mode_checkbox.setVisible(False)
+        selection_mode_checkbox.toggled.connect(single_mode_action.setChecked)
+        single_mode_action.toggled.connect(selection_mode_checkbox.setChecked)
+
+        # Hidden buttons for compatibility
+        select_all_btn = QPushButton('Select All')
+        select_all_btn.setVisible(False)
+        select_none_btn = QPushButton('Select None')
+        select_none_btn.setVisible(False)
+
+        # Legacy table widget (for backward compatibility with controller)
+        device_table = DeviceTableWidget()
+        device_table.setVisible(False)
+
+        # Hidden hint label for compatibility
+        hint_label = QLabel('')
+        hint_label.setVisible(False)
+
+        # Return references to components
         return {
+            # New components
             'title_label': title_label,
+            'subtitle_label': subtitle_label,
+            'filter_bar': filter_bar,
+            'device_list': device_list,
+            'search_field': search_field,
+            'refresh_btn': refresh_btn,
+            'expand_btn': expand_btn,
+            'menu_btn': menu_btn,
+            'single_mode_action': single_mode_action,
+            # Legacy compatibility (some hidden)
             'device_table': device_table,
             'no_devices_label': no_devices_label,
             'device_panel_stack': device_stack,
-            'selection_summary_label': selection_summary_label,
+            'selection_summary_label': subtitle_label,  # Reuse subtitle
             'selection_hint_label': hint_label,
             'selection_mode_checkbox': selection_mode_checkbox,
             'select_all_btn': select_all_btn,

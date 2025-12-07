@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QStackedWidget
 
 from utils import adb_models, adb_tools, common
 from ui.device_table_widget import DeviceTableWidget
+from ui.components.expandable_device_list import ExpandableDeviceList
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -118,9 +119,16 @@ class DeviceListController:
     def __init__(self, main_window: "WindowMain") -> None:
         self.window = main_window
         self.table: Optional[DeviceTableWidget] = None
+        self.device_list: Optional[ExpandableDeviceList] = None
         self._syncing_selection = False
         self._captured_sort: Optional[tuple[int, Qt.SortOrder]] = None
 
+        # Try to attach the new device list component
+        device_list = getattr(main_window, 'device_list', None)
+        if isinstance(device_list, ExpandableDeviceList):
+            self.attach_device_list(device_list)
+
+        # Legacy: attach table if available
         table = getattr(main_window, 'device_table', None)
         if isinstance(table, DeviceTableWidget):
             self.attach_table(table)
@@ -153,27 +161,73 @@ class DeviceListController:
         self.table.device_context_menu_requested.connect(self._on_table_device_context_menu)
         self._captured_sort = self.table.get_sort_indicator()
 
+    def attach_device_list(self, device_list: ExpandableDeviceList) -> None:
+        """Attach the new expandable device list component."""
+        if self.device_list is device_list:
+            return
+
+        if self.device_list is not None:
+            try:
+                self.device_list.selection_changed.disconnect(self._on_device_list_selection_changed)
+            except TypeError:
+                pass
+            try:
+                self.device_list.context_menu_requested.disconnect(self._on_device_list_context_menu)
+            except TypeError:
+                pass
+
+        self.device_list = device_list
+        self.device_list.selection_changed.connect(self._on_device_list_selection_changed)
+        self.device_list.context_menu_requested.connect(self._on_device_list_context_menu)
+
+    def _on_device_list_selection_changed(self, serials: List[str]) -> None:
+        """Handle selection changes from the new device list."""
+        if self._syncing_selection:
+            return
+
+        self.window.device_selection_manager.set_selected_serials(serials)
+        active = serials[-1] if serials else None
+        if active:
+            self.window.device_selection_manager.set_active_serial(active)
+
+        self.update_selection_count()
+
+    def _on_device_list_context_menu(self, position: QPoint, serial: str) -> None:
+        """Handle context menu requests from the new device list."""
+        if self.device_list is None:
+            return
+        self.window.show_device_context_menu(position, serial, self.device_list)
+
     # ------------------------------------------------------------------
     # Public API used by WindowMain
     # ------------------------------------------------------------------
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]) -> None:
         """Update the device list display with the current device dictionary."""
         self.window.device_dict = device_dict
-        if self.table is None:
-            logger.warning('Device table not attached; skipping update')
-            return
 
         selected_serials = self.window.device_selection_manager.prune_selection(device_dict.keys())
         active_serial = self.window.device_selection_manager.get_active_serial()
 
         filtered_devices = self._get_filtered_sorted_devices(device_dict)
-        sort_indicator = self._captured_sort or self.table.get_sort_indicator()
 
         logger.debug('Rendering %s devices (%s visible after search)', len(device_dict), len(filtered_devices))
 
-        self.table.update_devices(filtered_devices)
-        self.table.restore_sort_indicator(*sort_indicator)
-        self._synchronize_ui_selection(selected_serials, active_serial)
+        # Update the new expandable device list
+        if self.device_list is not None:
+            self._syncing_selection = True
+            try:
+                self.device_list.update_devices(filtered_devices)
+                self.device_list.set_selected_serials(selected_serials, active_serial)
+            finally:
+                self._syncing_selection = False
+
+        # Legacy: Update table widget if attached
+        if self.table is not None:
+            sort_indicator = self._captured_sort or self.table.get_sort_indicator()
+            self.table.update_devices(filtered_devices)
+            self.table.restore_sort_indicator(*sort_indicator)
+            self._synchronize_ui_selection(selected_serials, active_serial)
+
         self._refresh_check_devices()
         self._update_empty_state(len(device_dict), len(filtered_devices))
         self.update_selection_count()
@@ -234,25 +288,35 @@ class DeviceListController:
         visible_count = self._visible_row_count()
         search_text = self.window.device_search_manager.get_search_text()
 
-        if search_text:
-            title_text = f'Connected Devices ({visible_count}/{total_count}) - Selected: {selected_count}'
+        # Build active device label
+        if active_serial and active_serial in self.window.device_dict:
+            device = self.window.device_dict[active_serial]
+            active_label = f'{device.device_model} ({active_serial[:8]}...)'
+        elif active_serial:
+            active_label = active_serial
         else:
-            title_text = f'Connected Devices ({total_count}) - Selected: {selected_count}'
+            active_label = 'None'
+
+        # New compact title format: "X Devices • Y Selected"
+        if search_text:
+            title_text = f'{visible_count}/{total_count} Devices \u2022 {selected_count} Selected'
+        else:
+            title_text = f'{total_count} Devices \u2022 {selected_count} Selected'
 
         if hasattr(self.window, 'title_label') and self.window.title_label is not None:
             self.window.title_label.setText(title_text)
 
+        # Update subtitle (new) or selection_summary_label (legacy)
+        subtitle_text = f'Active: {active_label}'
+        if hasattr(self.window, 'subtitle_label') and self.window.subtitle_label is not None:
+            self.window.subtitle_label.setText(subtitle_text)
+
         if hasattr(self.window, 'selection_summary_label') and self.window.selection_summary_label is not None:
-            if active_serial and active_serial in self.window.device_dict:
-                device = self.window.device_dict[active_serial]
-                active_label = f'{device.device_model} ({active_serial[:8]}...)'
-            elif active_serial:
-                active_label = active_serial
-            else:
-                active_label = 'None'
-            self.window.selection_summary_label.setText(
-                f'Selected {selected_count} of {total_count} · Active: {active_label}'
-            )
+            # Legacy format for backward compatibility
+            if self.window.selection_summary_label != getattr(self.window, 'subtitle_label', None):
+                self.window.selection_summary_label.setText(
+                    f'Selected {selected_count} of {total_count} \u00b7 Active: {active_label}'
+                )
 
         # Update hint label according to selection mode
         if hasattr(self.window, 'selection_hint_label') and self.window.selection_hint_label is not None:

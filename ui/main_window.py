@@ -408,8 +408,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Control buttons references for selection mode dependent state
         self.select_all_btn = device_components.get('select_all_btn')
         self.select_none_btn = device_components.get('select_none_btn')
+        # New components for modern UI
+        self.device_list = device_components.get('device_list')
+        self.filter_bar = device_components.get('filter_bar')
+        self.subtitle_label = device_components.get('subtitle_label')
 
-        self.device_list_controller.attach_table(self.device_table)
+        # Attach new device list to controller (if available)
+        if self.device_list is not None:
+            self.device_list_controller.attach_device_list(self.device_list)
+        # Legacy: attach table if available
+        if self.device_table is not None:
+            self.device_list_controller.attach_table(self.device_table)
         self.device_list_controller.update_selection_count()
 
         # Create tools panel via controller
@@ -905,6 +914,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def on_sort_changed(self, sort_mode: str):
         self.device_list_controller.on_sort_changed(sort_mode)
+
+    def on_filter_changed(self, filters: dict):
+        """Handle filter chip changes."""
+        self.device_search_manager.set_filters(filters)
+        self.device_list_controller.filter_and_sort_devices()
+
+    def on_device_selection_changed(self, serials: list):
+        """Handle selection changes from the new device list component."""
+        self.device_selection_manager.set_selected_serials(serials)
+        active = serials[-1] if serials else None
+        if active:
+            self.device_selection_manager.set_active_serial(active)
+        self.device_list_controller.update_selection_count()
 
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""

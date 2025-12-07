@@ -608,6 +608,187 @@ class StyleManager:
                 ),
             ),
         ),
+        "filter_chip": (
+            (
+                "QPushButton",
+                (
+                    ("background-color", "{panel_background}"),
+                    ("border", "1px solid {border}"),
+                    ("border-radius", "16px"),
+                    ("padding", "4px 12px"),
+                    ("font-size", "12px"),
+                    ("font-weight", "500"),
+                    ("color", "{text_secondary}"),
+                    ("min-height", "28px"),
+                ),
+            ),
+            (
+                "QPushButton:hover",
+                (
+                    ("background-color", "{background_hover}"),
+                    ("border-color", "{secondary}"),
+                ),
+            ),
+            (
+                "QPushButton[active=true]",
+                (
+                    ("background-color", "{secondary}"),
+                    ("border-color", "{secondary}"),
+                    ("color", "{status_text_on_dark}"),
+                ),
+            ),
+            (
+                "QPushButton[active=true]:hover",
+                (
+                    ("background-color", "{secondary_hover}"),
+                ),
+            ),
+        ),
+        "filter_clear_btn": (
+            (
+                "QPushButton",
+                (
+                    ("background-color", "transparent"),
+                    ("border", "none"),
+                    ("color", "{text_hint}"),
+                    ("font-size", "11px"),
+                    ("padding", "4px 8px"),
+                ),
+            ),
+            (
+                "QPushButton:hover",
+                (
+                    ("color", "{danger}"),
+                ),
+            ),
+        ),
+        "device_row": (
+            (
+                "QFrame#device_row",
+                (
+                    ("background-color", "{panel_background}"),
+                    ("border", "none"),
+                ),
+            ),
+            (
+                "QFrame#device_row[active=true]",
+                (
+                    ("background-color", "{tile_primary_bg}"),
+                ),
+            ),
+            (
+                "QFrame#device_row_main",
+                (
+                    ("background-color", "transparent"),
+                ),
+            ),
+            (
+                "QFrame#device_row_main:hover",
+                (
+                    ("background-color", "{background_hover}"),
+                ),
+            ),
+            (
+                "QFrame#device_row_separator",
+                (
+                    ("background-color", "{border}"),
+                ),
+            ),
+        ),
+        "device_detail_panel": (
+            (
+                "QFrame#device_detail_panel",
+                (
+                    ("background-color", "{tile_bg}"),
+                    ("border", "1px solid {tile_border}"),
+                    ("border-radius", "8px"),
+                    ("margin", "4px 8px 8px 32px"),
+                ),
+            ),
+            (
+                "QLabel#detail_name_label",
+                (
+                    ("color", "{text_hint}"),
+                    ("font-size", "11px"),
+                ),
+            ),
+            (
+                "QLabel#detail_value_label",
+                (
+                    ("color", "{text_primary}"),
+                    ("font-size", "11px"),
+                ),
+            ),
+        ),
+        "device_expand_btn": (
+            (
+                "QToolButton#device_expand_btn",
+                (
+                    ("background-color", "transparent"),
+                    ("border", "none"),
+                    ("color", "{text_hint}"),
+                    ("font-size", "10px"),
+                    ("padding", "4px"),
+                ),
+            ),
+            (
+                "QToolButton#device_expand_btn:hover",
+                (
+                    ("color", "{text_primary}"),
+                    ("background-color", "{background_hover}"),
+                    ("border-radius", "4px"),
+                ),
+            ),
+        ),
+        "icon_button": (
+            (
+                "QToolButton",
+                (
+                    ("background-color", "{panel_background}"),
+                    ("border", "1px solid {border}"),
+                    ("border-radius", "4px"),
+                    ("padding", "4px 8px"),
+                    ("font-size", "14px"),
+                ),
+            ),
+            (
+                "QToolButton:hover",
+                (
+                    ("background-color", "{background_hover}"),
+                    ("border-color", "{secondary}"),
+                ),
+            ),
+            (
+                "QToolButton:pressed",
+                (
+                    ("background-color", "{tile_bg}"),
+                ),
+            ),
+            (
+                "QToolButton::menu-indicator",
+                (
+                    ("image", "none"),
+                    ("width", "0px"),
+                ),
+            ),
+        ),
+        "compact_header": (
+            (
+                "QLabel#compact_header_title",
+                (
+                    ("font-size", "14px"),
+                    ("font-weight", "bold"),
+                    ("color", "{text_primary}"),
+                ),
+            ),
+            (
+                "QLabel#compact_header_subtitle",
+                (
+                    ("font-size", "11px"),
+                    ("color", "{text_hint}"),
+                ),
+            ),
+        ),
     }
 
     @classmethod
@@ -992,6 +1173,41 @@ class StyleManager:
     def get_action_button_style(cls) -> str:
         """獲取動作按鈕樣式（用於對話框中的按鈕）"""
         return cls._get_static_style("action_button")
+
+    @classmethod
+    def get_filter_chip_style(cls) -> str:
+        """Get filter chip button style."""
+        return cls._get_static_style("filter_chip")
+
+    @classmethod
+    def get_filter_clear_btn_style(cls) -> str:
+        """Get filter clear button style."""
+        return cls._get_static_style("filter_clear_btn")
+
+    @classmethod
+    def get_device_row_style(cls) -> str:
+        """Get device row container style."""
+        return cls._get_static_style("device_row")
+
+    @classmethod
+    def get_device_detail_panel_style(cls) -> str:
+        """Get device detail panel style."""
+        return cls._get_static_style("device_detail_panel")
+
+    @classmethod
+    def get_device_expand_btn_style(cls) -> str:
+        """Get device expand button style."""
+        return cls._get_static_style("device_expand_btn")
+
+    @classmethod
+    def get_icon_button_style(cls) -> str:
+        """Get icon button style."""
+        return cls._get_static_style("icon_button")
+
+    @classmethod
+    def get_compact_header_style(cls) -> str:
+        """Get compact header style."""
+        return cls._get_static_style("compact_header")
 
     @classmethod
     def apply_button_style(cls, button, style: ButtonStyle, fixed_height: int = 36):

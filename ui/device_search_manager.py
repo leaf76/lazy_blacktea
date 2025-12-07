@@ -2,8 +2,9 @@
 
 from difflib import SequenceMatcher
 import re
-from typing import List, Dict, Tuple
+from typing import Any, Callable, List, Dict, Optional, Tuple
 from utils import adb_models
+from ui.sort_registry import get_sort_registry, SortField
 
 
 class DeviceSearchManager:
@@ -253,43 +254,82 @@ class DeviceSearchManager:
         return device_scores
 
     def sort_devices(self, devices: List[adb_models.DeviceInfo], sort_mode: str) -> List[adb_models.DeviceInfo]:
-        """Sort devices by the specified mode."""
+        """Sort devices by the specified mode using the sort registry.
+
+        The sort registry allows automatic extension of sort capabilities.
+        New sort fields can be registered without modifying this method.
+
+        Args:
+            devices: List of devices to sort
+            sort_mode: Sort mode name, optionally with ':desc' or ':asc' suffix
+
+        Returns:
+            Sorted list of devices
+        """
+        if not devices:
+            return devices
+
+        # Parse sort mode and direction
+        explicit_direction = False
         descending = False
         if sort_mode and ':' in sort_mode:
             base_mode, direction = sort_mode.split(':', 1)
             sort_mode = base_mode
+            explicit_direction = True
             descending = direction.lower().startswith('desc')
 
-        if sort_mode == "name":
-            result = sorted(devices, key=lambda d: d.device_model or "")
-        elif sort_mode == "serial":
-            result = sorted(devices, key=lambda d: d.device_serial_num or "")
-        elif sort_mode == "status":
-            result = sorted(devices, key=lambda d: self._get_device_operation_status(d.device_serial_num) or "idle")
-        elif sort_mode == "selected":
-            result = sorted(devices, key=lambda d: not self._is_device_selected(d.device_serial_num))
-        elif sort_mode == "wifi":
-            result = sorted(
-                devices,
-                key=lambda d: (
-                    not bool(d.wifi_is_on),
-                    d.device_model or "",
-                ),
-            )
-        elif sort_mode == "bt":
-            result = sorted(
-                devices,
-                key=lambda d: (
-                    not bool(d.bt_is_on),
-                    d.device_model or "",
-                ),
-            )
-        else:
-            result = devices
+        # Get sort field from registry
+        registry = get_sort_registry()
+        sort_field = registry.get(sort_mode)
 
-        if descending:
-            return list(reversed(result))
-        return result
+        if sort_field is None:
+            # Unknown sort mode, return unsorted
+            return devices
+
+        # Build context for context-dependent sort fields
+        context = self._build_sort_context()
+
+        # Create sort key function
+        def get_key(device: adb_models.DeviceInfo) -> Any:
+            return sort_field.get_sort_key(device, context)
+
+        # Determine final sort direction
+        # If explicit direction specified, use it; otherwise use field's default
+        reverse = descending if explicit_direction else sort_field.reverse_default
+
+        return sorted(devices, key=get_key, reverse=reverse)
+
+    def _build_sort_context(self) -> Dict[str, Callable]:
+        """Build context dictionary for context-dependent sort fields.
+
+        Returns:
+            Dictionary mapping sort field names to context functions
+        """
+        return {
+            'status': lambda d: self._get_device_operation_status(d.device_serial_num) or "idle",
+            'selected': lambda d: self._is_device_selected(d.device_serial_num),
+        }
+
+    def get_available_sort_modes(self) -> List[Dict[str, str]]:
+        """Get list of available sort modes from the registry.
+
+        Returns:
+            List of dicts with 'name' and 'label' keys
+        """
+        registry = get_sort_registry()
+        return [
+            {'name': field.name, 'label': field.label}
+            for field in registry.get_all()
+        ]
+
+    def register_sort_field(self, sort_field: SortField) -> None:
+        """Register a custom sort field.
+
+        Args:
+            field: SortField configuration to register
+        """
+        registry = get_sort_registry()
+        registry.register(sort_field)
 
     def search_and_sort_devices(self, devices: List[adb_models.DeviceInfo],
                               query: str = None, sort_mode: str = None) -> List[adb_models.DeviceInfo]:
@@ -347,3 +387,119 @@ class DeviceSearchManager:
     def get_sort_mode(self) -> str:
         """Get the current sort mode."""
         return self.current_sort_mode
+
+    # ------------------------------------------------------------------
+    # Quick filter chip support
+    # ------------------------------------------------------------------
+    def set_filter(self, name: str, value: Any) -> None:
+        """Set a quick filter value.
+
+        Args:
+            name: Filter name ('wifi', 'bt', 'selected', 'recording', 'api')
+            value: Filter value (True/False for toggle, int for API level, None to clear)
+        """
+        if not hasattr(self, 'active_filters'):
+            self.active_filters: Dict[str, Any] = {}
+
+        if value is None:
+            self.active_filters.pop(name, None)
+        else:
+            self.active_filters[name] = value
+
+    def set_filters(self, filters: Dict[str, Any]) -> None:
+        """Set multiple filters at once."""
+        if not hasattr(self, 'active_filters'):
+            self.active_filters = {}
+        self.active_filters = {k: v for k, v in filters.items() if v is not None}
+
+    def clear_filters(self) -> None:
+        """Clear all quick filters."""
+        if hasattr(self, 'active_filters'):
+            self.active_filters.clear()
+
+    def get_active_filters(self) -> Dict[str, Any]:
+        """Get currently active filters."""
+        if not hasattr(self, 'active_filters'):
+            self.active_filters = {}
+        return dict(self.active_filters)
+
+    def apply_filters(self, devices: List[adb_models.DeviceInfo]) -> List[adb_models.DeviceInfo]:
+        """Apply quick filters to device list.
+
+        Args:
+            devices: List of devices to filter
+
+        Returns:
+            Filtered list of devices
+        """
+        if not hasattr(self, 'active_filters') or not self.active_filters:
+            return devices
+
+        result = []
+        for device in devices:
+            if self._device_matches_filters(device):
+                result.append(device)
+        return result
+
+    def _device_matches_filters(self, device: adb_models.DeviceInfo) -> bool:
+        """Check if a device matches all active filters."""
+        if not hasattr(self, 'active_filters'):
+            return True
+
+        for name, value in self.active_filters.items():
+            if value is None:
+                continue
+
+            if name == 'wifi':
+                if device.wifi_is_on != value:
+                    return False
+            elif name == 'bt':
+                if device.bt_is_on != value:
+                    return False
+            elif name == 'selected':
+                if value and not self._is_device_selected(device.device_serial_num):
+                    return False
+            elif name == 'recording':
+                if value:
+                    status = self._get_device_recording_status(device.device_serial_num)
+                    if not status:
+                        return False
+            elif name == 'api':
+                try:
+                    api_level = int(device.android_api_level or 0)
+                    if api_level < value:
+                        return False
+                except (ValueError, TypeError):
+                    return False
+
+        return True
+
+    def search_filter_and_sort_devices(
+        self,
+        devices: List[adb_models.DeviceInfo],
+        query: str = None,
+        sort_mode: str = None,
+    ) -> List[adb_models.DeviceInfo]:
+        """Apply search, quick filters, and sorting to device list.
+
+        This is an enhanced version of search_and_sort_devices that also
+        applies quick filters from filter chips.
+        """
+        if query is None:
+            query = self.current_search_text
+        if sort_mode is None:
+            sort_mode = self.current_sort_mode
+
+        self.current_search_text = query
+        self.current_sort_mode = sort_mode
+
+        # Step 1: Apply quick filters
+        filtered_devices = self.apply_filters(devices)
+
+        # Step 2: Apply text search
+        if query:
+            device_scores = self.filter_devices(filtered_devices, query)
+            filtered_devices = [device for device, score in device_scores]
+
+        # Step 3: Sort the results
+        return self.sort_devices(filtered_devices, sort_mode)
