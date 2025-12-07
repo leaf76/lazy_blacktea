@@ -218,6 +218,7 @@ class DeviceManager(QObject):
     device_found = pyqtSignal(str, object)  # serial, device_info
     device_lost = pyqtSignal(str)  # serial
     status_updated = pyqtSignal(str)  # status messages
+    unauthorized_devices_detected = pyqtSignal(list)  # list of unauthorized serial numbers
 
     def __init__(self, parent_widget):
         if not PYQT6_AVAILABLE or AsyncDeviceManager is None:
@@ -242,6 +243,9 @@ class DeviceManager(QObject):
         self.async_device_manager.device_detailed_loaded.connect(self._on_device_detailed_loaded)
         self.async_device_manager.basic_devices_ready.connect(self._on_basic_devices_ready)
         self.async_device_manager.all_devices_ready.connect(self._on_all_devices_ready)
+        self.async_device_manager.unauthorized_devices_detected.connect(
+            self._on_unauthorized_devices_detected
+        )
 
     def start_device_refresh(self):
         """Start device refresh using AsyncDeviceManager."""
@@ -326,6 +330,18 @@ class DeviceManager(QObject):
 
         # 觸發主程式UI更新
         self.update_device_list(device_dict)
+
+    def _on_unauthorized_devices_detected(self, unauthorized_serials: List[str]):
+        """Handle unauthorized devices detection and notify user."""
+        if not unauthorized_serials:
+            return
+
+        logger.warning(
+            'Unauthorized devices detected: %s. User should authorize USB debugging.',
+            unauthorized_serials
+        )
+        # Forward the signal so main window can display a warning
+        self.unauthorized_devices_detected.emit(unauthorized_serials)
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """Update the device list display without rebuilding UI."""

@@ -471,6 +471,7 @@ class AsyncDeviceManager(QObject):
     device_load_progress = pyqtSignal(int, int, str)  # current, total, message
     basic_devices_ready = pyqtSignal(dict)  # 基本信息加載完成
     all_devices_ready = pyqtSignal(dict)  # 所有信息加載完成
+    unauthorized_devices_detected = pyqtSignal(list)  # list of unauthorized serial numbers
 
     def __init__(self, parent=None, tracker_factory: Optional[Callable[[], Optional[TrackDevicesWorker]]] = None):
         super().__init__(parent)
@@ -482,6 +483,7 @@ class AsyncDeviceManager(QObject):
         self._tracker_factory = tracker_factory or (lambda: TrackDevicesWorker(parent=self))
         self.tracked_device_statuses: Dict[str, str] = {}
         self._serial_aliases: Dict[str, str] = {}
+        self._unauthorized_serials: Set[str] = set()  # Track unauthorized devices
         self._shutting_down = False
         self._pending_discovery: Optional[tuple[bool, bool, Optional[List[str]]]] = None
         self._pending_discovery_timer = QTimer(self)
@@ -1030,6 +1032,21 @@ class AsyncDeviceManager(QObject):
             if status in TRACKER_READY_STATUSES and serial not in removed_serials
         }
 
+        # Detect unauthorized devices and emit signal if changed
+        current_unauthorized = {
+            serial for serial, status in last_status_map.items()
+            if status == ADBConstants.DEVICE_STATE_UNAUTHORIZED
+            and serial not in removed_serials
+        }
+        if current_unauthorized != self._unauthorized_serials:
+            self._unauthorized_serials = current_unauthorized
+            if current_unauthorized:
+                logger.warning(
+                    'Unauthorized devices detected: %s',
+                    sorted(current_unauthorized)
+                )
+                self.unauthorized_devices_detected.emit(sorted(current_unauthorized))
+
         ready_serials = set(self.tracked_device_statuses.keys())
 
         removal_detected = bool(removed_serials)
@@ -1089,3 +1106,11 @@ class AsyncDeviceManager(QObject):
             return True
 
         return serial in self.last_discovered_serials
+
+    def get_unauthorized_serials(self) -> List[str]:
+        """Return list of currently unauthorized device serials."""
+        return sorted(self._unauthorized_serials)
+
+    def is_device_unauthorized(self, serial: str) -> bool:
+        """Check if a specific device is in unauthorized state."""
+        return serial in self._unauthorized_serials

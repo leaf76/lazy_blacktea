@@ -22,6 +22,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut
 
+from ui.collapsible_panel import CollapsiblePanel
+
 try:
     from utils import adb_tools
 except Exception:  # pragma: no cover - fallback when utils are unavailable
@@ -69,99 +71,6 @@ PERFORMANCE_PRESETS = {
         'max_buffer_size': 160,
     }
 }
-
-
-class CollapsiblePanel(QWidget):
-    """A simple collapsible panel controlled by a header button.
-
-    - The header is a button with a disclosure indicator.
-    - Clicking toggles the visibility of the content widget.
-    """
-
-    def __init__(self, title: str, content: Optional[QWidget] = None, *, collapsed: bool = False, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._collapsed = collapsed
-        self._content_widget: Optional[QWidget] = None
-
-        self._root = QVBoxLayout(self)
-        self._root.setContentsMargins(0, 0, 0, 0)
-        self._root.setSpacing(4)
-
-        self._toggle_btn = QPushButton(self._title_text(title))
-        self._toggle_btn.setCheckable(True)
-        self._toggle_btn.setChecked(not collapsed)
-        self._toggle_btn.setFlat(True)
-        self._toggle_btn.clicked.connect(self._on_toggled)
-        self._toggle_btn.setStyleSheet(
-            """
-            QPushButton {
-                text-align: left;
-                padding: 6px 8px;
-                color: #d0d3d4;
-                background-color: #2b2f33;
-                border: 1px solid #3e444a;
-                border-radius: 6px;
-                font-weight: 600;
-            }
-            QPushButton:pressed {
-                background-color: #25323a;
-            }
-            """
-        )
-        self._root.addWidget(self._toggle_btn)
-
-        self._content_container = QWidget()
-        self._content_container.setObjectName('collapsible_content')
-        self._content_container.setStyleSheet(
-            """
-            QWidget#collapsible_content {
-                background-color: #2c2c2c;
-                border: 1px solid #3e3e3e;
-                border-radius: 6px;
-            }
-            """
-        )
-        self._content_layout = QVBoxLayout(self._content_container)
-        self._content_layout.setContentsMargins(8, 8, 8, 8)
-        self._content_layout.setSpacing(6)
-        self._root.addWidget(self._content_container)
-
-        if content is not None:
-            self.set_content(content)
-
-        self._apply_collapsed_state()
-
-    def _title_text(self, title: str) -> str:
-        return ('▾ ' if not self._collapsed else '▸ ') + title
-
-    def _on_toggled(self):
-        self._collapsed = not self._toggle_btn.isChecked()
-        self._apply_collapsed_state()
-
-    def _apply_collapsed_state(self):
-        self._content_container.setVisible(not self._collapsed)
-        # Update disclosure indicator
-        text = self._toggle_btn.text()
-        plain = text[2:] if len(text) > 2 else text
-        self._toggle_btn.setText(self._title_text(plain))
-
-    def set_content(self, widget: QWidget) -> None:
-        # Clear previous
-        while self._content_layout.count():
-            item = self._content_layout.takeAt(0)
-            if (w := item.widget()) is not None:
-                w.setParent(None)
-        self._content_widget = widget
-        self._content_layout.addWidget(widget)
-        self._apply_collapsed_state()
-
-    def set_collapsed(self, collapsed: bool) -> None:
-        self._collapsed = bool(collapsed)
-        self._toggle_btn.setChecked(not self._collapsed)
-        self._apply_collapsed_state()
-
-    def is_collapsed(self) -> bool:
-        return self._collapsed
 
 
 @dataclass(frozen=True)

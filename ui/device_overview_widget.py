@@ -12,21 +12,31 @@ from PyQt6.QtWidgets import (
     QLabel,
     QHBoxLayout,
     QPushButton,
-    QFrame,
     QGridLayout,
     QSizePolicy,
     QScrollArea,
     QTextEdit,
+    QFrame,
 )
 
 from utils import adb_models
 from ui.style_manager import StyleManager, LabelStyle, PanelButtonVariant
+from ui.collapsible_panel import CollapsiblePanel
 
 
 class DeviceOverviewWidget(QWidget):
     """Provides an always-visible summary for the active device."""
 
     _PLACEHOLDER_TEXT = 'Select a device from the list to view details.'
+
+    # Default collapse states: Device and Battery expanded, others collapsed
+    _DEFAULT_COLLAPSE_STATES = {
+        'device': False,      # Expanded
+        'connectivity': True,  # Collapsed
+        'hardware': True,      # Collapsed
+        'battery': False,      # Expanded
+        'status': True,        # Collapsed
+    }
 
     def __init__(self, main_window) -> None:
         super().__init__(main_window)
@@ -36,6 +46,8 @@ class DeviceOverviewWidget(QWidget):
         self._summary_labels: Dict[str, QLabel] = {}
         self._current_detail_text: str = self._PLACEHOLDER_TEXT
         self._last_summary_signature: Optional[Tuple] = None
+        self._collapsible_panels: Dict[str, CollapsiblePanel] = {}
+        self._collapse_states: Dict[str, bool] = dict(self._DEFAULT_COLLAPSE_STATES)
 
         self._build_ui()
         self.set_overview(None, None, None)
@@ -43,12 +55,14 @@ class DeviceOverviewWidget(QWidget):
     def _build_ui(self) -> None:
         palette = self._palette()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 16, 14, 16)
-        layout.setSpacing(14)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
 
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
+        # Title row with Refresh button
         title_row = QHBoxLayout()
+        title_row.setSpacing(8)
         title_label = QLabel('Active Device Overview')
         title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         StyleManager.apply_label_style(title_label, LabelStyle.HEADER)
@@ -62,114 +76,78 @@ class DeviceOverviewWidget(QWidget):
         StyleManager.apply_panel_button_style(
             self.refresh_button,
             PanelButtonVariant.REFRESH,
-            fixed_height=32,
-            min_width=96,
+            fixed_height=28,
+            min_width=80,
         )
         self.refresh_button.clicked.connect(self._window.refresh_active_device_overview)
         title_row.addWidget(self.refresh_button)
 
         layout.addLayout(title_row)
 
-        scroll_container = QFrame()
-        scroll_container.setObjectName('device_overview_summary_container')
-        StyleManager.apply_panel_frame(scroll_container)
-        self._apply_dark_panel(scroll_container)
-        container_layout = QVBoxLayout(scroll_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
+        # Device header label
+        self._device_header_label = QLabel('')
+        self._device_header_label.setObjectName('device_overview_header')
+        StyleManager.apply_label_style(self._device_header_label, LabelStyle.SUBHEADER)
+        self._apply_device_header_style(self._device_header_label)
+        layout.addWidget(self._device_header_label)
 
-        summary_scroll = QScrollArea()
-        summary_scroll.setWidgetResizable(True)
-        summary_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        summary_scroll.setObjectName('device_overview_summary_scroll')
+        # Unauthorized warning banner (hidden by default)
+        self._unauthorized_banner = QFrame()
+        self._unauthorized_banner.setObjectName('unauthorized_warning_banner')
+        self._unauthorized_banner.setStyleSheet("""
+            QFrame#unauthorized_warning_banner {
+                background-color: #fef3c7;
+                border: 1px solid #f59e0b;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        banner_layout = QHBoxLayout(self._unauthorized_banner)
+        banner_layout.setContentsMargins(8, 6, 8, 6)
+        banner_layout.setSpacing(8)
 
-        summary_frame = QFrame()
-        summary_frame.setObjectName('device_overview_summary')
-        summary_frame.setStyleSheet(
-            f"""
-            #device_overview_summary {{
-                background-color: {palette['surface_alt']};
-                border: 1px solid {palette['panel_border']};
-                border-radius: 12px;
+        warning_icon = QLabel('⚠️')
+        warning_icon.setStyleSheet('font-size: 14px;')
+        banner_layout.addWidget(warning_icon)
+
+        warning_text = QLabel('Device unauthorized. Please allow USB debugging on the device.')
+        warning_text.setObjectName('unauthorized_warning_text')
+        warning_text.setStyleSheet("""
+            QLabel#unauthorized_warning_text {
+                color: #92400e;
+                font-size: 11px;
+                font-weight: 500;
+            }
+        """)
+        warning_text.setWordWrap(True)
+        banner_layout.addWidget(warning_text, 1)
+
+        self._unauthorized_banner.hide()
+        layout.addWidget(self._unauthorized_banner)
+
+        # Scroll area containing collapsible panels
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setObjectName('device_overview_scroll')
+        scroll_area.setStyleSheet(f"""
+            QScrollArea#device_overview_scroll {{
+                background-color: transparent;
+                border: none;
             }}
-            #device_overview_summary QLabel {{
-                color: {palette['text_primary']};
+            QScrollArea#device_overview_scroll > QWidget > QWidget {{
+                background-color: transparent;
             }}
-            #device_overview_summary QTextEdit {{
-                color: {palette['value_text']};
-                background-color: {palette['input_background']};
-                border: 1px solid {palette['input_border']};
-                border-radius: 8px;
-            }}
-            """
-        )
-        self._summary_layout = QVBoxLayout(summary_frame)
-        self._summary_layout.setContentsMargins(18, 16, 18, 16)
-        self._summary_layout.setSpacing(16)
+        """)
 
-        summary_scroll.setWidget(summary_frame)
-        container_layout.addWidget(summary_scroll)
+        scroll_content = QWidget()
+        scroll_content.setObjectName('device_overview_scroll_content')
+        self._scroll_layout = QVBoxLayout(scroll_content)
+        self._scroll_layout.setContentsMargins(0, 0, 0, 0)
+        self._scroll_layout.setSpacing(4)
 
-        layout.addWidget(scroll_container, 1)
-
-        tools_box = QFrame()
-        StyleManager.apply_panel_frame(tools_box)
-        self._apply_dark_panel(tools_box, highlight=True)
-        tools_layout = QVBoxLayout(tools_box)
-        tools_layout.setContentsMargins(16, 14, 16, 14)
-        tools_layout.setSpacing(10)
-
-        tools_header = QLabel('Quick Actions')
-        StyleManager.apply_label_style(tools_header, LabelStyle.SUBHEADER)
-        self._apply_subheader_label_palette(tools_header)
-        tools_layout.addWidget(tools_header)
-
-        button_grid = QGridLayout()
-        button_grid.setContentsMargins(0, 0, 0, 0)
-        button_grid.setHorizontalSpacing(12)
-        button_grid.setVerticalSpacing(10)
-        button_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self.logcat_button = QPushButton('Logcat')
-        self.logcat_button.setToolTip('View device logs')
-        StyleManager.apply_panel_button_style(self.logcat_button, PanelButtonVariant.PRIMARY)
-        self.logcat_button.clicked.connect(self._window.show_logcat)
-        button_grid.addWidget(self.logcat_button, 0, 0)
-
-        self.ui_inspector_button = QPushButton('Inspect Layout')
-        self.ui_inspector_button.setToolTip('Launch UI inspector')
-        StyleManager.apply_panel_button_style(
-            self.ui_inspector_button,
-            PanelButtonVariant.PRIMARY,
-        )
-        self.ui_inspector_button.clicked.connect(self._window.launch_ui_inspector)
-        button_grid.addWidget(self.ui_inspector_button, 0, 1)
-
-        self.bluetooth_button = QPushButton('Bluetooth Monitor')
-        self.bluetooth_button.setToolTip('Open Bluetooth monitor')
-        StyleManager.apply_panel_button_style(
-            self.bluetooth_button,
-            PanelButtonVariant.SECONDARY,
-        )
-        self.bluetooth_button.clicked.connect(self._window.monitor_bluetooth)
-        button_grid.addWidget(self.bluetooth_button, 1, 0)
-
-        self.copy_button = QPushButton('Copy Info')
-        self.copy_button.setToolTip('Copy overview details to clipboard')
-        StyleManager.apply_panel_button_style(
-            self.copy_button,
-            PanelButtonVariant.SECONDARY,
-        )
-        self.copy_button.clicked.connect(self._window.copy_active_device_overview)
-        button_grid.addWidget(self.copy_button, 1, 1)
-
-        button_grid.setColumnStretch(0, 1)
-        button_grid.setColumnStretch(1, 1)
-        button_grid.setRowStretch(0, 1)
-        button_grid.setRowStretch(1, 1)
-
-        tools_layout.addLayout(button_grid)
-        tools_layout.addStretch(1)
-        layout.addWidget(tools_box)
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area, 1)
 
     def get_active_serial(self) -> Optional[str]:
         """Return the serial currently displayed in the overview."""
@@ -190,6 +168,8 @@ class DeviceOverviewWidget(QWidget):
         if device is None or serial is None:
             self._active_model = ''
             self._current_detail_text = self._PLACEHOLDER_TEXT
+            self._device_header_label.setText('')
+            self._unauthorized_banner.hide()
             self._render_summary()
             self._set_controls_enabled(False)
             self._last_summary_signature = None
@@ -208,24 +188,49 @@ class DeviceOverviewWidget(QWidget):
             and self._current_detail_text == normalized_detail_text
             and self._last_summary_signature == summary_signature
         ):
+            # Still update unauthorized banner state even if content unchanged
+            self._update_unauthorized_banner(serial)
             return
 
         self._active_model = device.device_model or 'Unknown Device'
         truncated_serial = f'{serial[:8]}...' if len(serial) > 8 else serial
         header_text = f'{self._active_model} ({truncated_serial})'
+        self._device_header_label.setText(header_text)
 
-        self._render_summary(summary_sections, header_text=header_text)
+        self._update_unauthorized_banner(serial)
+        self._render_summary(summary_sections)
 
         self._current_detail_text = normalized_detail_text
         self._set_controls_enabled(True)
         self._last_summary_signature = summary_signature
 
+    def _update_unauthorized_banner(self, serial: Optional[str]) -> None:
+        """Show or hide the unauthorized warning banner based on device state."""
+        if serial is None:
+            self._unauthorized_banner.hide()
+            return
+
+        try:
+            device_manager = getattr(self._window, 'device_manager', None)
+            if device_manager is None:
+                self._unauthorized_banner.hide()
+                return
+
+            async_manager = getattr(device_manager, 'async_device_manager', None)
+            if async_manager is None:
+                self._unauthorized_banner.hide()
+                return
+
+            if async_manager.is_device_unauthorized(serial):
+                self._unauthorized_banner.show()
+            else:
+                self._unauthorized_banner.hide()
+        except Exception:
+            # Silently hide banner if check fails
+            self._unauthorized_banner.hide()
+
     def _set_controls_enabled(self, enabled: bool) -> None:
         self.refresh_button.setEnabled(enabled)
-        self.copy_button.setEnabled(enabled)
-        self.logcat_button.setEnabled(enabled)
-        self.ui_inspector_button.setEnabled(enabled)
-        self.bluetooth_button.setEnabled(enabled)
 
     def _palette(self) -> Dict[str, str]:
         """Return palette values aligned with the active StyleManager theme."""
@@ -234,17 +239,13 @@ class DeviceOverviewWidget(QWidget):
         tile_bg = colors.get('tile_bg', '#2E3449')
         tile_primary_bg = colors.get('tile_primary_bg', '#333A56')
         tile_primary_border = colors.get('tile_primary_border', '#55608C')
-        tile_primary_hover = colors.get('tile_primary_hover', '#3F4566')
         tile_border = colors.get('tile_border', '#454C63')
-        tile_hover = colors.get('tile_hover', '#3A4159')
         return {
             'panel_background': panel_bg,
             'panel_border': colors.get('panel_border', '#3E4455'),
             'surface_alt': tile_bg,
             'surface_highlight': tile_primary_bg,
-            'primary_hover': tile_primary_hover,
             'primary_border_active': tile_primary_border,
-            'secondary_hover': tile_hover,
             'secondary_border': tile_border,
             'text_primary': colors.get('text_primary', '#EAEAEA'),
             'text_secondary': colors.get('text_secondary', '#C8C8C8'),
@@ -254,30 +255,7 @@ class DeviceOverviewWidget(QWidget):
             'input_background': colors.get('input_background', tile_bg),
             'input_border': colors.get('input_border', tile_primary_border),
             'accent': colors.get('secondary', colors.get('text_primary', '#EAEAEA')),
-            'accent_hover': colors.get('secondary_hover', colors.get('secondary', '#64B5F6')),
-            'disabled_bg': colors.get('status_disabled_bg', '#2C3143'),
-            'disabled_text': colors.get('status_disabled_text', '#8088A0'),
-            'disabled_border': colors.get('status_disabled_border', '#3F465A'),
         }
-
-    def _apply_dark_panel(self, frame: QFrame, *, highlight: bool = False) -> None:
-        """Apply a dark, theme-aligned panel style to the given frame."""
-        object_name = frame.objectName() or f'panel_{id(frame)}'
-        frame.setObjectName(object_name)
-        palette = self._palette()
-        background = palette['surface_highlight'] if highlight else palette['panel_background']
-        frame.setStyleSheet(
-            f"""
-            #{object_name} {{
-                background-color: {background};
-                border: 1px solid {palette['panel_border']};
-                border-radius: 12px;
-            }}
-            #{object_name} QLabel {{
-                color: {palette['text_primary']};
-            }}
-            """
-        )
 
     def _apply_header_label_palette(self, label: QLabel) -> None:
         palette = self._palette()
@@ -287,53 +265,52 @@ class DeviceOverviewWidget(QWidget):
             QLabel {{
                 color: {palette['text_primary']};
                 border-bottom: 1px solid {palette['panel_border']};
+                padding-bottom: 4px;
+                margin-bottom: 2px;
             }}
             """
         )
 
-    def _apply_subheader_label_palette(self, label: QLabel) -> None:
+    def _apply_device_header_style(self, label: QLabel) -> None:
         palette = self._palette()
-        label.setStyleSheet(
-            label.styleSheet()
-            + f"\nQLabel {{ color: {palette['text_secondary']}; letter-spacing: 0.3px; }}"
-        )
-
-    def _apply_section_header_palette(
-        self,
-        label: QLabel,
-        *,
-        emphasize: bool = False,
-        uppercase: bool = True,
-    ) -> None:
-        palette = self._palette()
-        color = palette['value_strong'] if emphasize else palette['value_text']
-        transform_rule = 'text-transform: uppercase;' if uppercase else ''
-        label.setStyleSheet(
-            label.styleSheet()
-            + f"\nQLabel {{ color: {color}; {transform_rule} letter-spacing: 0.5px; }}"
-        )
-
-
+        label.setStyleSheet(f"""
+            QLabel#device_overview_header {{
+                color: {palette['value_strong']};
+                font-weight: 600;
+                font-size: 13px;
+                padding: 4px 0;
+            }}
+        """)
 
     def get_active_model(self) -> str:
         """Return the model associated with the displayed device."""
         return self._active_model
 
+    def _save_collapse_states(self) -> None:
+        """Save current collapse states before re-rendering."""
+        for key, panel in self._collapsible_panels.items():
+            self._collapse_states[key] = panel.is_collapsed()
+
     def _render_summary(
         self,
         sections: Optional[OrderedDict[str, List[Tuple[str, str]]]] = None,
-        *,
-        header_text: Optional[str] = None,
     ) -> None:
         palette = self._palette()
         if sections is None:
             sections = OrderedDict()
 
-        for i in reversed(range(self._summary_layout.count())):
-            item = self._summary_layout.takeAt(i)
+        # Save collapse states before clearing
+        self._save_collapse_states()
+
+        # Clear existing panels
+        for i in reversed(range(self._scroll_layout.count())):
+            item = self._scroll_layout.takeAt(i)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+
+        self._collapsible_panels.clear()
+        self._summary_labels.clear()
 
         if not sections:
             placeholder = QLabel('Select a device to view hardware, battery, and status details.')
@@ -341,110 +318,124 @@ class DeviceOverviewWidget(QWidget):
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setStyleSheet(
                 placeholder.styleSheet()
-                + f"\nQLabel {{ color: {palette['text_hint']}; }}"
+                + f"\nQLabel {{ color: {palette['text_hint']}; padding: 20px; }}"
             )
-            self._summary_layout.addWidget(placeholder)
-            self._summary_labels.clear()
+            self._scroll_layout.addWidget(placeholder)
             return
 
-        self._summary_labels.clear()
-
-        if header_text:
-            header_label = QLabel(header_text)
-            StyleManager.apply_label_style(header_label, LabelStyle.SUBHEADER)
-            self._apply_section_header_palette(header_label, emphasize=True, uppercase=False)
-            header_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self._summary_layout.addWidget(header_label)
-
+        # Create collapsible panels for each section
         for section_key, entries in sections.items():
-            section_frame = QFrame()
-            section_frame.setObjectName(f'overview_section_frame_{section_key}')
-            section_layout = QVBoxLayout(section_frame)
-            section_layout.setContentsMargins(0, 0, 0, 0)
-            section_layout.setSpacing(6)
+            title = self._format_section_header(section_key)
+            collapsed = self._collapse_states.get(
+                section_key,
+                self._DEFAULT_COLLAPSE_STATES.get(section_key, True)
+            )
 
-            header_label = QLabel(self._format_section_header(section_key))
-            header_label.setObjectName(f'overview_section_{section_key}')
-            StyleManager.apply_label_style(header_label, LabelStyle.SUBHEADER)
-            self._apply_section_header_palette(header_label)
-            section_layout.addWidget(header_label)
+            panel = CollapsiblePanel(title, collapsed=collapsed, compact=True)
+            panel.collapsed_changed.connect(
+                lambda state, key=section_key: self._on_section_collapsed(key, state)
+            )
 
-            grid = QGridLayout()
-            grid.setHorizontalSpacing(18)
-            grid.setVerticalSpacing(4)
-            grid.setColumnMinimumWidth(0, 130)
-            grid.setColumnStretch(1, 1)
-            grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+            # Create content widget
+            content_widget = self._create_section_content(section_key, entries, palette)
+            panel.set_content(content_widget)
 
-            for row, (label_text, value_text) in enumerate(entries):
-                label_widget = QLabel(label_text)
-                StyleManager.apply_label_style(label_widget, LabelStyle.INFO)
-                label_widget.setStyleSheet(
-                    label_widget.styleSheet()
-                    + f"\nQLabel {{ color: {palette['text_secondary']}; font-weight: 500; }}"
+            self._collapsible_panels[section_key] = panel
+            self._scroll_layout.addWidget(panel)
+
+        self._scroll_layout.addStretch(1)
+
+    def _on_section_collapsed(self, section_key: str, collapsed: bool) -> None:
+        """Track collapse state changes."""
+        self._collapse_states[section_key] = collapsed
+
+    def _create_section_content(
+        self,
+        section_key: str,
+        entries: List[Tuple[str, str]],
+        palette: Dict[str, str],
+    ) -> QWidget:
+        """Create the content widget for a collapsible section."""
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(2)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(2)
+        grid.setColumnMinimumWidth(0, 100)
+        grid.setColumnStretch(1, 1)
+
+        for row, (label_text, value_text) in enumerate(entries):
+            label_widget = QLabel(label_text)
+            label_widget.setStyleSheet(f"""
+                QLabel {{
+                    color: {palette['text_secondary']};
+                    font-size: 11px;
+                    font-weight: 500;
+                }}
+            """)
+            grid.addWidget(label_widget, row, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+            sanitized = ''.join(
+                ch if ch.isalnum() else '_' for ch in label_text.lower()
+            ).rstrip('_')
+            object_name = f'device_overview_value_{section_key}_{sanitized}'
+
+            if section_key == 'device' and label_text.lower() == 'build fingerprint':
+                value_widget = QTextEdit()
+                value_widget.setObjectName(object_name)
+                value_widget.setReadOnly(True)
+                value_widget.setPlainText(value_text)
+                value_widget.setMinimumHeight(40)
+                value_widget.setMaximumHeight(72)
+                value_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                value_widget.setStyleSheet(f"""
+                    QTextEdit#{object_name} {{
+                        background-color: {palette['input_background']};
+                        border: 1px solid {palette['input_border']};
+                        border-radius: 4px;
+                        padding: 4px;
+                        font-size: 10px;
+                        font-weight: 500;
+                        color: {palette['value_text']};
+                    }}
+                    QTextEdit#{object_name}:focus {{
+                        border: 1px solid {palette['accent']};
+                    }}
+                """)
+            else:
+                value_widget = QLabel(value_text)
+                value_widget.setObjectName(object_name)
+                value_widget.setStyleSheet(f"""
+                    QLabel#{object_name} {{
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: {palette['value_strong']};
+                        background-color: transparent;
+                    }}
+                """)
+                value_widget.setWordWrap(True)
+                value_widget.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse
+                    | Qt.TextInteractionFlag.TextSelectableByKeyboard
                 )
-                grid.addWidget(label_widget, row, 0, Qt.AlignmentFlag.AlignLeft)
 
-                sanitized = ''.join(
-                    ch if ch.isalnum() else '_' for ch in label_text.lower()
-                ).rstrip('_')
-                object_name = f'device_overview_value_{section_key}_{sanitized}'
+            grid.addWidget(value_widget, row, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self._summary_labels[f'{section_key}_{label_text.lower()}'] = value_widget
 
-                if section_key == 'device' and label_text.lower() == 'build fingerprint':
-                    value_widget = QTextEdit()
-                    value_widget.setObjectName(object_name)
-                    value_widget.setReadOnly(True)
-                    value_widget.setPlainText(value_text)
-                    value_widget.setMinimumHeight(48)
-                    value_widget.setMaximumHeight(96)
-                    value_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                    value_widget.setStyleSheet(
-                        f"""
-                        QTextEdit#{object_name} {{
-                            background-color: {palette['input_background']};
-                            border: 1px solid {palette['input_border']};
-                            border-radius: 8px;
-                            padding: 6px;
-                            font-weight: 500;
-                            color: {palette['value_text']};
-                        }}
-                        QTextEdit#{object_name}:focus {{
-                            border: 1px solid {palette['accent']};
-                        }}
-                        """
-                    )
-                else:
-                    value_widget = QLabel(value_text)
-                    value_widget.setObjectName(object_name)
-                    value_widget.setStyleSheet(
-                        f"""
-                        QLabel#{object_name} {{
-                            font-weight: 600;
-                            color: {palette['value_strong']};
-                            background-color: transparent;
-                        }}
-                        """
-                    )
-                    value_widget.setWordWrap(True)
-                    value_widget.setTextInteractionFlags(
-                        Qt.TextInteractionFlag.TextSelectableByMouse
-                        | Qt.TextInteractionFlag.TextSelectableByKeyboard
-                    )
-
-                grid.addWidget(value_widget, row, 1, Qt.AlignmentFlag.AlignLeft)
-                self._summary_labels[f'{section_key}_{label_text.lower()}'] = value_widget
-
-            section_layout.addLayout(grid)
-
-            self._summary_layout.addWidget(section_frame)
+        content_layout.addLayout(grid)
+        return content
 
     @staticmethod
     def _format_section_header(key: str) -> str:
         mapping = {
             'device': 'Device',
             'connectivity': 'Connectivity',
-            'hardware': 'Hardware Information',
-            'battery': 'Battery Information',
+            'hardware': 'Hardware',
+            'battery': 'Battery',
+            'status': 'Status',
         }
         return mapping.get(key, key.title())
 

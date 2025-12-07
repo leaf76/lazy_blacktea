@@ -164,6 +164,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_manager.device_found.connect(self._on_device_found_from_manager)
         self.device_manager.device_lost.connect(self._on_device_lost_from_manager)
         self.device_manager.status_updated.connect(self._on_device_status_updated)
+        self.device_manager.unauthorized_devices_detected.connect(
+            self._on_unauthorized_devices_detected
+        )
         self.device_file_browser_manager.directory_listing_ready.connect(self.device_file_controller.on_directory_listing)
         self.device_file_browser_manager.download_completed.connect(self.device_file_controller.on_download_completed)
         self.device_file_browser_manager.preview_ready.connect(self.device_file_controller.on_preview_ready)
@@ -2626,3 +2629,28 @@ After installation, restart lazy blacktea to use device mirroring functionality.
     def _on_device_status_updated(self, status: str):
         """處理從DeviceManager發來的狀態更新事件"""
         self.status_bar_manager.show_message(status, 2000)
+
+    def _on_unauthorized_devices_detected(self, unauthorized_serials: list):
+        """Handle unauthorized devices detection and show warning to user."""
+        if not unauthorized_serials:
+            return
+
+        device_count = len(unauthorized_serials)
+        if device_count == 1:
+            serial = unauthorized_serials[0]
+            short_serial = serial[:8] + '...' if len(serial) > 8 else serial
+            message = (
+                f'Device {short_serial} is unauthorized.\n\n'
+                'Please check the device screen and allow USB debugging authorization.'
+            )
+        else:
+            devices_text = '\n'.join(
+                f"• {s[:8]}..." if len(s) > 8 else f"• {s}"
+                for s in unauthorized_serials
+            )
+            message = (
+                f'{device_count} devices are unauthorized:\n{devices_text}\n\n'
+                'Please check each device screen and allow USB debugging authorization.'
+            )
+
+        self.show_warning('Unauthorized Device', message)

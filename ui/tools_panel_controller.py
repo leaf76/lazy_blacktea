@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QToolButton,
     QProgressBar,
+    QFrame,
 )
 from PyQt6.QtCore import Qt, QSize
 
@@ -86,139 +87,273 @@ class ToolsPanelController:
         tab_widget.addTab(widget, PanelText.TAB_DEVICE_OVERVIEW)
 
     # ------------------------------------------------------------------
-    # Individual tab creation helpers
+    # ADB Tools Tab - Reorganized by category
     # ------------------------------------------------------------------
     def _create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         layout.addWidget(scroll_area)
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(4, 8, 4, 16)
-        content_layout.setSpacing(20)
+        content_layout.setContentsMargins(8, 8, 8, 12)
+        content_layout.setSpacing(10)
         scroll_area.setWidget(content_widget)
 
-        output_group = QGroupBox(PanelText.GROUP_OUTPUT_PATH)
-        output_group.setObjectName('adb_tools_output_group')
-        StyleManager.apply_panel_frame(output_group)
-        output_layout = QVBoxLayout(output_group)
-        output_layout.setSpacing(10)
+        # Output Path Section
+        self._create_output_path_section(content_layout)
 
-        output_row = QHBoxLayout()
-        output_row.setSpacing(10)
+        # Monitoring Section (single device operations)
+        self._create_monitoring_section(content_layout)
 
-        self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
-        output_row.addWidget(self.window.output_path_edit)
+        # Capture Section (batch operations)
+        self._create_capture_section(content_layout)
 
-        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
-        browse_btn.setToolTip('Select output directory')
-        browse_btn.clicked.connect(lambda: self.window.browse_output_path())
-        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, min_width=140)
-        output_row.addWidget(browse_btn)
+        # Control Section (batch operations)
+        self._create_control_section(content_layout)
 
-        output_layout.addLayout(output_row)
-
-        output_hint = QLabel('Screenshots, recordings, and quick exports will be saved here.')
-        StyleManager.apply_label_style(output_hint, LabelStyle.STATUS)
-        output_layout.addWidget(output_hint)
-
-        output_layout.addSpacing(12)
-
-        quick_actions_label = QLabel(PanelText.GROUP_LOGCAT)
-        StyleManager.apply_label_style(quick_actions_label, LabelStyle.SUBHEADER)
-        output_layout.addWidget(quick_actions_label)
-
-        logcat_items = [
-            {'icon': 'bug_report', 'label': 'Bug Report', 'handler': self.window.generate_android_bug_report},
-        ]
-        logcat_grid = QGridLayout()
-        logcat_grid.setHorizontalSpacing(16)
-        logcat_grid.setVerticalSpacing(12)
-        self._populate_icon_grid(logcat_grid, logcat_items, columns=1)
-        output_layout.addLayout(logcat_grid)
-
-        output_layout.addSpacing(16)
-
-        capture_label = QLabel(PanelText.GROUP_CAPTURE)
-        StyleManager.apply_label_style(capture_label, LabelStyle.SUBHEADER)
-        output_layout.addWidget(capture_label)
-
-        capture_grid = QGridLayout()
-        capture_grid.setHorizontalSpacing(16)
-        capture_grid.setVerticalSpacing(12)
-
-        screenshot_widget, screenshot_btn, _ = self._create_icon_tool_widget(
-            'screenshot', 'Screenshot', self.window.take_screenshot, primary=True
-        )
-        self.window.screenshot_btn = screenshot_btn
-        capture_grid.addWidget(screenshot_widget, 0, 0)
-
-        start_record_widget, start_record_btn, _ = self._create_icon_tool_widget(
-            'record_start', 'Start Record', self.window.start_screen_record
-        )
-        self.window.start_record_btn = start_record_btn
-        capture_grid.addWidget(start_record_widget, 0, 1)
-
-        stop_record_widget, stop_record_btn, _ = self._create_icon_tool_widget(
-            'record_stop', 'Stop Record', self.window.stop_screen_record
-        )
-        self.window.stop_record_btn = stop_record_btn
-        capture_grid.addWidget(stop_record_widget, 0, 2)
-
-        capture_grid.setColumnStretch(3, 1)
-        output_layout.addLayout(capture_grid)
-
-        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
-        StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
-        output_layout.addWidget(self.window.recording_status_label)
-
-        self.window.recording_timer_label = QLabel('')
-        StyleManager.apply_status_style(self.window.recording_timer_label, 'recording_active')
-        output_layout.addWidget(self.window.recording_timer_label)
-
-        content_layout.addWidget(output_group)
-        content_layout.addSpacing(8)
-        device_control_group = QGroupBox(PanelText.GROUP_DEVICE_CONTROL)
-        device_control_group.setObjectName('adb_tools_device_control_group')
-        StyleManager.apply_panel_frame(device_control_group)
-        device_control_layout = QGridLayout(device_control_group)
-        device_control_layout.setContentsMargins(16, 24, 16, 16)
-        device_control_layout.setHorizontalSpacing(16)
-        device_control_layout.setVerticalSpacing(12)
-
-        device_actions = list(PanelConfig.DEVICE_ACTIONS)
-        if self.window.scrcpy_available:
-            device_actions.append(('Mirror Device (scrcpy)', 'launch_scrcpy'))
-
-        device_icon_map = {
-            'reboot_device': ('reboot', 'Reboot'),
-            'install_apk': ('install_apk', 'Install APK'),
-            'enable_bluetooth': ('bt_on', 'BT On'),
-            'disable_bluetooth': ('bt_off', 'BT Off'),
-            'launch_scrcpy': ('scrcpy', 'scrcpy'),
-        }
-
-        control_items: List[Dict[str, object]] = []
-        for text, handler_name in device_actions:
-            handler = getattr(self.window, handler_name)
-            icon, label = device_icon_map.get(
-                handler_name,
-                (handler_name, text),
-            )
-            control_items.append({'icon': icon, 'label': label, 'handler': handler})
-
-        self._populate_icon_grid(device_control_layout, control_items, columns=3)
-
-        content_layout.addWidget(device_control_group)
-        content_layout.addSpacing(8)
+        # Utility Section
+        self._create_utility_section(content_layout)
 
         content_layout.addStretch(1)
 
         tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
+
+    def _create_category_header(self, text: str, hint: str = '') -> QWidget:
+        """Create a styled category header with optional hint text."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 4, 0, 2)
+        layout.setSpacing(2)
+
+        colors = StyleManager.COLORS
+        text_hint = colors.get('text_hint', '#9DA5B3')
+        panel_border = colors.get('panel_border', '#3E4455')
+
+        header = QLabel(text.upper())
+        header.setStyleSheet(f"""
+            QLabel {{
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                color: {text_hint};
+                padding-bottom: 4px;
+                border-bottom: 1px solid {panel_border};
+            }}
+        """)
+        layout.addWidget(header)
+
+        if hint:
+            hint_label = QLabel(hint)
+            hint_label.setStyleSheet(f"""
+                QLabel {{
+                    font-size: 10px;
+                    color: {text_hint};
+                    font-style: italic;
+                }}
+            """)
+            layout.addWidget(hint_label)
+
+        return container
+
+    def _create_output_path_section(self, parent_layout: QVBoxLayout) -> None:
+        """Create the output path configuration section."""
+        colors = StyleManager.COLORS
+        panel_bg = colors.get('panel_background', '#252A37')
+        panel_border = colors.get('panel_border', '#3E4455')
+
+        container = QFrame()
+        container.setObjectName('output_path_container')
+        container.setStyleSheet(f"""
+            QFrame#output_path_container {{
+                background-color: {panel_bg};
+                border: 1px solid {panel_border};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header = QLabel(PanelText.GROUP_OUTPUT_PATH)
+        header.setStyleSheet(f"""
+            QLabel {{
+                font-size: 11px;
+                font-weight: 600;
+                color: {colors.get('text_primary', '#EAEAEA')};
+            }}
+        """)
+        layout.addWidget(header)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        self.window.output_path_edit.setPlaceholderText(PanelText.PLACEHOLDER_OUTPUT_DIR)
+        row.addWidget(self.window.output_path_edit)
+
+        browse_btn = QPushButton(PanelText.BUTTON_BROWSE)
+        browse_btn.setToolTip('Select output directory')
+        browse_btn.clicked.connect(lambda: self.window.browse_output_path())
+        self._style_button(browse_btn, PanelButtonVariant.SECONDARY, height=32, min_width=100)
+        row.addWidget(browse_btn)
+
+        layout.addLayout(row)
+
+        hint = QLabel('Screenshots, recordings, and exports will be saved here.')
+        hint.setStyleSheet(f"""
+            QLabel {{
+                font-size: 10px;
+                color: {colors.get('text_hint', '#9DA5B3')};
+                font-style: italic;
+            }}
+        """)
+        layout.addWidget(hint)
+
+        parent_layout.addWidget(container)
+
+    def _create_monitoring_section(self, parent_layout: QVBoxLayout) -> None:
+        """Create the monitoring tools section (single device operations)."""
+        parent_layout.addWidget(self._create_category_header(
+            PanelText.CATEGORY_MONITORING,
+            'Single device only'
+        ))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        monitoring_items = []
+        for label, handler_name, icon_key in PanelConfig.MONITORING_ACTIONS:
+            handler = getattr(self.window, handler_name, None)
+            if handler:
+                monitoring_items.append({
+                    'icon': icon_key,
+                    'label': label,
+                    'handler': handler,
+                })
+
+        self._populate_icon_grid(grid, monitoring_items, columns=3)
+        parent_layout.addLayout(grid)
+
+    def _create_capture_section(self, parent_layout: QVBoxLayout) -> None:
+        """Create the capture tools section (batch operations)."""
+        parent_layout.addWidget(self._create_category_header(
+            PanelText.CATEGORY_CAPTURE,
+            'Supports batch operations'
+        ))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        capture_items = []
+        for label, handler_name, icon_key in PanelConfig.CAPTURE_ACTIONS:
+            handler = getattr(self.window, handler_name, None)
+            if handler:
+                with_progress = icon_key == 'bug_report'
+                capture_items.append({
+                    'icon': icon_key,
+                    'label': label,
+                    'handler': handler,
+                    'with_progress': with_progress,
+                    'primary': icon_key == 'screenshot',
+                })
+
+        # Custom handling for capture items
+        for index, item in enumerate(capture_items):
+            row, column = divmod(index, 4)
+            widget, button, progress_bar = self._create_icon_tool_widget(
+                icon_key=str(item['icon']),
+                label=str(item['label']),
+                handler=item['handler'],
+                primary=item.get('primary', False),
+                with_progress=item.get('with_progress', False),
+            )
+            grid.addWidget(widget, row, column)
+
+            # Store button references
+            if item['icon'] == 'screenshot':
+                self.window.screenshot_btn = button
+            elif item['icon'] == 'record_start':
+                self.window.start_record_btn = button
+            elif item['icon'] == 'record_stop':
+                self.window.stop_record_btn = button
+
+        for col in range(4):
+            grid.setColumnStretch(col, 1)
+
+        parent_layout.addLayout(grid)
+
+        # Recording status labels
+        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
+        StyleManager.apply_label_style(self.window.recording_status_label, LabelStyle.STATUS)
+        parent_layout.addWidget(self.window.recording_status_label)
+
+        self.window.recording_timer_label = QLabel('')
+        StyleManager.apply_status_style(self.window.recording_timer_label, 'recording_active')
+        parent_layout.addWidget(self.window.recording_timer_label)
+
+    def _create_control_section(self, parent_layout: QVBoxLayout) -> None:
+        """Create the device control section (batch operations)."""
+        parent_layout.addWidget(self._create_category_header(
+            PanelText.CATEGORY_CONTROL,
+            'Supports batch operations'
+        ))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        control_items = []
+        for label, handler_name, icon_key in PanelConfig.CONTROL_ACTIONS:
+            handler = getattr(self.window, handler_name, None)
+            if handler:
+                with_progress = icon_key == 'install_apk'
+                control_items.append({
+                    'icon': icon_key,
+                    'label': label,
+                    'handler': handler,
+                    'with_progress': with_progress,
+                })
+
+        # Add scrcpy if available
+        if self.window.scrcpy_available:
+            control_items.append({
+                'icon': 'scrcpy',
+                'label': 'scrcpy',
+                'handler': self.window.launch_scrcpy,
+            })
+
+        self._populate_icon_grid(grid, control_items, columns=4)
+        parent_layout.addLayout(grid)
+
+    def _create_utility_section(self, parent_layout: QVBoxLayout) -> None:
+        """Create the utility section."""
+        parent_layout.addWidget(self._create_category_header(PanelText.CATEGORY_UTILITY))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        utility_items = []
+        for label, handler_name, icon_key in PanelConfig.UTILITY_ACTIONS:
+            handler = getattr(self.window, handler_name, None)
+            if handler:
+                utility_items.append({
+                    'icon': icon_key,
+                    'label': label,
+                    'handler': handler,
+                })
+
+        self._populate_icon_grid(grid, utility_items, columns=4)
+        parent_layout.addLayout(grid)
 
     # ------------------------------------------------------------------
     # Icon button helpers
@@ -228,7 +363,7 @@ class ToolsPanelController:
         layout: QGridLayout,
         items: List[Dict[str, object]],
         *,
-        columns: int = 3,
+        columns: int = 4,
     ) -> None:
         for index, item in enumerate(items):
             row, column = divmod(index, columns)
@@ -237,7 +372,7 @@ class ToolsPanelController:
                 icon_key=icon_key,
                 label=str(item['label']),
                 handler=item['handler'],
-                with_progress=icon_key in {'bug_report', 'install_apk'},
+                with_progress=item.get('with_progress', False) is True,
             )
             layout.addWidget(widget, row, column)
 
@@ -256,13 +391,13 @@ class ToolsPanelController:
         container = QWidget()
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(6 if with_progress else 0)
+        container_layout.setSpacing(4 if with_progress else 0)
 
         button = QToolButton()
         button.setObjectName('adb_tools_icon_button')
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         button.setIcon(get_tile_tool_icon(icon_key, label, primary=primary))
-        button.setIconSize(QSize(48, 48))
+        button.setIconSize(QSize(44, 44))
         button.setText(label)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -275,7 +410,7 @@ class ToolsPanelController:
             progress_bar.setRange(0, 0)
             progress_bar.setTextVisible(False)
             progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            progress_bar.setFixedHeight(10)
+            progress_bar.setFixedHeight(8)
             progress_bar.hide()
 
         button.clicked.connect(lambda checked=False, key=icon_key: self.window.handle_tool_action(key))
@@ -346,7 +481,7 @@ class ToolsPanelController:
         self._style_button(run_batch_btn, PanelButtonVariant.SECONDARY, height=36, min_width=220)
         exec_buttons_layout.addWidget(run_batch_btn)
 
-        cancel_all_btn = QPushButton('❌ Cancel All')
+        cancel_all_btn = QPushButton('Cancel All')
         cancel_all_btn.clicked.connect(lambda: self.window.command_execution_manager.cancel_all_commands())
         self._style_button(cancel_all_btn, PanelButtonVariant.DANGER, height=36)
         exec_buttons_layout.addWidget(cancel_all_btn)

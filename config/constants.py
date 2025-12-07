@@ -283,9 +283,12 @@ class PanelText:
     TAB_APPS = 'Apps'
 
     GROUP_OUTPUT_PATH = 'Output Path'
-    GROUP_LOGCAT = 'Logcat'
-    GROUP_DEVICE_CONTROL = 'Device Control'
-    GROUP_CAPTURE = 'Screen Capture & Recording'
+
+    # Category headers for ADB Tools
+    CATEGORY_MONITORING = 'Monitoring'
+    CATEGORY_CAPTURE = 'Capture'
+    CATEGORY_CONTROL = 'Control'
+    CATEGORY_UTILITY = 'Utility'
     GROUP_COMMAND_TEMPLATES = '📋 Command Templates'
     GROUP_BATCH_COMMANDS = '📝 Batch Commands'
     GROUP_COMMAND_HISTORY = '📜 Command History'
@@ -342,6 +345,35 @@ class PanelText:
 class PanelConfig:
     """Configuration collections used by tool panels."""
 
+    # Monitoring actions (single device only)
+    MONITORING_ACTIONS = [
+        ('Logcat', 'show_logcat', 'logcat'),
+        ('UI Inspector', 'launch_ui_inspector', 'inspector'),
+        ('BT Monitor', 'monitor_bluetooth', 'bt_monitor'),
+    ]
+
+    # Capture actions (batch support)
+    CAPTURE_ACTIONS = [
+        ('Screenshot', 'take_screenshot', 'screenshot'),
+        ('Start Record', 'start_screen_record', 'record_start'),
+        ('Stop Record', 'stop_screen_record', 'record_stop'),
+        ('Bug Report', 'generate_android_bug_report', 'bug_report'),
+    ]
+
+    # Control actions (batch support)
+    CONTROL_ACTIONS = [
+        ('Reboot', 'reboot_device', 'reboot'),
+        ('Install APK', 'install_apk', 'install_apk'),
+        ('BT On', 'enable_bluetooth', 'bt_on'),
+        ('BT Off', 'disable_bluetooth', 'bt_off'),
+    ]
+
+    # Utility actions
+    UTILITY_ACTIONS = [
+        ('Copy Info', 'copy_active_device_overview', 'copy_info'),
+    ]
+
+    # Legacy: kept for backward compatibility
     DEVICE_ACTIONS = [
         ('Reboot Device', 'reboot_device'),
         ('Install APK', 'install_apk'),

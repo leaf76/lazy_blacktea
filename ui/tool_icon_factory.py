@@ -28,6 +28,10 @@ _PALETTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     'device_info': {'background': '#e0f2f1', 'foreground': '#00695c'},
     'home': {'background': '#fef9c3', 'foreground': '#b45309'},
     'inspector': {'background': '#f3e8ff', 'foreground': '#7c3aed'},
+    # New icons for reorganized ADB Tools
+    'logcat': {'background': '#fef3c7', 'foreground': '#92400e'},
+    'bt_monitor': {'background': '#dbeafe', 'foreground': '#1e40af'},
+    'copy_info': {'background': '#f0fdf4', 'foreground': '#166534'},
 }
 
 _PRIMARY_DEFAULT = {'background': '#e0e7ff', 'foreground': '#312e81'}
