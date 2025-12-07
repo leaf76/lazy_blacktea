@@ -4,7 +4,7 @@
 
 [![Build Status](https://github.com/cy76/lazy_blacktea/workflows/build/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
 [![Test Status](https://github.com/cy76/lazy_blacktea/workflows/test/badge.svg)](https://github.com/cy76/lazy_blacktea/actions)
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > Current release: v0.0.43
@@ -20,7 +20,7 @@
 
 ## Quick Start
 ### Requirements
-- Python 3.8 or newer.
+- Python 3.10 or newer.
 - Android SDK Platform Tools with `adb` available on your `PATH`.
 - A macOS or Linux desktop environment.
 - (Optional) Rust and Cargo if you plan to rebuild the native module.
@@ -31,23 +31,22 @@
 git clone https://github.com/cy76/lazy_blacktea.git
 cd lazy_blacktea
 
-# (Recommended) create a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements.txt
+# Sync dependencies (creates .venv automatically)
+uv sync
 ```
 
 ### Launch the App
 ```bash
-python3 lazy_blacktea_pyqt.py
+uv run python lazy_blacktea_pyqt.py
 ```
 For headless environments (CI, remote), add `QT_QPA_PLATFORM=offscreen`.
 
 ### Run the Automated Tests
 ```bash
-python3 tests/run_tests.py
+uv run python tests/run_tests.py
 ```
 Run the full suite before every commit to keep the project stable.
 

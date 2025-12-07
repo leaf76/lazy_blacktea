@@ -1,3 +1,0 @@
-PyQt6>=6.4.0
-pyinstaller>=5.13.0
-setuptools>=65.0.0

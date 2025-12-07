@@ -9,10 +9,10 @@ echo "==============================================="
 # Change to the application directory
 cd "$(dirname "$0")"
 
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Error: Python 3 is not installed or not in PATH"
-    echo "Please install Python 3 to run this application"
+# Check if uv is available
+if ! command -v uv &> /dev/null; then
+    echo "❌ Error: uv is not installed or not in PATH"
+    echo "Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
 fi
 
@@ -28,7 +28,7 @@ echo "🚀 Launching Lazy Blacktea GUI..."
 echo ""
 
 # Start the application
-python3 lazy_blacktea_pyqt.py
+uv run python lazy_blacktea_pyqt.py
 
 echo ""
 echo "📱 Lazy Blacktea has been closed"
