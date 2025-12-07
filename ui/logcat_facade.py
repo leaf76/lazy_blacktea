@@ -79,11 +79,15 @@ class LogcatFacade:
                     "max_buffer_size": logcat_settings.max_buffer_size,
                 }
 
+            # Pass device_manager for graceful disconnection handling
+            device_manager = getattr(self.window, "device_manager", None)
+
             logcat_window = LogcatWindow(
                 device,
                 None,
                 settings=settings_payload,
                 on_settings_changed=self.window.persist_logcat_settings,
+                device_manager=device_manager,
             )
             self.window.logcat_window = logcat_window
             logcat_window.show()

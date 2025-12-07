@@ -9,7 +9,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, replace
-from typing import Optional, Dict, List, Any, Callable
+from typing import Optional, Dict, List, Any, Callable, TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
@@ -18,11 +18,22 @@ from PyQt6.QtWidgets import (
     QSpinBox, QSizePolicy, QGroupBox, QFormLayout, QApplication, QMenu
 )
 from PyQt6.QtCore import (
-    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel, QSize
+    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel, QSize,
+    QEvent
 )
-from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut
+from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut, QPen, QColor
+from PyQt6.QtWidgets import QStyle
 
 from ui.collapsible_panel import CollapsiblePanel
+from ui.logcat.filter_models import ActiveFilterState
+from ui.logcat.preset_manager import PresetManager
+from ui.logcat.device_watcher import DeviceWatcher
+from ui.logcat.filter_panel_widget import FilterPanelWidget
+from ui.logcat.search_bar_widget import SearchBarWidget
+from ui.toast_notification import ToastNotification
+
+if TYPE_CHECKING:
+    from ui.device_manager import DeviceManager
 
 try:
     from utils import adb_tools
@@ -278,7 +289,26 @@ class _LogListItemDelegate(QStyledItemDelegate):
 
     - Disables implicit eliding by providing a wider size hint based on text width.
     - Keeps height from base delegate for consistent row height.
+    - Supports search highlighting with configurable match patterns.
     """
+
+    # Highlight colors
+    HIGHLIGHT_BG = '#623f00'         # Yellow-orange background for matches
+    HIGHLIGHT_CURRENT_BG = '#515c6a'  # Brighter for current match
+    HIGHLIGHT_TEXT = '#ffffff'       # White text for visibility
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._search_pattern: Optional[re.Pattern] = None
+        self._current_match_row: int = -1
+
+    def set_search_pattern(self, pattern: Optional[re.Pattern]) -> None:
+        """Set the search pattern for highlighting."""
+        self._search_pattern = pattern
+
+    def set_current_match_row(self, row: int) -> None:
+        """Set the current match row for brighter highlight."""
+        self._current_match_row = row
 
     def sizeHint(self, option, index):  # type: ignore[override]
         base = super().sizeHint(option, index)
@@ -290,6 +320,103 @@ class _LogListItemDelegate(QStyledItemDelegate):
         width = fm.horizontalAdvance(str(text)) + 12
         height = base.height()
         return QSize(width, height)
+
+    def paint(self, painter, option, index):  # type: ignore[override]
+        """Paint the item with optional search highlighting."""
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if text is None or not self._search_pattern:
+            super().paint(painter, option, index)
+            return
+
+        text = str(text)
+
+        # Find all matches in this text
+        matches = list(self._search_pattern.finditer(text))
+        if not matches:
+            super().paint(painter, option, index)
+            return
+
+        # Draw background (handle selection state)
+        painter.save()
+        try:
+            # Fill background based on selection state
+            is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+            if is_selected:
+                painter.fillRect(option.rect, option.palette.highlight())
+            else:
+                painter.fillRect(option.rect, option.palette.base().color())
+
+            # Set up font and metrics
+            font = option.font
+            painter.setFont(font)
+            fm = option.fontMetrics
+
+            # Calculate text position
+            text_rect = option.rect.adjusted(4, 0, -4, 0)
+            y_offset = text_rect.top() + (text_rect.height() + fm.ascent() - fm.descent()) // 2
+
+            # Determine if this is the current match row
+            is_current_row = index.row() == self._current_match_row
+
+            # Draw text character by character with highlighting
+            x = text_rect.left()
+            match_idx = 0
+            i = 0
+
+            while i < len(text):
+                # Check if we're at a match start
+                in_match = False
+                match_end = i
+
+                while match_idx < len(matches):
+                    match = matches[match_idx]
+                    if i >= match.end():
+                        match_idx += 1
+                        continue
+                    if i >= match.start():
+                        in_match = True
+                        match_end = match.end()
+                    break
+
+                if in_match:
+                    # Draw highlighted segment
+                    segment = text[i:match_end]
+                    seg_width = fm.horizontalAdvance(segment)
+
+                    # Draw highlight background
+                    bg_color = self.HIGHLIGHT_CURRENT_BG if is_current_row else self.HIGHLIGHT_BG
+                    painter.fillRect(x, text_rect.top(), seg_width, text_rect.height(), QColor(bg_color))
+
+                    # Draw text
+                    painter.setPen(QColor(self.HIGHLIGHT_TEXT))
+                    painter.drawText(x, y_offset, segment)
+
+                    x += seg_width
+                    i = match_end
+                else:
+                    # Find where next match starts (or end of string)
+                    next_match_start = len(text)
+                    if match_idx < len(matches):
+                        next_match_start = matches[match_idx].start()
+
+                    # Draw normal segment
+                    segment = text[i:next_match_start]
+                    seg_width = fm.horizontalAdvance(segment)
+
+                    # Normal text color
+                    if is_selected:
+                        painter.setPen(option.palette.highlightedText().color())
+                    else:
+                        painter.setPen(option.palette.text().color())
+
+                    painter.drawText(x, y_offset, segment)
+
+                    x += seg_width
+                    i = next_match_start
+
+        finally:
+            painter.restore()
+
 
 class PerformanceSettingsDialog(QDialog):
     """Performance settings dialog for Logcat viewer."""
@@ -539,6 +666,7 @@ class LogcatWindow(QDialog):
         *,
         settings: Optional[Dict[str, int]] = None,
         on_settings_changed: Optional[Callable[[Dict[str, int]], None]] = None,
+        device_manager: Optional["DeviceManager"] = None,
     ):
         super().__init__(parent)
         # Configure as a normal resizable window (not always-on-top of parent)
@@ -556,9 +684,15 @@ class LogcatWindow(QDialog):
         self.logcat_process = None
         self.is_running = False
         self.max_lines = 1000
-        self.filters: Dict[str, str] = {}
-        self.current_filter = None
         self._settings_callback = on_settings_changed
+
+        # Device monitoring for graceful disconnection handling
+        self._device_manager = device_manager
+        self._device_watcher: Optional[DeviceWatcher] = None
+        self._toast: Optional[ToastNotification] = None
+
+        # Preset manager for three-level filter architecture
+        self._preset_manager = PresetManager()
 
         # Data model and filtering pipeline
         self.log_model = LogcatListModel(self)
@@ -594,12 +728,19 @@ class LogcatWindow(QDialog):
         # Filtering state
         self.log_levels_order = ['V', 'D', 'I', 'W', 'E', 'F']
         self.live_filter_pattern: Optional[str] = None
-        self.active_filters: List[Dict[str, str]] = []
+        self.active_filters: List[str] = []
+
+        # Search state (for highlight search feature)
+        self._search_pattern: Optional[re.Pattern] = None
+        self._search_match_rows: List[int] = []  # Rows with matches
+        self._current_match_index: int = -1      # Current match in _search_match_rows
+        self._log_delegate: Optional[_LogListItemDelegate] = None
 
         self.init_ui()
         self._setup_copy_features()
         self._setup_search_shortcut()
-        self.load_filters()
+        self._setup_device_watcher()
+        self._migrate_legacy_filters()
 
     def _get_status_prefix(self):
         """Get status prefix emoji based on running state."""
@@ -691,17 +832,16 @@ class LogcatWindow(QDialog):
         return bool(self.live_filter_pattern) or bool(self.active_filters)
 
     def _compile_filter_patterns(self) -> List[re.Pattern[str]]:
-        patterns = []
+        """Compile all active filter patterns into regex objects."""
+        patterns: List[str] = []
         if self.live_filter_pattern:
             patterns.append(self.live_filter_pattern)
-
-        for filter_data in self.active_filters:
-            pattern = filter_data.get('pattern')
-            if pattern:
-                patterns.append(pattern)
+        patterns.extend(self.active_filters)
 
         compiled: List[re.Pattern[str]] = []
         for raw_pattern in patterns:
+            if not raw_pattern:
+                continue
             try:
                 compiled.append(re.compile(raw_pattern, re.IGNORECASE))
             except re.error:
@@ -811,7 +951,8 @@ class LogcatWindow(QDialog):
             pass
         # Use custom delegate so the view knows the actual width per row
         try:
-            self.log_display.setItemDelegate(_LogListItemDelegate(self.log_display))
+            self._log_delegate = _LogListItemDelegate(self.log_display)
+            self.log_display.setItemDelegate(self._log_delegate)
         except Exception:
             pass
         self.log_display.setStyleSheet(
@@ -832,8 +973,18 @@ class LogcatWindow(QDialog):
         log_layout = QVBoxLayout(log_container)
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(4)
+
         log_layout.addWidget(self.log_display)
         log_layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Create floating search bar as overlay on log_display (VS Code style)
+        self._search_bar = SearchBarWidget(self.log_display)
+        self._search_bar.search_changed.connect(self._on_search_changed)
+        self._search_bar.navigate_next.connect(self._navigate_to_next_match)
+        self._search_bar.navigate_prev.connect(self._navigate_to_prev_match)
+        self._search_bar.closed.connect(self._on_search_closed)
+        # Install event filter on log_display to handle resize events
+        self.log_display.installEventFilter(self)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(top_panel)
@@ -877,34 +1028,88 @@ class LogcatWindow(QDialog):
         self._copy_all_shortcut.activated.connect(self.copy_all_logs)
 
     def _setup_search_shortcut(self) -> None:
-        """Register a find shortcut that focuses the live filter input."""
+        """Register keyboard shortcuts for search functionality."""
+        # Ctrl+F to open search bar
         find_sequence = QKeySequence(QKeySequence.StandardKey.Find)
         self._find_shortcut = QShortcut(find_sequence, self)
         self._find_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._find_shortcut.activated.connect(self._handle_find_shortcut)
         self._find_shortcut.activatedAmbiguously.connect(self._handle_find_shortcut)
 
+        # F3 for next match
+        self._next_match_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F3), self)
+        self._next_match_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._next_match_shortcut.activated.connect(self._navigate_to_next_match)
+
+        # Shift+F3 for previous match
+        self._prev_match_shortcut = QShortcut(
+            QKeySequence(Qt.KeyboardModifier.ShiftModifier | Qt.Key.Key_F3), self
+        )
+        self._prev_match_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._prev_match_shortcut.activated.connect(self._navigate_to_prev_match)
+
     def _handle_find_shortcut(self) -> None:
-        """Expand the Filters panel and focus the live filter input."""
-        if hasattr(self, 'filters_panel') and self.filters_panel:
-            self.filters_panel.set_collapsed(False)
-            if hasattr(self, 'filters_toggle_btn'):
-                self.filters_toggle_btn.setChecked(True)
-
-        if hasattr(self, 'filter_input') and self.filter_input:
-            target = self.filter_input
-
-            def _focus_on_filter():
-                if not target or target.parent() is None:
-                    return
-                target.setFocus(Qt.FocusReason.ShortcutFocusReason)
-                target.selectAll()
-
+        """Show the floating search bar and focus it."""
+        if hasattr(self, '_search_bar') and self._search_bar:
+            self._position_search_bar()
+            self._search_bar.show_search()
+            self._search_bar.raise_()  # Ensure it's on top
             if not self.isActiveWindow():
                 self.activateWindow()
 
-            QTimer.singleShot(0, _focus_on_filter)
+    def _setup_device_watcher(self) -> None:
+        """Initialize device state monitoring for graceful disconnection handling."""
+        if self._device_manager is None:
+            return
 
+        try:
+            self._device_watcher = DeviceWatcher(
+                self.device.device_serial_num,
+                self._device_manager,
+                parent=self,
+            )
+            self._device_watcher.device_disconnected.connect(self._on_device_disconnected)
+        except Exception as exc:
+            logger.warning("Failed to setup device watcher: %s", exc)
+
+        # Create toast notification widget
+        self._toast = ToastNotification(parent=self)
+
+    def _on_device_disconnected(self, serial: str) -> None:
+        """Handle device disconnection gracefully."""
+        if serial != self.device.device_serial_num:
+            return
+
+        logger.info("Device disconnected during logcat: %s", serial)
+
+        # Stop logcat if running
+        if self.is_running:
+            self._suppress_logcat_errors = True
+            self.stop_logcat()
+
+        # Show non-blocking toast notification
+        self._show_disconnect_toast()
+
+    def _show_disconnect_toast(self) -> None:
+        """Show non-blocking notification about device disconnection."""
+        if self._toast:
+            self._toast.show_toast(
+                "Device disconnected. Logcat stopped.",
+                style=ToastNotification.STYLE_WARNING,
+                duration_ms=4000,
+            )
+
+        # Also update status label
+        self._update_status_label("Device disconnected")
+
+    def _migrate_legacy_filters(self) -> None:
+        """Migrate legacy filters to new preset format on first run."""
+        try:
+            migrated = self._preset_manager.migrate_legacy_filters()
+            if migrated > 0:
+                logger.info("Migrated %d legacy filters to preset format", migrated)
+        except Exception as exc:
+            logger.warning("Legacy filter migration failed: %s", exc)
 
     def _build_log_context_menu(self) -> QMenu:
         """Create the context menu used by the log view."""
@@ -1078,13 +1283,18 @@ class LogcatWindow(QDialog):
         return levels_container
 
     def create_filter_panel(self) -> QWidget:
-        """Create the filter panel (source + live/saved filters)."""
+        """Create the filter panel with three-level architecture.
+
+        Level 1: Live filter (real-time input)
+        Level 2: Active filters (currently applied)
+        Level 3: Saved presets (persistent combinations)
+        """
         panel = QWidget()
         main_layout = QVBoxLayout(panel)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(8)
 
-        # Source (Tag/Package/Raw) row
+        # Source (Tag/Package/Raw) row - kept for ADB filtering
         source_cluster = QWidget()
         source_layout = QHBoxLayout(source_cluster)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -1109,254 +1319,29 @@ class LogcatWindow(QDialog):
 
         main_layout.addWidget(source_cluster)
 
-        # Form-style rows for filter and saved controls
-        form_widget = QWidget()
-        form_layout = QGridLayout(form_widget)
-        form_layout.setContentsMargins(0, 0, 0, 0)
-        form_layout.setHorizontalSpacing(6)
-        form_layout.setVerticalSpacing(6)
+        # Three-level filter panel widget
+        self._filter_panel_widget = FilterPanelWidget(
+            parent=self,
+            preset_manager=self._preset_manager,
+        )
+        self._filter_panel_widget.filters_changed.connect(self._on_filter_panel_changed)
+        self._filter_panel_widget.live_filter_changed.connect(self._on_live_filter_changed)
 
-        filter_label = QLabel('Filter:')
-        filter_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText('Type to filter logs in real-time...')
-        self.filter_input.textChanged.connect(self.apply_live_filter)
-        save_filter_btn = QPushButton('Save')
-        save_filter_btn.setFixedWidth(64)
-        save_filter_btn.setToolTip('Save current filter pattern without naming')
-        save_filter_btn.clicked.connect(self.save_current_filter)
-
-        form_layout.addWidget(filter_label, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        form_layout.addWidget(self.filter_input, 0, 1)
-        form_layout.addWidget(save_filter_btn, 0, 2)
-
-        saved_label = QLabel('Saved:')
-        self.saved_filters_combo = QComboBox()
-        self.saved_filters_combo.setEditable(False)
-        self.saved_filters_combo.currentIndexChanged.connect(self.load_saved_filter)
-
-        apply_filter_btn = QPushButton('Apply')
-        apply_filter_btn.setFixedWidth(64)
-        apply_filter_btn.clicked.connect(self.apply_selected_filter)
-        delete_filter_btn = QPushButton('Delete')
-        delete_filter_btn.setFixedWidth(64)
-        delete_filter_btn.clicked.connect(self.delete_saved_filter)
-
-        form_layout.addWidget(saved_label, 1, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        form_layout.addWidget(self.saved_filters_combo, 1, 1)
-        form_layout.addWidget(apply_filter_btn, 1, 2)
-        form_layout.addWidget(delete_filter_btn, 1, 3)
-
-        main_layout.addWidget(form_widget)
-
-        # Active filters section
-        active_row = QHBoxLayout()
-        active_row.setSpacing(6)
-        active_label = QLabel('Active:')
-        active_label.setStyleSheet('font-weight: bold;')
-        active_row.addWidget(active_label, alignment=Qt.AlignmentFlag.AlignTop)
-
-        self.active_filters_list = QListWidget()
-        self.active_filters_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.active_filters_list.setMaximumHeight(80)
-        self.active_filters_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.active_filters_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.active_filters_list.setWordWrap(True)
-        self.update_active_filters_list()
-        active_row.addWidget(self.active_filters_list)
-
-        actions_col = QVBoxLayout()
-        actions_col.setSpacing(4)
-        remove_active_btn = QPushButton('Remove')
-        remove_active_btn.setFixedWidth(70)
-        remove_active_btn.clicked.connect(self.remove_selected_active_filters)
-        actions_col.addWidget(remove_active_btn)
-
-        clear_active_btn = QPushButton('Clear')
-        clear_active_btn.setFixedWidth(70)
-        clear_active_btn.clicked.connect(self.clear_active_filters)
-        actions_col.addWidget(clear_active_btn)
-        actions_col.addStretch()
-
-        active_row.addLayout(actions_col)
-        main_layout.addLayout(active_row)
+        main_layout.addWidget(self._filter_panel_widget)
 
         panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        panel.setMaximumHeight(150)
         return panel
 
-    def save_current_filter(self):
-        """Save current filter pattern directly without naming.
-
-        - Uses the pattern itself as the identifier for persistence and selection.
-        - De-duplicates by pattern; if pattern already exists, select it instead of duplicating.
-        """
-        pattern = self.filter_input.text().strip()
-        if not pattern:
-            QMessageBox.information(self, 'No Filter', 'Please enter a filter pattern first.')
-            return
-
-        # If pattern already exists under any key, just select it.
-        existing_key = None
-        for name, saved in self.filters.items():
-            if saved == pattern:
-                existing_key = name
-                break
-
-        if existing_key is not None:
-            # Select the existing entry in combo box
-            self.update_saved_filters_combo()
-            index = self.saved_filters_combo.findData(existing_key, role=Qt.ItemDataRole.UserRole)
-            if index != -1:
-                self.saved_filters_combo.setCurrentIndex(index)
-            QMessageBox.information(self, 'Already Saved', 'This filter pattern already exists.')
-            return
-
-        # Save with pattern as key to simplify UX (no naming required)
-        self.filters[pattern] = pattern
-        self.save_filters()
-        self.update_saved_filters_combo()
-        new_index = self.saved_filters_combo.findData(pattern, role=Qt.ItemDataRole.UserRole)
-        if new_index != -1:
-            self.saved_filters_combo.setCurrentIndex(new_index)
-        QMessageBox.information(self, 'Filter Saved', 'Filter pattern saved successfully!')
-
-    def delete_saved_filter(self):
-        """Delete selected saved filter."""
-        index = self.saved_filters_combo.currentIndex()
-        if index < 0:
-            QMessageBox.information(self, 'No Selection', 'Please select a filter to delete.')
-            return
-
-        filter_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
-        if not filter_name:
-            QMessageBox.information(self, 'No Selection', 'Please select a filter to delete.')
-            return
-
-        display_name = self.saved_filters_combo.itemText(index)
-
-        reply = QMessageBox.question(
-            self,
-            'Delete Filter',
-            f'Are you sure you want to delete filter "{display_name}"?',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            if filter_name in self.filters:
-                del self.filters[filter_name]
-                self.save_filters()
-                self.update_saved_filters_combo()
-                self.active_filters = [
-                    f for f in self.active_filters if f.get('name') != filter_name
-                ]
-                self.update_active_filters_list()
-                self._handle_filters_changed()
-                QMessageBox.information(
-                    self,
-                    'Filter Deleted',
-                    f'Filter "{display_name}" deleted successfully!'
-                )
-
-    def update_saved_filters_combo(self):
-        """Update the saved filters combo box."""
-        if not hasattr(self, 'saved_filters_combo'):
-            return
-
-        current_name = self.saved_filters_combo.currentData(Qt.ItemDataRole.UserRole)
-
-        self.saved_filters_combo.blockSignals(True)
-        self.saved_filters_combo.clear()
-
-        # Display only the pattern (name is no longer required). Deduplicate by pattern value.
-        added_patterns = set()
-        for name, pattern in self.filters.items():
-            if not pattern or pattern in added_patterns:
-                continue
-            display = pattern
-            self.saved_filters_combo.addItem(display, name)
-            index = self.saved_filters_combo.count() - 1
-            self.saved_filters_combo.setItemData(index, pattern, Qt.ItemDataRole.ToolTipRole)
-            added_patterns.add(pattern)
-
-        target_index = -1
-        if current_name:
-            target_index = self.saved_filters_combo.findData(current_name, role=Qt.ItemDataRole.UserRole)
-
-        if target_index == -1 and self.saved_filters_combo.count() > 0:
-            target_index = 0
-
-        if target_index != -1:
-            self.saved_filters_combo.setCurrentIndex(target_index)
-
-        self.saved_filters_combo.blockSignals(False)
-
-        if self.saved_filters_combo.count() > 0:
-            self.load_saved_filter(self.saved_filters_combo.currentIndex())
-
-    def add_active_filter(self, name: str, pattern: str):
-        """Add a saved filter to the active filters list."""
-        pattern = pattern.strip()
-        if not pattern:
-            return
-
-        # Avoid duplicates
-        if any(
-            f.get('name') == name and f.get('pattern') == pattern
-            for f in self.active_filters
-        ):
-            return
-
-        self.active_filters.append({'name': name, 'pattern': pattern})
-        self.update_active_filters_list()
+    def _on_filter_panel_changed(self) -> None:
+        """Handle filter changes from the FilterPanelWidget."""
+        filter_state = self._filter_panel_widget.get_filter_state()
+        self.live_filter_pattern = filter_state.live_pattern
+        self.active_filters = filter_state.active_patterns
         self._handle_filters_changed()
 
-    def update_active_filters_list(self):
-        """Refresh the active filters list widget."""
-        if not hasattr(self, 'active_filters_list'):
-            return
-
-        self.active_filters_list.clear()
-
-        if not self.active_filters:
-            placeholder = QListWidgetItem('No active filters')
-            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.active_filters_list.addItem(placeholder)
-            return
-
-        for filter_data in self.active_filters:
-            pattern = filter_data.get('pattern', '')
-            item = QListWidgetItem(pattern)
-            self.active_filters_list.addItem(item)
-
-    def remove_selected_active_filters(self):
-        """Remove selected entries from active filters."""
-        if not hasattr(self, 'active_filters_list') or not self.active_filters:
-            return
-
-        selected_items = self.active_filters_list.selectedItems()
-        if not selected_items:
-            return
-
-        rows = sorted(
-            {self.active_filters_list.row(item) for item in selected_items},
-            reverse=True
-        )
-
-        for row in rows:
-            if 0 <= row < len(self.active_filters):
-                del self.active_filters[row]
-
-        self.update_active_filters_list()
-        self._handle_filters_changed()
-
-    def clear_active_filters(self):
-        """Clear all active filters."""
-        if not self.active_filters:
-            return
-
-        self.active_filters.clear()
-        self.update_active_filters_list()
+    def _on_live_filter_changed(self, pattern: str) -> None:
+        """Handle live filter text changes from the panel."""
+        self.live_filter_pattern = pattern.strip() if pattern.strip() else None
         self._handle_filters_changed()
 
     def _update_status_counts(self) -> None:
@@ -1770,40 +1755,183 @@ class LogcatWindow(QDialog):
         finally:
             self._suppress_scroll_signal = False
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Search functionality
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _on_search_changed(self, pattern: str) -> None:
+        """Handle search pattern changes from the search bar."""
+        if not pattern:
+            self._clear_search_highlight()
+            return
+
+        # Compile the pattern from the search bar
+        compiled = self._search_bar.compile_pattern()
+        if compiled is None:
+            self._clear_search_highlight()
+            self._search_bar.update_match_count(0, 0)
+            return
+
+        self._search_pattern = compiled
+        self._update_search_matches()
+
+    # Maximum search matches to collect for performance
+    _MAX_SEARCH_MATCHES = 1000
+
+    def _update_search_matches(self) -> None:
+        """Scan visible logs and build list of matching row indices.
+
+        Limits results to _MAX_SEARCH_MATCHES for performance with large logs.
+        """
+        if not self._search_pattern:
+            self._search_match_rows = []
+            self._current_match_index = -1
+            self._search_bar.update_match_count(0, 0)
+            return
+
+        model = self.log_display.model()
+        if model is None:
+            return
+
+        # Find rows with matches (limited for performance)
+        match_rows = []
+        for row in range(model.rowCount()):
+            index = model.index(row, 0)
+            text = model.data(index, Qt.ItemDataRole.DisplayRole)
+            if text and self._search_pattern.search(str(text)):
+                match_rows.append(row)
+                if len(match_rows) >= self._MAX_SEARCH_MATCHES:
+                    break
+
+        self._search_match_rows = match_rows
+
+        if match_rows:
+            # Set current match to the first visible or first overall
+            visible_rect = self.log_display.viewport().rect()
+            first_visible = self.log_display.indexAt(visible_rect.topLeft())
+            last_visible = self.log_display.indexAt(visible_rect.bottomLeft())
+
+            # Find a match that's visible, or default to first
+            self._current_match_index = 0
+            if first_visible.isValid() and last_visible.isValid():
+                for i, row in enumerate(match_rows):
+                    if first_visible.row() <= row <= last_visible.row():
+                        self._current_match_index = i
+                        break
+
+            self._update_current_match_highlight()
+        else:
+            self._current_match_index = -1
+            self._update_delegate_highlight(None, -1)
+
+        total = len(match_rows)
+        current = self._current_match_index + 1 if total > 0 else 0
+        limited = total >= self._MAX_SEARCH_MATCHES
+        self._search_bar.update_match_count(current, total, limited=limited)
+
+    def _update_current_match_highlight(self) -> None:
+        """Update the delegate with current match info and refresh view."""
+        if not self._search_match_rows or self._current_match_index < 0:
+            self._update_delegate_highlight(self._search_pattern, -1)
+            return
+
+        current_row = self._search_match_rows[self._current_match_index]
+        self._update_delegate_highlight(self._search_pattern, current_row)
+
+        # Scroll to the current match
+        model = self.log_display.model()
+        if model:
+            index = model.index(current_row, 0)
+            self.log_display.scrollTo(index, QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def _update_delegate_highlight(
+        self, pattern: Optional[re.Pattern], current_row: int
+    ) -> None:
+        """Update the delegate with search pattern and refresh the view."""
+        if self._log_delegate:
+            self._log_delegate.set_search_pattern(pattern)
+            self._log_delegate.set_current_match_row(current_row)
+
+        # Force repaint of the visible area
+        self.log_display.viewport().update()
+
+    def _navigate_to_next_match(self) -> None:
+        """Navigate to the next search match."""
+        if not self._search_match_rows:
+            return
+
+        total = len(self._search_match_rows)
+        self._current_match_index = (self._current_match_index + 1) % total
+        self._update_current_match_highlight()
+        self._search_bar.update_match_count(self._current_match_index + 1, total)
+
+    def _navigate_to_prev_match(self) -> None:
+        """Navigate to the previous search match."""
+        if not self._search_match_rows:
+            return
+
+        total = len(self._search_match_rows)
+        self._current_match_index = (self._current_match_index - 1) % total
+        self._update_current_match_highlight()
+        self._search_bar.update_match_count(self._current_match_index + 1, total)
+
+    def _on_search_closed(self) -> None:
+        """Handle search bar close - clear all highlights."""
+        self._clear_search_highlight()
+
+    def _position_search_bar(self) -> None:
+        """Position the search bar in the top-right corner of the log display."""
+        if not hasattr(self, '_search_bar') or not self._search_bar:
+            return
+
+        parent = self._search_bar.parentWidget()
+        if parent is None:
+            return
+
+        # Get parent (log_display) dimensions
+        parent_width = parent.width()
+        search_bar_width = self._search_bar.sizeHint().width()
+        search_bar_height = self._search_bar.height()
+
+        # Position in top-right corner with some padding
+        margin_right = 20
+        margin_top = 10
+
+        x = parent_width - search_bar_width - margin_right
+        y = margin_top
+
+        # Ensure it doesn't go off the left edge
+        x = max(margin_right, x)
+
+        self._search_bar.move(x, y)
+
+    def eventFilter(self, watched: QObject, event) -> bool:
+        """Handle resize events to reposition the search bar."""
+        if watched is self.log_display and event.type() == QEvent.Type.Resize:
+            self._position_search_bar()
+
+        return super().eventFilter(watched, event)
+
+    def _clear_search_highlight(self) -> None:
+        """Clear search pattern and refresh view."""
+        self._search_pattern = None
+        self._search_match_rows = []
+        self._current_match_index = -1
+        self._update_delegate_highlight(None, -1)
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
-        """Ensure the logcat process stops when the window closes."""
+        """Ensure the logcat process and device watcher are cleaned up."""
         if self.logcat_process:
             self.stop_logcat()
+
+        # Cleanup device watcher to prevent memory leaks
+        if self._device_watcher:
+            self._device_watcher.cleanup()
+            self._device_watcher = None
+
         super().closeEvent(event)
-
-    def load_saved_filter(self, filter_name):
-        """Update preview when saved filter is selected."""
-        if not hasattr(self, 'saved_filters_combo'):
-            return
-
-        index = filter_name if isinstance(filter_name, int) else self.saved_filters_combo.currentIndex()
-        if index < 0:
-            return
-
-        actual_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
-        if not actual_name:
-            return
-
-        pattern = self.filters.get(actual_name)
-        if pattern is None:
-            return
-
-        self.saved_filters_combo.setToolTip(f'{pattern}')
-
-    def apply_selected_filter(self):
-        """Apply the selected saved filter."""
-        index = self.saved_filters_combo.currentIndex()
-        if index < 0:
-            return
-
-        filter_name = self.saved_filters_combo.itemData(index, Qt.ItemDataRole.UserRole)
-        if filter_name and filter_name in self.filters:
-            self.add_active_filter(filter_name, self.filters[filter_name])
 
     def open_performance_settings(self):
         """Open performance settings dialog."""
@@ -1823,78 +1951,6 @@ class LogcatWindow(QDialog):
         separator.setFrameShape(QFrame.Shape.VLine)
         separator.setFrameShadow(QFrame.Shadow.Sunken)
         return separator
-
-    def load_filters(self):
-        """Load saved filters from config file."""
-        try:
-            config_dir = os.path.expanduser('~')
-            config_file = os.path.join(config_dir, '.lazy_blacktea_filters.json')
-
-            if os.path.exists(config_file):
-                import json
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    self.filters = json.load(f)
-                # Migrate legacy {name: pattern} to {pattern: pattern} and deduplicate
-                if self._migrate_saved_filters_format():
-                    # Persist the normalized structure back to disk
-                    self.save_filters()
-                self.update_saved_filters_combo()
-        except Exception as e:
-            logger.warning(f'Failed to load filters: {e}')
-
-    def save_filters(self):
-        """Save filters to config file."""
-        try:
-            config_dir = os.path.expanduser('~')
-            config_file = os.path.join(config_dir, '.lazy_blacktea_filters.json')
-
-            import json
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.filters, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.warning(f'Failed to save filters: {e}')
-
-    def _migrate_saved_filters_format(self) -> bool:
-        """Normalize saved filters to use pattern as key and value.
-
-        Legacy format stored {name: pattern}. New format stores {pattern: pattern}.
-        Migration also deduplicates identical patterns, preserving the first occurrence order.
-
-        Returns True if migration changed the in-memory structure.
-        """
-        try:
-            src = self.filters
-            if not isinstance(src, dict):
-                self.filters = {}
-                return True
-
-            # Already normalized if every key equals its value
-            all_equal = True
-            for k, v in src.items():
-                if not isinstance(v, str) or not isinstance(k, str) or k != v:
-                    all_equal = False
-                    break
-            if all_equal:
-                return False
-
-            seen: set[str] = set()
-            migrated: Dict[str, str] = {}
-            for _name, pattern in src.items():
-                if not isinstance(pattern, str):
-                    continue
-                p = pattern.strip()
-                if not p or p in seen:
-                    continue
-                migrated[p] = p
-                seen.add(p)
-
-            changed = migrated != src
-            if changed:
-                self.filters = migrated
-            return changed
-        except Exception as exc:
-            logger.debug('Saved filters migration skipped due to error: %s', exc)
-            return False
 
     def show_error(self, message):
         """Show error message dialog."""

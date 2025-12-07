@@ -190,8 +190,14 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         ]
         self.window.log_model.append_lines(lines)
 
-        self.window.add_active_filter('AlphaFilter', 'alpha')
-        self.window.apply_live_filter('beta')
+        # Use the FilterPanelWidget public API
+        filter_panel = self.window._filter_panel_widget
+
+        # Add active pattern through public method
+        filter_panel.add_active_pattern('alpha')
+
+        # Set live filter through filter panel
+        filter_panel.set_live_filter('beta')
 
         results = [
             self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
@@ -200,8 +206,8 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertEqual(results, ['alpha event ready', 'beta event ready'])
 
         # Removing the active filter should shrink the proxy results
-        self.window.active_filters_list.setCurrentRow(0)
-        self.window.remove_selected_active_filters()
+        filter_panel.remove_active_pattern('alpha')
+
         results = [
             self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
             for row in range(self.window.filtered_model.rowCount())
@@ -486,25 +492,113 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertIn('Copy All', action_texts)
         self.assertIn('Select All', action_texts)
 
-    def test_ctrl_f_shortcut_expands_filters_and_focuses_input(self):
-        self.window.filters_panel.set_collapsed(True)
-        if hasattr(self.window, 'filters_toggle_btn'):
-            self.window.filters_toggle_btn.setChecked(False)
-        self.window.filter_input.setText('needle')
-        self.window.filter_input.clearFocus()
+    def test_ctrl_f_shortcut_opens_floating_search_bar(self):
+        """Ctrl+F should open the floating search bar and focus its input."""
         self.window.show()
         QApplication.processEvents()
 
-        self.assertTrue(self.window.filters_panel.is_collapsed())
+        # Search bar should be hidden initially
+        self.assertFalse(self.window._search_bar.isVisible())
 
         self.window._handle_find_shortcut()
         QApplication.processEvents()
 
-        self.assertFalse(self.window.filters_panel.is_collapsed())
-        if hasattr(self.window, 'filters_toggle_btn'):
-            self.assertTrue(self.window.filters_toggle_btn.isChecked())
-        self.assertTrue(self.window.filter_input.hasFocus())
-        self.assertEqual(self.window.filter_input.selectedText(), 'needle')
+        # After Ctrl+F, search bar should be visible
+        self.assertTrue(self.window._search_bar.isVisible())
+        # Focus should be on the search input
+        self.assertTrue(self.window._search_bar._search_input.hasFocus())
+
+    def test_search_finds_matching_rows(self):
+        """Search should find and count matching log rows."""
+        # Add some log lines
+        from ui.logcat_viewer import LogLine
+        lines = [
+            LogLine.from_string('01-01 00:00:01.000 1 2 I TestTag: error message'),
+            LogLine.from_string('01-01 00:00:02.000 1 2 I TestTag: normal message'),
+            LogLine.from_string('01-01 00:00:03.000 1 2 I TestTag: another error here'),
+        ]
+        self.window.log_model.append_lines(lines)
+        QApplication.processEvents()
+
+        # Perform search
+        self.window._search_bar.set_search_text('error')
+        self.window._on_search_changed('error')
+        QApplication.processEvents()
+
+        # Should find 2 matches
+        self.assertEqual(len(self.window._search_match_rows), 2)
+        self.assertIn(0, self.window._search_match_rows)  # First line
+        self.assertIn(2, self.window._search_match_rows)  # Third line
+
+    def test_search_navigation_cycles_through_matches(self):
+        """F3 and Shift+F3 should cycle through matches."""
+        from ui.logcat_viewer import LogLine
+        lines = [
+            LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: findme one'),
+            LogLine.from_string('01-01 00:00:02.000 1 2 I Tag: nothing here'),
+            LogLine.from_string('01-01 00:00:03.000 1 2 I Tag: findme two'),
+            LogLine.from_string('01-01 00:00:04.000 1 2 I Tag: findme three'),
+        ]
+        self.window.log_model.append_lines(lines)
+        QApplication.processEvents()
+
+        # Search for "findme"
+        self.window._search_bar.set_search_text('findme')
+        self.window._on_search_changed('findme')
+        QApplication.processEvents()
+
+        # Should find 3 matches (rows 0, 2, 3)
+        self.assertEqual(len(self.window._search_match_rows), 3)
+        initial_index = self.window._current_match_index
+
+        # Navigate next
+        self.window._navigate_to_next_match()
+        self.assertEqual(self.window._current_match_index, (initial_index + 1) % 3)
+
+        # Navigate previous
+        self.window._navigate_to_prev_match()
+        self.assertEqual(self.window._current_match_index, initial_index)
+
+    def test_search_close_clears_highlight(self):
+        """Closing search bar should clear all highlights."""
+        from ui.logcat_viewer import LogLine
+        lines = [
+            LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: test line'),
+        ]
+        self.window.log_model.append_lines(lines)
+        self.window._search_bar.set_search_text('test')
+        self.window._on_search_changed('test')
+        QApplication.processEvents()
+
+        # Verify search is active
+        self.assertIsNotNone(self.window._search_pattern)
+        self.assertTrue(len(self.window._search_match_rows) > 0)
+
+        # Close search
+        self.window._on_search_closed()
+        QApplication.processEvents()
+
+        # Verify search state is cleared
+        self.assertIsNone(self.window._search_pattern)
+        self.assertEqual(len(self.window._search_match_rows), 0)
+        self.assertEqual(self.window._current_match_index, -1)
+
+    def test_search_delegate_receives_pattern(self):
+        """Search pattern should be passed to the delegate for highlighting."""
+        from ui.logcat_viewer import LogLine
+        lines = [
+            LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: highlight me'),
+        ]
+        self.window.log_model.append_lines(lines)
+        QApplication.processEvents()
+
+        self.window._search_bar.set_search_text('highlight')
+        self.window._on_search_changed('highlight')
+        QApplication.processEvents()
+
+        # Verify delegate received the pattern
+        if self.window._log_delegate:
+            self.assertIsNotNone(self.window._log_delegate._search_pattern)
 
 
 class FakeSignal:
