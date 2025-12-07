@@ -304,7 +304,6 @@ class PanelText:
     PLACEHOLDER_GROUP_NAME = 'Enter group name...'
     PLACEHOLDER_DEVICE_FILE_PATH = '/sdcard'
     PLACEHOLDER_DEVICE_FILE_OUTPUT = 'Select download destination...'
-    PLACEHOLDER_SHELL_COMMAND = 'adb shell input keyevent 26'
     PLACEHOLDER_APP_SEARCH = 'Search by package, version...'
 
     BUTTON_BROWSE = 'Browse'
@@ -316,7 +315,6 @@ class PanelText:
     BUTTON_DELETE_GROUP = 'Delete Group'
     BUTTON_RUN_SINGLE_COMMAND = 'Run Single Command'
     BUTTON_RUN_ALL_COMMANDS = 'Run All Commands'
-    BUTTON_RUN_SINGLE_SHELL = 'Run Shell Command'
     BUTTON_REFRESH = 'Refresh'
     BUTTON_GO = 'Go'
     BUTTON_UP = 'Up'

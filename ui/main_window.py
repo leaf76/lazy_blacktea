@@ -1957,12 +1957,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         existing.raise_()
         existing.activateWindow()
 
-    # Shell commands
-    @ensure_devices_selected
-    def run_shell_command(self):
-        """Run shell command on selected devices using commands facade."""
-        self.commands_facade.run_shell_command()
-
     # Enhanced command execution methods
     def add_template_command(self, command):
         """Add a template command using commands facade."""
@@ -1985,48 +1979,47 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def log_command_results(self, command, serials, results):
         """Log command results to console with proper formatting."""
-        logger.info(f'🔍 Processing results for command: {command}')
-
         if not results:
-            logger.warning(f'❌ No results for command: {command}')
+            self.write_to_console(f'❌ No results for command: {command}')
             return
 
         # Convert results to list if it's not already
         results_list = list(results) if not isinstance(results, list) else results
-        logger.info(f'🔍 Found {len(results_list)} result set(s)')
 
         for serial, result in zip(serials, results_list):
             # Get device name for better display
             device_name = serial
             if hasattr(self, 'device_dict') and serial in self.device_dict:
-                device_name = f"{self.device_dict[serial].device_model} ({serial[:8]}...)"
+                device = self.device_dict[serial]
+                device_name = f"{device.device_model} ({serial[:8]}...)"
 
-            logger.info(f'📱 [{device_name}] Command: {command}')
+            self.write_to_console(f'📱 [{device_name}] {command}')
 
             if result and len(result) > 0:
-                logger.info(f'📱 [{device_name}] 📋 Output ({len(result)} lines total):')
-
-                for line_num, line in enumerate(result):
-                    if line and line.strip():  # Skip empty lines
-                        output_line = f'  {line.strip()}'
-                        logger.info(f'📱 [{device_name}] {line_num+1:2d}▶️ {line.strip()}')
-
-                success_msg = f'✅ [{device_name}] Completed'
-                logger.info(f'📱 [{device_name}] ✅ Command completed successfully')
+                self.write_to_console(f'📋 Output ({len(result)} lines):')
+                for line in result:
+                    if line and line.strip():
+                        self.write_to_console(f'  {line.strip()}')
+                self.write_to_console(f'✅ [{device_name}] Completed')
             else:
-                error_msg = f'❌ [{device_name}] No output'
-                logger.warning(f'📱 [{device_name}] ❌ No output or command failed')
+                self.write_to_console(f'❌ [{device_name}] No output')
 
-        logger.info(f'🏁 Results display completed for command: {command}')
-        logger.info('─' * 50)  # Separator line
+        self.write_to_console('─' * 40)
 
     def write_to_console(self, message):
-        """Write message to console widget using signal."""
+        """Write message to console widget and shell output panel."""
         try:
             # Use signal for thread-safe console output
             self.console_output_signal.emit(message)
         except Exception as e:
             logger.error(f'Error emitting console signal: {e}')
+
+        # Also write to shell output panel if available
+        try:
+            if hasattr(self, 'shell_output_text') and self.shell_output_text is not None:
+                self.shell_output_text.append(message)
+        except Exception:
+            pass
 
     def _write_to_console_safe(self, message):
         """Thread-safe method to write to console."""
@@ -2047,26 +2040,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def add_to_history(self, command):
         """Add command to history using commands facade."""
         self.commands_facade.add_to_history(command)
-
-    def update_history_display(self):
-        """Update the history list widget using commands facade."""
-        self.commands_facade.update_history_display()
-
-    def load_from_history(self, item):
-        """Load selected history item using commands facade."""
-        self.commands_facade.load_from_history(item)
-
-    def clear_command_history(self):
-        """Clear command history using commands facade."""
-        self.commands_facade.clear_command_history()
-
-    def export_command_history(self):
-        """Export command history using commands facade."""
-        self.commands_facade.export_command_history()
-
-    def import_command_history(self):
-        """Import command history using commands facade."""
-        self.commands_facade.import_command_history()
 
     def load_command_history_from_config(self):
         """Load command history from config file using command history manager."""

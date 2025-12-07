@@ -459,7 +459,7 @@ class ToolsPanelController:
 
         self.window.batch_commands_edit = QTextEdit()
         self.window.batch_commands_edit.setPlaceholderText(
-            'Enter multiple commands (one per line):\n'
+            'Enter shell commands (one per line, no "adb shell" prefix needed):\n'
             'getprop ro.build.version.release\n'
             'dumpsys battery\n'
             'pm list packages -3\n\n'
@@ -488,51 +488,28 @@ class ToolsPanelController:
 
         batch_layout.addLayout(exec_buttons_layout)
 
-        self.window.shell_cmd_edit = QLineEdit()
-        self.window.shell_cmd_edit.setPlaceholderText(PanelText.PLACEHOLDER_SHELL_COMMAND)
-        batch_layout.addWidget(self.window.shell_cmd_edit)
-
-        run_shell_btn = QPushButton(PanelText.BUTTON_RUN_SINGLE_SHELL)
-        run_shell_btn.clicked.connect(lambda: self.window.run_shell_command())
-        self._style_button(run_shell_btn, PanelButtonVariant.PRIMARY, height=36, min_width=220)
-        batch_layout.addWidget(run_shell_btn)
-
         content_layout.addWidget(batch_group)
 
-        history_group = QGroupBox(PanelText.GROUP_COMMAND_HISTORY)
-        history_layout = QVBoxLayout(history_group)
-        history_layout.setContentsMargins(16, 20, 16, 20)
-        history_layout.setSpacing(12)
+        # Command Output Section
+        output_group = QGroupBox('📤 Command Output')
+        output_layout = QVBoxLayout(output_group)
+        output_layout.setContentsMargins(16, 20, 16, 16)
+        output_layout.setSpacing(10)
 
-        self.window.command_history_list = QListWidget()
-        self.window.command_history_list.setMinimumHeight(200)
-        self.window.command_history_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.window.command_history_list.itemDoubleClicked.connect(self.window.load_from_history)
-        history_layout.addWidget(self.window.command_history_list)
+        self.window.shell_output_text = QTextEdit()
+        self.window.shell_output_text.setReadOnly(True)
+        self.window.shell_output_text.setPlaceholderText('Command output will appear here...')
+        self.window.shell_output_text.setMinimumHeight(200)
+        self.window.shell_output_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.window.shell_output_text.setStyleSheet(StyleManager.get_console_style())
+        output_layout.addWidget(self.window.shell_output_text)
 
-        history_buttons_layout = QHBoxLayout()
+        clear_output_btn = QPushButton('Clear Output')
+        clear_output_btn.clicked.connect(lambda: self.window.shell_output_text.clear())
+        self._style_button(clear_output_btn, PanelButtonVariant.SECONDARY, height=32, min_width=120)
+        output_layout.addWidget(clear_output_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
-        clear_history_btn = QPushButton(PanelText.BUTTON_CLEAR)
-        clear_history_btn.setToolTip('Clear command history')
-        clear_history_btn.clicked.connect(lambda: self.window.clear_command_history())
-        self._style_button(clear_history_btn, PanelButtonVariant.DANGER, height=32, min_width=140)
-        history_buttons_layout.addWidget(clear_history_btn)
-
-        export_history_btn = QPushButton(PanelText.BUTTON_EXPORT)
-        export_history_btn.clicked.connect(lambda: self.window.export_command_history())
-        self._style_button(export_history_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
-        history_buttons_layout.addWidget(export_history_btn)
-
-        import_history_btn = QPushButton(PanelText.BUTTON_IMPORT)
-        import_history_btn.clicked.connect(lambda: self.window.import_command_history())
-        self._style_button(import_history_btn, PanelButtonVariant.SECONDARY, height=32, min_width=140)
-        history_buttons_layout.addWidget(import_history_btn)
-
-        history_layout.addLayout(history_buttons_layout)
-        content_layout.addWidget(history_group)
-
-        content_layout.addStretch()
-        self.window.update_history_display()
+        content_layout.addWidget(output_group)
 
         tab_widget.addTab(scroll_area, PanelText.TAB_SHELL_COMMANDS)
 

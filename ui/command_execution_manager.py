@@ -87,7 +87,7 @@ class CommandExecutionManager(QObject):
 
 
     def run_shell_command(self, command: str, devices: List[adb_models.DeviceInfo]):
-        """執行shell命令"""
+        """Execute shell command using the cancellable task implementation."""
         if not command.strip():
             self.parent_window.show_error('Error', 'Please enter a command.')
             return
@@ -104,21 +104,16 @@ class CommandExecutionManager(QObject):
 
         self.write_to_console(f'🚀 Running shell command "{command}" on {device_count} device(s)...')
 
-        self.parent_window.show_info(
-            'Shell Command',
-            f'Running command on {device_count} device(s):\n"{command}"\n\nCheck console output for results.'
-        )
-
         context = TaskContext(name='shell_command', category='command')
         handle = self._dispatcher.submit(
-            self._run_shell_command_task,
+            self._run_cancellable_command_task,
             serials,
             command=command,
             context=context,
         )
 
         handle.completed.connect(lambda payload: self._on_shell_command_completed(command, serials, payload))
-        handle.failed.connect(lambda exc: self._log_error(f"Error executing shell command: {exc}"))
+        handle.failed.connect(lambda exc: self._on_command_failed(command, exc))
         self._track_handle(handle)
 
     def execute_single_command(self, command: str, devices: List[adb_models.DeviceInfo]):
@@ -269,7 +264,7 @@ class CommandExecutionManager(QObject):
         self.log_command_results(command, serials, results)
 
     def write_to_console(self, message: str):
-        """將消息寫入控制台"""
+        """Write message to console (delegates to parent_window.write_to_console)."""
         try:
             if self._console_connected:
                 self.console_output_signal.emit(message)
@@ -281,17 +276,37 @@ class CommandExecutionManager(QObject):
             _fallback_logger.exception('Error emitting console signal')
 
     def get_valid_commands_from_text(self, text: str) -> List[str]:
-        """從文本中提取有效命令"""
+        """Extract valid commands from text, supporting line continuation with backslash."""
         if not text.strip():
             return []
 
         lines = text.split('\n')
         commands = []
+        current_command = []
 
         for line in lines:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                commands.append(line)
+            stripped = line.strip()
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('#'):
+                # If we have a pending command, finalize it
+                if current_command:
+                    commands.append(' '.join(current_command))
+                    current_command = []
+                continue
+
+            # Check for line continuation (ends with \)
+            if stripped.endswith('\\'):
+                # Remove the backslash and add to current command
+                current_command.append(stripped[:-1].rstrip())
+            else:
+                # No continuation - finalize the command
+                current_command.append(stripped)
+                commands.append(' '.join(current_command))
+                current_command = []
+
+        # Handle any remaining command
+        if current_command:
+            commands.append(' '.join(current_command))
 
         return commands
 
@@ -316,9 +331,19 @@ class CommandExecutionManager(QObject):
             self.parent_window.logger.warning(message)
 
     def _log_error(self, message: str):
-        """記錄錯誤消息"""
+        """Record error message to logger."""
         if hasattr(self.parent_window, 'logger'):
             self.parent_window.logger.error(message)
+
+    def _on_command_failed(self, command: str, exc: Exception) -> None:
+        """Handle command execution failure with proper user feedback."""
+        error_msg = f'Command "{command}" failed: {exc}'
+        self._log_error(error_msg)
+        self.write_to_console(f'❌ {error_msg}')
+        try:
+            self.parent_window.show_error('Command Failed', error_msg)
+        except Exception:
+            pass
 
     def _on_shell_command_completed(self, command: str, serials: List[str], payload: Any) -> None:
         results = []
@@ -439,25 +464,6 @@ class CommandExecutionManager(QObject):
 
             # Cleanup state
             self._batch_states.pop(batch_id, None)
-
-    def _run_shell_command_task(
-        self,
-        serials: List[str],
-        *,
-        command: str,
-        task_handle: Optional[TaskHandle] = None,
-        **_: Any,
-    ) -> Dict[str, Any]:
-        result_container: Dict[str, Any] = {}
-
-        def _handle_results(results):
-            result_container['results'] = results
-
-        adb_tools.run_adb_shell_command(serials, command, callback=_handle_results)
-        return {
-            'success': True,
-            'results': result_container.get('results', []),
-        }
 
     def _run_cancellable_command_task(
         self,

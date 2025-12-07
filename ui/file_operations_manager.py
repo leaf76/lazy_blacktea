@@ -583,14 +583,6 @@ class CommandHistoryManager:
 
         handle.finished.connect(_cleanup)
 
-    def _can_update_ui(self) -> bool:
-        """Return True when parent can safely refresh the history list."""
-        return (
-            hasattr(self.parent_window, 'update_history_display') and
-            hasattr(self.parent_window, 'command_history_manager') and
-            getattr(self.parent_window, 'command_history_manager') is self
-        )
-
     def _sync_executor_history(self) -> None:
         """Keep the command executor's history aligned with the manager."""
         executor = getattr(self.parent_window, 'command_executor', None)
@@ -602,26 +594,23 @@ class CommandHistoryManager:
         normalized = history[-50:] if history else []
         self.command_history = normalized
 
-        if self._can_update_ui():
-            self.parent_window.update_history_display()
-
         self._sync_executor_history()
 
         if persist:
             self.save_command_history_to_config()
 
     def add_to_history(self, command: str):
-        """添加命令到歷史記錄"""
+        """Add command to history."""
         if command and command not in self.command_history:
             updated_history = self.command_history + [command]
             self.set_history(updated_history, persist=True)
 
     def clear_history(self):
-        """清空命令歷史"""
+        """Clear command history."""
         self.set_history([], persist=True)
 
     def export_command_history(self):
-        """導出命令歷史到文件"""
+        """Export command history to file."""
         if not self.command_history:
             self.parent_window.show_info('Export History', 'No commands in history to export.')
             return
@@ -652,7 +641,7 @@ class CommandHistoryManager:
             self._track_handle(handle)
 
     def import_command_history(self):
-        """從文件導入命令歷史"""
+        """Import command history from file."""
         filename, _ = QFileDialog.getOpenFileName(
             self.parent_window, 'Import Command History', '',
             'Text Files (*.txt);;All Files (*)'
@@ -713,7 +702,7 @@ class CommandHistoryManager:
         return {'success': True, 'commands': loaded_commands}
 
     def load_command_history_from_config(self):
-        """從配置文件加載命令歷史"""
+        """Load command history from config file."""
         try:
             config_data = json_utils.read_config_json()
             history = config_data.get('command_history', [])
@@ -721,11 +710,9 @@ class CommandHistoryManager:
         except Exception:
             self.command_history = []
             self._sync_executor_history()
-            if self._can_update_ui():
-                self.parent_window.update_history_display()
 
     def save_command_history_to_config(self):
-        """保存命令歷史到配置文件"""
+        """Save command history to config file."""
         try:
             config_data = json_utils.read_config_json()
             config_data['command_history'] = self.command_history

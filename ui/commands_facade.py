@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, TYPE_CHECKING, Any
-
-from PyQt6.QtGui import QTextCursor
+from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from ui.main_window import WindowMain
-    from utils import adb_models
 
 
 class CommandsFacade:
-    """Encapsulates shell command execution and history operations."""
+    """Encapsulates shell command execution operations."""
 
     def __init__(self, window: "WindowMain") -> None:
         self.window = window
-
-    # Shell commands
-    def run_shell_command(self) -> None:
-        command = self.window.shell_cmd_edit.text().strip()
-        devices = self.window.get_checked_devices()
-        self.window.command_execution_manager.run_shell_command(command, devices)
 
     def add_template_command(self, command: str) -> None:
         self.window.command_execution_manager.add_template_command(command)
@@ -56,34 +47,13 @@ class CommandsFacade:
         devices = self.window.get_checked_devices()
         self.window.command_execution_manager.execute_single_command(command, devices)
 
-    # History
     def get_valid_commands(self) -> List[str]:
         text = self.window.batch_commands_edit.toPlainText().strip()
         return self.window.command_execution_manager.get_valid_commands_from_text(text)
 
     def add_to_history(self, command: str) -> None:
+        """Add command to history (stored internally, no UI display)."""
         self.window.command_history_manager.add_to_history(command)
-        self.update_history_display()
-
-    def update_history_display(self) -> None:
-        self.window.command_history_list.clear()
-        for command in reversed(self.window.command_history_manager.command_history):
-            self.window.command_history_list.addItem(command)
-
-    def load_from_history(self, item: Any) -> None:
-        command = item.text()
-        current_text = self.window.batch_commands_edit.toPlainText()
-        new_text = (current_text + '\n' + command) if current_text else command
-        self.window.batch_commands_edit.setPlainText(new_text)
-
-    def clear_command_history(self) -> None:
-        self.window.command_history_manager.clear_history()
-
-    def export_command_history(self) -> None:
-        self.window.command_history_manager.export_command_history()
-
-    def import_command_history(self) -> None:
-        self.window.command_history_manager.import_command_history()
 
 
 __all__ = ["CommandsFacade"]
