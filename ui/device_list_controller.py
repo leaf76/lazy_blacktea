@@ -210,8 +210,6 @@ class DeviceListController:
 
         filtered_devices = self._get_filtered_sorted_devices(device_dict)
 
-        logger.debug('Rendering %s devices (%s visible after search)', len(device_dict), len(filtered_devices))
-
         # Update the new expandable device list
         if self.device_list is not None:
             self._syncing_selection = True
@@ -403,9 +401,10 @@ class DeviceListController:
         return count
 
     def _update_empty_state(self, total_count: int, visible_count: int) -> None:
-        table_widget = self.table
+        # Use device_list (ExpandableDeviceList) if available, fallback to table
+        list_widget = self.device_list if self.device_list is not None else self.table
         no_devices_label = getattr(self.window, 'no_devices_label', None)
-        if table_widget is None:
+        if list_widget is None:
             return
 
         show_placeholder = total_count == 0
@@ -413,12 +412,12 @@ class DeviceListController:
         handled_by_stack = isinstance(device_stack, QStackedWidget)
 
         if handled_by_stack:
-            target_widget = no_devices_label if show_placeholder else table_widget
+            target_widget = no_devices_label if show_placeholder else list_widget
             if target_widget is not None and device_stack.indexOf(target_widget) != -1:
                 if device_stack.currentWidget() is not target_widget:
                     device_stack.setCurrentWidget(target_widget)
         else:
-            table_widget.setHidden(show_placeholder)
+            list_widget.setHidden(show_placeholder)
 
         if no_devices_label is not None and hasattr(no_devices_label, 'setText'):
             if show_placeholder:

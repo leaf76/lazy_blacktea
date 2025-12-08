@@ -364,6 +364,7 @@ class ExpandableDeviceList(QScrollArea):
             insert_index = self._layout.count() - 1
             self._layout.insertWidget(insert_index, row)
             self._rows[serial] = row
+            row.show()
 
             # Restore expansion state
             if serial in self._expanded_serials:

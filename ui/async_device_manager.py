@@ -822,7 +822,6 @@ class AsyncDeviceManager(QObject):
 
     def _on_all_basic_loaded(self):
         """所有設備基本信息加載完成"""
-        logger.info('All basic device information loaded')
         self.basic_devices_ready.emit(self.device_cache.copy())
 
     def _on_all_detailed_loaded(self):
@@ -1018,9 +1017,11 @@ class AsyncDeviceManager(QObject):
 
         current_serials = set(last_status_map.keys())
 
+        # Use final status (last_status_map) to determine removal, not historical statuses.
+        # This prevents false removal when device quickly reconnects (offline -> device).
         removal_candidates = {
-            serial for serial, statuses in status_history.items()
-            if statuses & TRACKER_REMOVAL_STATUSES
+            serial for serial, status in last_status_map.items()
+            if status in TRACKER_REMOVAL_STATUSES
         }
         missing_serials = previous_serials - current_serials
         removed_serials = removal_candidates | missing_serials

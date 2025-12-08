@@ -2607,7 +2607,6 @@ After installation, restart lazy blacktea to use device mirroring functionality.
 
     def _on_device_found_from_manager(self, serial: str, device_info):
         """處理從DeviceManager發來的新設備發現事件"""
-        logger.info(f'Device found from manager: {serial} - {device_info.device_model}')
         # 更新設備字典
         self.device_dict[serial] = device_info
         # 觸發完整的UI更新（包括複選框）

@@ -147,7 +147,15 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         self.assertEqual(self.manager.tracked_device_statuses.get(real_serial), 'device')
         self.assertEqual(self.manager._serial_aliases.get(alias_serial), real_serial)
 
-    def test_tracker_status_history_with_offline_marks_device_removed(self):
+    def test_tracker_status_history_with_reconnect_keeps_device(self):
+        """Test that device is kept when it quickly reconnects (offline -> device).
+
+        When a device is quickly unplugged and plugged back in, the tracker may
+        report both 'offline' and 'device' states in the same batch. The final
+        state should be used to determine if the device is removed, not the
+        historical states. This prevents the UI from incorrectly showing an
+        empty device list after quick reconnection.
+        """
         real_serial = "35151FDJH000GQ"
         alias_serial = f"002f{real_serial}"
         self.manager.device_cache[real_serial] = self._fake_device(real_serial)
@@ -156,12 +164,14 @@ class AsyncDeviceRefreshTests(unittest.TestCase):
         with patch.object(self.manager, 'start_device_discovery') as mock_discovery:
             self.manager._on_tracked_devices_changed([
                 (alias_serial, 'offline'),
-                (alias_serial, 'device'),
+                (alias_serial, 'device'),  # Final state is 'device' (ready)
             ])
 
         mock_discovery.assert_called_once_with(force_reload=True, load_detailed=True)
-        self.assertNotIn(real_serial, self.manager.tracked_device_statuses)
-        self.assertNotIn(real_serial, self.manager.device_cache)
+        # Device should remain tracked because final state is 'device'
+        self.assertIn(real_serial, self.manager.tracked_device_statuses)
+        # Cache is preserved since device is not considered removed
+        self.assertIn(real_serial, self.manager.device_cache)
 
     def test_tracker_alias_re_add_after_removal(self):
         real_serial = "35151FDJH000GQ"
