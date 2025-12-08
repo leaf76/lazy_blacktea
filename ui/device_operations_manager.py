@@ -717,18 +717,17 @@ class DeviceOperationsManager(QObject):
             except Exception:
                 pass
 
-            # Use shared installer which honors APK Install Settings
-            install_results = adb_tools.install_the_apk([serial], apk_file)
-            # Normalize and check for success token
-            flat_lines = []
-            for item in install_results or []:
-                if isinstance(item, (list, tuple)):
-                    flat_lines.extend(str(x) for x in item)
-                elif item is not None:
-                    flat_lines.append(str(item))
+            # Use new structured install API with better error handling
+            device_info_map = {serial: device_info} if device_info else None
+            batch_result = adb_tools.install_apk(
+                [serial],
+                apk_file,
+                validate=False,  # Skip validation for faster installs
+                device_info_map=device_info_map,
+            )
 
-            joined = "\n".join(flat_lines)
-            if 'Success' in joined or 'success' in joined:
+            install_result = batch_result.results.get(serial)
+            if install_result and install_result.success:
                 message = f'APK installed: {apk_name}'
                 self._log_console(f"✅ [{position}/{total}] Successfully installed on {device_name}")
                 self.operation_completed_signal.emit("apk_install", serial, True, message)
@@ -738,7 +737,12 @@ class DeviceOperationsManager(QObject):
                     'device_name': device_name,
                 }
 
-            error_msg = joined.strip() or 'Installation failed'
+            # Use structured error message from the result
+            if install_result:
+                error_msg = install_result.error_message or install_result.raw_output or 'Installation failed'
+            else:
+                error_msg = 'Installation failed - no result'
+
             self._log_console(f"❌ [{position}/{total}] Failed to install on {device_name}: {error_msg}")
             self.operation_completed_signal.emit("apk_install", serial, False, error_msg)
             return {'success': False, 'message': error_msg}

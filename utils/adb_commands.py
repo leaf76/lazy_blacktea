@@ -202,6 +202,52 @@ def cmd_adb_install(serial_num: str, apk_path: str):
   parts.append(f'"{apk_path}"')
   return _build_adb_command(serial_num, *parts)
 
+
+def cmd_adb_install_multiple(serial_num: str, apk_paths: list[str]):
+  """Build adb install-multiple command for split APKs.
+
+  Args:
+    serial_num: Device serial number
+    apk_paths: List of APK file paths (base + splits)
+
+  Returns:
+    Command string for installing multiple APKs as a single app.
+  """
+  try:
+    from config.config_manager import ConfigManager
+    settings = ConfigManager().get_apk_install_settings()
+  except Exception:
+    class _F:
+      replace_existing = True
+      allow_downgrade = True
+      grant_permissions = True
+      allow_test_packages = False
+      extra_args = ''
+    settings = _F()
+
+  parts = ['install-multiple']
+  if getattr(settings, 'allow_downgrade', True):
+    parts.append('-d')
+  if getattr(settings, 'replace_existing', True):
+    parts.append('-r')
+  if getattr(settings, 'grant_permissions', True):
+    parts.append('-g')
+  if getattr(settings, 'allow_test_packages', False):
+    parts.append('-t')
+
+  extra = getattr(settings, 'extra_args', '') or ''
+  if extra.strip():
+    try:
+      parts.extend(shlex.split(extra))
+    except Exception:
+      parts.append(extra.strip())
+
+  for apk_path in apk_paths:
+    parts.append(f'"{apk_path}"')
+
+  return _build_adb_command(serial_num, *parts)
+
+
 def cmd_extract_discovery_service_info(serial_num, root_folder):
   return (
       f'adb -s {serial_num} shell dumpsys activity service DiscoveryService >'
