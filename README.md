@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current release: v0.0.44
+> Current release: v0.0.45
 
 **Languages:** English | [繁體中文](README_zh-TW.md)
 
