@@ -10,6 +10,8 @@ from .models import (
     AdvertisingSet,
     AdvertisingState,
     BluetoothEventType,
+    BondedDevice,
+    BondState,
     ParsedEvent,
     ParsedSnapshot,
     ScanningState,
@@ -32,6 +34,22 @@ class BluetoothParser:
     _RE_CLIENT = re.compile(r'client\s*=\s*([\w\./:-]+)', re.IGNORECASE)
     _RE_MESSAGE = re.compile(r'\s([A-Za-z0-9_.-]+):\s(.+)$')
     _RE_SET_ID = re.compile(r'set(?:=|\s)(\d+)')
+
+    # Bonded devices patterns
+    # Pattern 1: "AA:BB:CC:DD:EE:FF (Device Name)" or "AA:BB:CC:DD:EE:FF Device Name"
+    _RE_BONDED_DEVICE = re.compile(
+        r'^\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s*(?:\(([^)]+)\)|(.+?))?$'
+    )
+    # Pattern 2: "name=Device Name, address=AA:BB:CC:DD:EE:FF"
+    _RE_BONDED_NAME_ADDR = re.compile(
+        r'name\s*=\s*([^,]+),?\s*address\s*=\s*([0-9A-Fa-f:]{17})',
+        re.IGNORECASE
+    )
+    # Pattern 3: "address=AA:BB:CC:DD:EE:FF, name=Device Name"
+    _RE_BONDED_ADDR_NAME = re.compile(
+        r'address\s*=\s*([0-9A-Fa-f:]{17}),?\s*name\s*=\s*([^,\n]+)',
+        re.IGNORECASE
+    )
 
     _SCANNING_KEYWORDS = (
         'startscan',
@@ -70,6 +88,7 @@ class BluetoothParser:
         scanning_state = self._extract_scanning_state(lines, lowered)
         advertising_state = self._extract_advertising_state(lines, lowered)
         profiles = self._extract_profile_states(lines)
+        bonded_devices = self._extract_bonded_devices(raw_text)
 
         return ParsedSnapshot(
             serial=serial,
@@ -79,6 +98,7 @@ class BluetoothParser:
             scanning=scanning_state,
             advertising=advertising_state,
             profiles=profiles,
+            bonded_devices=bonded_devices,
             raw_text=raw_text,
         )
 
@@ -180,6 +200,82 @@ class BluetoothParser:
             if profile and state:
                 profiles[profile] = state
         return profiles
+
+    def _extract_bonded_devices(self, raw_text: str) -> List[BondedDevice]:
+        """Extract bonded (paired) devices from dumpsys output.
+
+        Handles multiple formats:
+        - "Bonded devices:" section with listed devices
+        - "AA:BB:CC:DD:EE:FF (Device Name)" format
+        - "name=Name, address=AA:BB:CC:DD:EE:FF" format
+        """
+        devices: List[BondedDevice] = []
+        seen_addresses: set = set()
+
+        lines = raw_text.splitlines()
+        in_bonded_section = False
+
+        for line in lines:
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+
+            # Detect bonded devices section header
+            if any(header in line_lower for header in (
+                'bonded devices',
+                'bonded_devices',
+                'paired devices',
+                'getbondeddevices',
+            )):
+                in_bonded_section = True
+                continue
+
+            # Exit bonded section on empty line or new section header
+            if in_bonded_section and (not line_stripped or ':' in line_stripped and not self._is_mac_address(line_stripped)):
+                # Check if it's a MAC address line before exiting
+                if not self._RE_BONDED_DEVICE.match(line_stripped):
+                    in_bonded_section = False
+
+            # Try to parse device from current line
+            device = self._parse_bonded_device_line(line_stripped)
+            if device and device.address.upper() not in seen_addresses:
+                seen_addresses.add(device.address.upper())
+                devices.append(device)
+
+        return devices
+
+    def _parse_bonded_device_line(self, line: str) -> Optional[BondedDevice]:
+        """Parse a single line that might contain bonded device info."""
+        if not line:
+            return None
+
+        # Pattern 1: "AA:BB:CC:DD:EE:FF (Device Name)" or "AA:BB:CC:DD:EE:FF Device Name"
+        match = self._RE_BONDED_DEVICE.match(line)
+        if match:
+            address = match.group(1).upper()
+            name = match.group(2) or match.group(3)
+            if name:
+                name = name.strip()
+            return BondedDevice(address=address, name=name, bond_state=BondState.BONDED)
+
+        # Pattern 2: "name=Device Name, address=AA:BB:CC:DD:EE:FF"
+        match = self._RE_BONDED_NAME_ADDR.search(line)
+        if match:
+            name = match.group(1).strip()
+            address = match.group(2).upper()
+            return BondedDevice(address=address, name=name, bond_state=BondState.BONDED)
+
+        # Pattern 3: "address=AA:BB:CC:DD:EE:FF, name=Device Name"
+        match = self._RE_BONDED_ADDR_NAME.search(line)
+        if match:
+            address = match.group(1).upper()
+            name = match.group(2).strip()
+            return BondedDevice(address=address, name=name, bond_state=BondState.BONDED)
+
+        return None
+
+    def _is_mac_address(self, text: str) -> bool:
+        """Check if text starts with a MAC address pattern."""
+        return bool(re.match(r'^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}', text.strip()))
 
     # ------------------------------------------------------------------
     # Event helpers

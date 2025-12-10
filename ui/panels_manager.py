@@ -608,8 +608,8 @@ class PanelsManager(QObject):
         device_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Connect signals
-        if hasattr(main_window, 'on_device_selection_changed'):
-            device_list.selection_changed.connect(main_window.on_device_selection_changed)
+        # NOTE: selection_changed is handled by device_list_controller.set_device_list()
+        # to avoid duplicate handling
         if hasattr(main_window, 'show_device_context_menu'):
             device_list.context_menu_requested.connect(
                 lambda pos, serial: main_window.show_device_context_menu(pos, serial, device_list)

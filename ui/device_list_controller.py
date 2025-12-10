@@ -190,6 +190,16 @@ class DeviceListController:
         if active:
             self.window.device_selection_manager.set_active_serial(active)
 
+        # Sync back to UI in case selection manager modified the list (e.g., single-select mode)
+        actual_selected = self.window.device_selection_manager.get_selected_serials()
+        actual_active = self.window.device_selection_manager.get_active_serial()
+        if self.device_list is not None and actual_selected != serials:
+            self._syncing_selection = True
+            try:
+                self.device_list.set_selected_serials(actual_selected, actual_active)
+            finally:
+                self._syncing_selection = False
+
         self.update_selection_count()
 
     def _on_device_list_context_menu(self, position: QPoint, serial: str) -> None:

@@ -70,6 +70,68 @@ class BluetoothParserTests(unittest.TestCase):
         self.assertEqual(event.metadata.get('tx_power'), 'HIGH')
         self.assertEqual(event.metadata.get('data_length'), 31)
 
+    def test_parse_snapshot_extracts_bonded_devices(self):
+        from modules.bluetooth.models import BondState
+
+        raw_snapshot = (
+            "Adapter: state=ON\n"
+            "Address: AA:BB:CC:DD:EE:FF\n"
+            "Bonded devices:\n"
+            "  11:22:33:44:55:66 (Pixel Buds)\n"
+            "  AA:BB:CC:DD:EE:11 (Galaxy Watch)\n"
+            "  FF:EE:DD:CC:BB:AA\n"
+            "Other section:\n"
+        )
+        snapshot = self.parser.parse_snapshot(self.serial, raw_snapshot, timestamp=1690000000.0)
+
+        self.assertEqual(len(snapshot.bonded_devices), 3)
+
+        # Check first device (with name in parentheses)
+        dev1 = snapshot.bonded_devices[0]
+        self.assertEqual(dev1.address, '11:22:33:44:55:66')
+        self.assertEqual(dev1.name, 'Pixel Buds')
+        self.assertEqual(dev1.bond_state, BondState.BONDED)
+
+        # Check second device
+        dev2 = snapshot.bonded_devices[1]
+        self.assertEqual(dev2.address, 'AA:BB:CC:DD:EE:11')
+        self.assertEqual(dev2.name, 'Galaxy Watch')
+
+        # Check third device (no name)
+        dev3 = snapshot.bonded_devices[2]
+        self.assertEqual(dev3.address, 'FF:EE:DD:CC:BB:AA')
+        self.assertIsNone(dev3.name)
+
+    def test_parse_snapshot_bonded_devices_name_address_format(self):
+        raw_snapshot = (
+            "Adapter: state=ON\n"
+            "name=My Headphones, address=12:34:56:78:9A:BC\n"
+            "address=AB:CD:EF:12:34:56, name=Smart Watch\n"
+        )
+        snapshot = self.parser.parse_snapshot(self.serial, raw_snapshot, timestamp=1690000000.0)
+
+        self.assertEqual(len(snapshot.bonded_devices), 2)
+
+        # name=..., address=... format
+        dev1 = snapshot.bonded_devices[0]
+        self.assertEqual(dev1.address, '12:34:56:78:9A:BC')
+        self.assertEqual(dev1.name, 'My Headphones')
+
+        # address=..., name=... format
+        dev2 = snapshot.bonded_devices[1]
+        self.assertEqual(dev2.address, 'AB:CD:EF:12:34:56')
+        self.assertEqual(dev2.name, 'Smart Watch')
+
+    def test_parse_snapshot_no_bonded_devices(self):
+        raw_snapshot = (
+            "Adapter: state=ON\n"
+            "Address: AA:BB:CC:DD:EE:FF\n"
+            "No bonded devices\n"
+        )
+        snapshot = self.parser.parse_snapshot(self.serial, raw_snapshot, timestamp=1690000000.0)
+
+        self.assertEqual(len(snapshot.bonded_devices), 0)
+
 
 class BluetoothStateMachineTests(unittest.TestCase):
     def setUp(self):
@@ -167,32 +229,32 @@ class BluetoothMonitorWindowTests(unittest.TestCase):
         self.assertIn('SCANNING', state_label_text)
 
         metrics_text = self.window.metrics_view.toPlainText()
-        self.assertIn('advertising_sets: 1', metrics_text)
-        self.assertIn('scanners: 2', metrics_text)
+        # New metrics view shows session stats
+        self.assertIn('Session', metrics_text)
+        self.assertIn('Snapshots:', metrics_text)
 
-    @patch('ui.bluetooth_monitor_window.adb_tools.is_adb_installed', return_value=True)
-    def test_start_monitoring_creates_service(self, _mock_adb):
+    def test_auto_start_monitoring_on_window_open(self):
+        """Test that monitoring auto-starts when window is created."""
+        # Window should have a service after initialization (auto-start)
+        # Note: service may be None if ADB is not installed, which is expected in test env
+        # The key is that _start_monitoring was called during initialization
+        # We verify this by checking that metrics view has appropriate text
+        metrics_text = self.window.metrics_view.toPlainText()
+        # Should either have data or an error message (not the old idle message)
+        self.assertNotIn('Click "Start Monitoring"', metrics_text)
+
+    def test_stop_monitoring_clears_service(self):
+        """Test that stopping monitoring clears the service reference."""
         fake_service = MagicMock()
-        fake_service.start = MagicMock()
         fake_service.stop = MagicMock()
         fake_service.deleteLater = MagicMock()
 
-        self.window._create_service = MagicMock(return_value=fake_service)
-        self.window._connect_service = MagicMock()
-
-        self.window._start_monitoring()
-
-        self.assertIs(self.window._service, fake_service)
-        self.window._connect_service.assert_called_once_with(fake_service)
-        fake_service.start.assert_called_once()
-        self.assertFalse(self.window.start_button.isEnabled())
-        self.assertTrue(self.window.stop_button.isEnabled())
-
+        self.window._service = fake_service
         self.window._stop_monitoring()
+
         fake_service.stop.assert_called_once()
         fake_service.deleteLater.assert_called_once()
-        self.assertTrue(self.window.start_button.isEnabled())
-        self.assertFalse(self.window.stop_button.isEnabled())
+        self.assertIsNone(self.window._service)
 
     def test_event_search_filters_results(self):
         from modules.bluetooth.models import ParsedEvent, BluetoothEventType
@@ -306,26 +368,116 @@ class BluetoothMonitorWindowTests(unittest.TestCase):
         self.window.handle_snapshot(snapshot)
         self._app.processEvents()
 
-        self.window.snapshot_search_input.setText('power')
+        # Snapshot data should be stored in snapshot_view
+        self.assertIn('Power: HIGH', self.window.snapshot_view.toPlainText())
+
+        # Raw snapshot button should exist
+        self.assertTrue(hasattr(self.window, 'raw_snapshot_btn'))
+        self.assertTrue(self.window.raw_snapshot_btn.isEnabled())
+
+    def test_status_card_displays_structured_info(self):
+        from modules.bluetooth.models import (
+            ParsedSnapshot,
+            ScanningState,
+            AdvertisingState,
+            AdvertisingSet,
+            BondedDevice,
+        )
+
+        snapshot = ParsedSnapshot(
+            serial='SERIAL_BT_UI',
+            timestamp=1.0,
+            adapter_enabled=True,
+            address='AA:BB:CC:DD:EE:FF',
+            scanning=ScanningState(is_scanning=True, clients=['uid/app1', 'uid/app2']),
+            advertising=AdvertisingState(
+                is_advertising=True,
+                sets=[AdvertisingSet(set_id=0, interval_ms=160, tx_power='HIGH')],
+            ),
+            profiles={'A2DP': 'CONNECTED', 'HFP': 'DISCONNECTED'},
+            bonded_devices=[
+                BondedDevice(address='11:22:33:44:55:66', name='Pixel Buds'),
+                BondedDevice(address='AA:BB:CC:DD:EE:11', name='Galaxy Watch'),
+            ],
+            raw_text='raw dumpsys output',
+        )
+
+        self.window.handle_snapshot(snapshot)
         self._app.processEvents()
 
-        self.assertTrue(self.window.snapshot_next_btn.isEnabled())
-        self.assertTrue(self.window.snapshot_prev_btn.isEnabled())
+        # Adapter status
+        self.assertIn('Enabled', self.window.adapter_status_label.text())
+        self.assertIn('#4CAF50', self.window.adapter_status_label.styleSheet())
 
-        selections = self.window.snapshot_view.extraSelections()
-        self.assertGreaterEqual(len(selections), 3)
-        for selection in selections:
-            self.assertEqual(selection.cursor.selectedText().lower(), 'power')
+        # Address
+        self.assertIn('AA:BB:CC:DD:EE:FF', self.window.address_label.text())
 
-        initial_cursor = selections[0].cursor.selectionStart()
-        self.window.snapshot_next_btn.click()
+        # Scanning status
+        self.assertIn('Active', self.window.scanning_label.text())
+        self.assertIn('uid/app1', self.window.scanning_clients_label.text())
+
+        # Advertising status
+        self.assertIn('Active', self.window.advertising_label.text())
+        self.assertIn('Set 0', self.window.advertising_details_label.text())
+        self.assertIn('160ms', self.window.advertising_details_label.text())
+
+        # Profiles
+        self.assertIn('A2DP: CONNECTED', self.window.profiles_label.text())
+        self.assertIn('HFP: DISCONNECTED', self.window.profiles_label.text())
+
+        # Bonded devices
+        self.assertIn('2', self.window.bonded_label.text())
+        self.assertIn('Pixel Buds', self.window.bonded_devices_label.text())
+        # Now shows short MAC (last 8 chars)
+        self.assertIn('44:55:66', self.window.bonded_devices_label.text())
+
+    def test_status_card_shows_inactive_states(self):
+        from modules.bluetooth.models import ParsedSnapshot, ScanningState, AdvertisingState
+
+        snapshot = ParsedSnapshot(
+            serial='SERIAL_BT_UI',
+            timestamp=1.0,
+            adapter_enabled=False,
+            address=None,
+            scanning=ScanningState(is_scanning=False, clients=[]),
+            advertising=AdvertisingState(is_advertising=False, sets=[]),
+            profiles={},
+            bonded_devices=[],
+            raw_text='raw',
+        )
+
+        self.window.handle_snapshot(snapshot)
         self._app.processEvents()
-        next_cursor = self.window.snapshot_view.textCursor().selectionStart()
-        self.assertNotEqual(next_cursor, initial_cursor)
-        self.window.snapshot_prev_btn.click()
-        self._app.processEvents()
-        prev_cursor = self.window.snapshot_view.textCursor().selectionStart()
-        self.assertEqual(prev_cursor, initial_cursor)
+
+        # Adapter disabled
+        self.assertIn('Disabled', self.window.adapter_status_label.text())
+        self.assertIn('#f44336', self.window.adapter_status_label.styleSheet())
+
+        # Address empty
+        self.assertIn('--', self.window.address_label.text())
+
+        # Scanning inactive
+        self.assertIn('Inactive', self.window.scanning_label.text())
+        self.assertEqual('', self.window.scanning_clients_label.text())
+
+        # Advertising inactive
+        self.assertIn('Inactive', self.window.advertising_label.text())
+        self.assertEqual('', self.window.advertising_details_label.text())
+
+        # No profiles
+        self.assertIn('--', self.window.profiles_label.text())
+
+        # No bonded devices
+        self.assertIn('0', self.window.bonded_label.text())
+        self.assertEqual('', self.window.bonded_devices_label.text())
+
+    def test_raw_buttons_exist(self):
+        """Test that Raw Snapshot and Raw Metrics buttons exist."""
+        # Raw buttons should exist in header
+        self.assertTrue(hasattr(self.window, 'raw_snapshot_btn'))
+        self.assertTrue(hasattr(self.window, 'raw_metrics_btn'))
+        self.assertEqual(self.window.raw_snapshot_btn.text(), 'Raw Snapshot')
+        self.assertEqual(self.window.raw_metrics_btn.text(), 'Raw Metrics')
 
 
 if __name__ == '__main__':

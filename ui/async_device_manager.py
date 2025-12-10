@@ -318,6 +318,10 @@ class TrackDevicesWorker(QThread):
         self._stop_event.set()
         self.requestInterruption()
         self._finalize_process()
+        # Wait briefly for thread to exit to prevent crash on Python shutdown
+        if self.isRunning():
+            if not self.wait(2000):
+                logger.warning('TrackDevicesWorker did not stop within timeout')
 
     def _finalize_process(self) -> None:
         """Terminate the adb process safely and drain remaining stderr output."""
@@ -330,6 +334,13 @@ class TrackDevicesWorker(QThread):
         stderr_output = None
 
         try:
+            # Close stdout first to unblock any pending read() calls in run()
+            if process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except Exception:
+                    pass
+
             if process.poll() is None:
                 try:
                     process.terminate()
@@ -957,8 +968,7 @@ class AsyncDeviceManager(QObject):
         self.clear_cache()
         if self.device_tracker_thread:
             self.device_tracker_thread.stop()
-            if not self.device_tracker_thread.wait(1000):
-                logger.warning('Timed out waiting for device tracker thread to stop')
+            # stop() already waits up to 2 seconds, no need to wait again
         self.device_tracker_thread = None
         self.worker = None
 

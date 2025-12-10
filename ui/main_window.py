@@ -130,7 +130,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self._current_theme = 'light'
         initial_config = self.config_manager.load_config()
         self._initial_ui_settings: UISettings = initial_config.ui
-        self._initial_single_selection = getattr(self._initial_ui_settings, 'single_selection', True)
+        self._initial_single_selection = getattr(self._initial_ui_settings, 'single_selection', False)
         self._current_theme = self.theme_manager.set_theme(initial_config.ui.theme)
         self.error_handler = ErrorHandler(self)
         self.command_executor = CommandExecutor(self)
@@ -413,6 +413,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_list = device_components.get('device_list')
         self.filter_bar = device_components.get('filter_bar')
         self.subtitle_label = device_components.get('subtitle_label')
+        self.single_mode_action = device_components.get('single_mode_action')
 
         # Attach new device list to controller (if available)
         if self.device_list is not None:
@@ -463,6 +464,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 prev = self.selection_mode_checkbox.blockSignals(True)
                 self.selection_mode_checkbox.setChecked(self._initial_single_selection)
                 self.selection_mode_checkbox.blockSignals(prev)
+            # Sync menu action without emitting signals
+            if self.single_mode_action is not None:
+                prev = self.single_mode_action.blockSignals(True)
+                self.single_mode_action.setChecked(self._initial_single_selection)
+                self.single_mode_action.blockSignals(prev)
             # Update dependent UI and status label
             self._sync_selection_mode_dependent_ui()
             self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())

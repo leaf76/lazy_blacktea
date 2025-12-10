@@ -58,6 +58,23 @@ class ScanningState:
     clients: List[str] = field(default_factory=list)
 
 
+class BondState(Enum):
+    """Bluetooth bond states from Android BluetoothDevice constants."""
+
+    NONE = 'NONE'        # BOND_NONE = 10
+    BONDING = 'BONDING'  # BOND_BONDING = 11
+    BONDED = 'BONDED'    # BOND_BONDED = 12
+
+
+@dataclass
+class BondedDevice:
+    """Represents a bonded (paired) Bluetooth device."""
+
+    address: str
+    name: Optional[str] = None
+    bond_state: BondState = BondState.BONDED
+
+
 @dataclass
 class ParsedSnapshot:
     """Normalised view of a `dumpsys` snapshot."""
@@ -69,6 +86,7 @@ class ParsedSnapshot:
     scanning: ScanningState = field(default_factory=ScanningState)
     advertising: AdvertisingState = field(default_factory=AdvertisingState)
     profiles: Dict[str, str] = field(default_factory=dict)
+    bonded_devices: List[BondedDevice] = field(default_factory=list)
     raw_text: str = ''
 
 

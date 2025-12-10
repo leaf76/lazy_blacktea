@@ -21,6 +21,16 @@ logger = common.get_logger('bluetooth_service')
 SnapshotRunner = Callable[[], str]
 LogcatRunner = Callable[[], Iterable[str]]
 
+# Adaptive polling interval constants for Bluetooth monitoring.
+# The service dynamically adjusts polling frequency based on activity:
+# - When Bluetooth state changes are detected, polling speeds up to MIN_INTERVAL_S
+# - After IDLE_THRESHOLD_S without changes, polling gradually slows to MAX_INTERVAL_S
+# - This balances responsiveness with resource efficiency
+DEFAULT_INTERVAL_S = 5.0   # Starting interval for new monitoring sessions
+MIN_INTERVAL_S = 2.0       # Fastest polling when activity is detected
+MAX_INTERVAL_S = 10.0      # Slowest polling after extended idle period
+IDLE_THRESHOLD_S = 30.0    # Seconds without state change before slowing down
+
 
 class BluetoothMonitorService(QObject):
     """Coordinates snapshot polling, log monitoring, and the state machine."""
@@ -35,7 +45,7 @@ class BluetoothMonitorService(QObject):
         serial: str,
         snapshot_runner: Optional[SnapshotRunner] = None,
         logcat_runner: Optional[LogcatRunner] = None,
-        snapshot_interval_s: float = 2.0,
+        snapshot_interval_s: float = DEFAULT_INTERVAL_S,
         parser: Optional[BluetoothParser] = None,
         state_machine: Optional[BluetoothStateMachine] = None,
     ) -> None:
@@ -43,12 +53,17 @@ class BluetoothMonitorService(QObject):
         self._serial = serial
         self._snapshot_runner = snapshot_runner
         self._logcat_runner = logcat_runner
-        self._snapshot_interval_s = snapshot_interval_s
+        self._base_interval_s = snapshot_interval_s
+        self._current_interval_s = snapshot_interval_s
         self._parser = parser or BluetoothParser()
         self._state_machine = state_machine or BluetoothStateMachine()
 
         self._stop_event = threading.Event()
         self._threads: List[threading.Thread] = []
+
+        # Adaptive polling state
+        self._last_activity_time: Optional[float] = None
+        self._last_snapshot_hash: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Lifecycle management
@@ -82,17 +97,43 @@ class BluetoothMonitorService(QObject):
             try:
                 raw_snapshot = self._snapshot_runner()
                 if raw_snapshot:
+                    # Check if snapshot changed (for adaptive polling)
+                    snapshot_hash = hash(raw_snapshot)
+                    changed = snapshot_hash != self._last_snapshot_hash
+                    self._last_snapshot_hash = snapshot_hash
+
+                    if changed:
+                        self._last_activity_time = start_ts
+
                     snapshot = self._parser.parse_snapshot(self._serial, raw_snapshot, timestamp=start_ts)
                     self.snapshot_parsed.emit(snapshot)
                     update = self._state_machine.apply_snapshot(snapshot)
                     self._emit_state(update)
+
+                    # Adjust polling interval based on activity
+                    self._adjust_polling_interval(start_ts)
             except Exception as exc:  # pragma: no cover - safety net
                 logger.error('Snapshot loop failure: %s', exc)
                 self.error_occurred.emit(f'Snapshot collector error: {exc}')
 
-            remaining = self._snapshot_interval_s - (time.time() - start_ts)
+            remaining = self._current_interval_s - (time.time() - start_ts)
             if remaining > 0:
                 self._stop_event.wait(remaining)
+
+    def _adjust_polling_interval(self, current_time: float) -> None:
+        """Adjust polling interval based on recent activity."""
+        if self._last_activity_time is None:
+            self._current_interval_s = self._base_interval_s
+            return
+
+        idle_time = current_time - self._last_activity_time
+        if idle_time < IDLE_THRESHOLD_S:
+            # Active: use faster polling
+            self._current_interval_s = max(MIN_INTERVAL_S, self._base_interval_s)
+        else:
+            # Idle: gradually slow down polling
+            slowdown_factor = min(2.0, 1.0 + (idle_time - IDLE_THRESHOLD_S) / 60.0)
+            self._current_interval_s = min(MAX_INTERVAL_S, self._base_interval_s * slowdown_factor)
 
     def _logcat_loop(self) -> None:
         try:

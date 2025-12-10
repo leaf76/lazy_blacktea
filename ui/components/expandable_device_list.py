@@ -375,6 +375,11 @@ class ExpandableDeviceList(QScrollArea):
             device = device_dict[serial]
             self._rows[serial].update_device(device)
 
+        # Prune selection to only include existing rows
+        self._selected_serials = [s for s in self._selected_serials if s in self._rows]
+        if self._active_serial not in self._rows:
+            self._active_serial = self._selected_serials[-1] if self._selected_serials else None
+
         # Sync selection state
         self._sync_selection_ui()
 
