@@ -159,10 +159,10 @@ class ToolsPanelController:
         return container
 
     def _create_monitoring_section(self, parent_layout: QVBoxLayout) -> None:
-        """Create the monitoring tools section (single device operations)."""
+        """Create the monitoring tools section (opens a window per device)."""
         parent_layout.addWidget(self._create_category_header(
             PanelText.CATEGORY_MONITORING,
-            'Single device only'
+            'Opens a window per device'
         ))
 
         grid = QGridLayout()

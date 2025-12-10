@@ -33,14 +33,18 @@ class LogcatFacade:
     # Public API
     # ------------------------------------------------------------------
     def show_logcat_for_selected(self) -> None:
-        """Open the Logcat viewer for the currently selected single device.
+        """Open the Logcat viewer for each selected device.
 
-        If the selection is invalid, the window shows a warning and returns.
+        Opens a separate Logcat window for each device in the current selection.
+        If no devices are selected, shows a warning and returns.
         """
-        device = self.window.require_single_device_selection("Logcat viewer")
-        if device is None:
+        devices = self.window.get_checked_devices()
+        if not devices:
+            self.window.show_warning("Logcat Viewer", "Please select at least one device.")
             return
-        self._open_logcat_for_device(device)
+
+        for device in devices:
+            self._open_logcat_for_device(device)
 
     def view_logcat_for_device(self, device_serial: str) -> None:
         """Open the Logcat viewer for a given device serial if available."""

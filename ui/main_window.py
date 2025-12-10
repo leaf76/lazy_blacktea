@@ -1944,12 +1944,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.logcat_facade.view_logcat_for_device(device_serial)
 
     def monitor_bluetooth(self) -> None:
-        """Open Bluetooth monitor for the active device selection."""
-        device = self.require_single_device_selection('Bluetooth monitor')
-        if device is None:
+        """Open Bluetooth monitor for each selected device.
+
+        Opens a separate Bluetooth Monitor window for each device in the current selection.
+        """
+        devices = self.get_checked_devices()
+        if not devices:
+            self.show_warning('Bluetooth Monitor', 'Please select at least one device.')
             return
 
-        self.open_bluetooth_monitor_for_device(device.device_serial_num)
+        for device in devices:
+            self.open_bluetooth_monitor_for_device(device.device_serial_num)
 
     def open_bluetooth_monitor_for_device(self, device_serial: str) -> None:
         """Open or focus the Bluetooth monitor window for a given device."""
@@ -2070,126 +2075,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.app_management_manager.launch_scrcpy_for_selected_devices()
 
     def show_scrcpy_installation_guide(self):
-        """Show detailed installation guide for scrcpy."""
+        """Show detailed installation guide for scrcpy with actionable buttons."""
+        from ui.scrcpy_install_dialog import ScrcpyInstallDialog
+        dialog = ScrcpyInstallDialog(self)
+        dialog.scrcpy_detected.connect(self._on_scrcpy_redetected)
+        dialog.exec()
 
-        # Detect operating system
-        system = platform.system().lower()
-
-        if system == "darwin":  # macOS
-            title = "scrcpy Not Found - Installation Guide for macOS"
-            message = """scrcpy is not installed on your system.
-
-scrcpy is a powerful tool that allows you to display and control Android devices connected via USB or wirelessly.
-
-🍺 RECOMMENDED: Install using Homebrew
-1. Install Homebrew if you haven't already:
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-2. Install scrcpy:
-   brew install scrcpy
-
-📦 ALTERNATIVE: Download from GitHub
-1. Visit: https://github.com/Genymobile/scrcpy/releases
-2. Download the latest macOS release
-3. Extract and follow installation instructions
-
-After installation, restart lazy blacktea to use device mirroring functionality."""
-
-        elif system == "linux":  # Linux
-            title = "scrcpy Not Found - Installation Guide for Linux"
-            message = """scrcpy is not installed on your system.
-
-scrcpy is a powerful tool that allows you to display and control Android devices connected via USB or wirelessly.
-
-📦 RECOMMENDED: Install using package manager
-
-Ubuntu/Debian:
-   sudo apt update
-   sudo apt install scrcpy
-
-Fedora:
-   sudo dnf install scrcpy
-
-Arch Linux:
-   sudo pacman -S scrcpy
-
-🔧 ALTERNATIVE: Install from Snap
-   sudo snap install scrcpy
-
-📦 ALTERNATIVE: Download from GitHub
-1. Visit: https://github.com/Genymobile/scrcpy/releases
-2. Download the latest Linux release
-3. Extract and follow installation instructions
-
-After installation, restart lazy blacktea to use device mirroring functionality."""
-
-        elif system == "windows":  # Windows
-            title = "scrcpy Not Found - Installation Guide for Windows"
-            message = """scrcpy is not installed on your system.
-
-scrcpy is a powerful tool that allows you to display and control Android devices connected via USB or wirelessly.
-
-🍫 RECOMMENDED: Install using Chocolatey
-1. Install Chocolatey if you haven't already:
-   Visit: https://chocolatey.org/install
-
-2. Install scrcpy:
-   choco install scrcpy
-
-🪟 ALTERNATIVE: Install using Scoop
-1. Install Scoop: https://scoop.sh/
-2. Install scrcpy:
-   scoop install scrcpy
-
-📦 ALTERNATIVE: Download from GitHub
-1. Visit: https://github.com/Genymobile/scrcpy/releases
-2. Download the latest Windows release
-3. Extract to a folder and add to PATH
-
-After installation, restart lazy blacktea to use device mirroring functionality."""
-
-        else:
-            title = "scrcpy Not Found - Installation Guide"
-            message = """scrcpy is not installed on your system.
-
-scrcpy is a powerful tool that allows you to display and control Android devices connected via USB or wirelessly.
-
-📦 Installation:
-Visit the official GitHub repository for installation instructions:
-https://github.com/Genymobile/scrcpy
-
-After installation, restart lazy blacktea to use device mirroring functionality."""
-
-        # Create a detailed message box with installation guide
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle(title)
-        msg_box.setText(message)
-        msg_box.setIcon(QMessageBox.Icon.Information)
-
-        # Add buttons for easy access
-        install_button = msg_box.addButton("Open Installation Guide", QMessageBox.ButtonRole.ActionRole)
-        close_button = msg_box.addButton("Close", QMessageBox.ButtonRole.RejectRole)
-
-        msg_box.setDefaultButton(close_button)
-        msg_box.exec()
-
-        # Handle button clicks
-        if msg_box.clickedButton() == install_button:
-            self.open_scrcpy_website()
+    def _on_scrcpy_redetected(self) -> None:
+        """Handle successful scrcpy re-detection."""
+        self.scrcpy_available = self.app_management_manager.scrcpy_available
+        logger.info(f"scrcpy re-detected: version {self.app_management_manager.scrcpy_major_version}.x")
 
     def open_scrcpy_website(self):
         """Open scrcpy GitHub releases page in web browser."""
-
-        system = platform.system().lower()
-
-        if system == "darwin":  # macOS
-            url = "https://brew.sh/"  # Homebrew installation page
-        else:
-            url = "https://github.com/Genymobile/scrcpy/releases"
-
+        url = "https://github.com/Genymobile/scrcpy/releases"
         try:
             webbrowser.open(url)
-            logger.info(f"Opened scrcpy installation guide: {url}")
+            logger.info(f"Opened scrcpy releases page: {url}")
         except Exception as e:
             logger.error(f"Failed to open web browser: {e}")
             self.show_error("Browser Error", f"Could not open web browser.\n\nPlease manually visit:\n{url}")
@@ -2347,27 +2249,34 @@ After installation, restart lazy blacktea to use device mirroring functionality.
         self._execute_with_operation_logging('Export Device UI Hierarchy', action)
 
     def launch_ui_inspector(self):
-        """Launch the interactive UI Inspector for selected devices."""
-        device = self.require_single_device_selection('UI Inspector')
-        if device is None:
+        """Launch the interactive UI Inspector for each selected device.
+
+        Opens a separate UI Inspector window for each device in the current selection.
+        """
+        devices = self.get_checked_devices()
+        if not devices:
+            self.show_warning('UI Inspector', 'Please select at least one device.')
             return
 
-        operation = f'Launch UI Inspector ({device.device_serial_num})'
-        self._log_operation_start(operation, device.device_model)
         ready, issue_message = check_ui_inspector_prerequisites()
         if not ready:
             sanitized = ' | '.join(issue_message.splitlines())
             logger.warning('UI Inspector prerequisites failed: %s', sanitized)
             self.show_error('UI Inspector Unavailable', issue_message)
-            self._log_operation_failure(operation, issue_message)
             return
 
+        for device in devices:
+            self._launch_ui_inspector_for_device(device)
+
+    def _launch_ui_inspector_for_device(self, device: adb_models.DeviceInfo) -> None:
+        """Launch UI Inspector for a single device."""
         serial = device.device_serial_num
         model = device.device_model
+        operation = f'Launch UI Inspector ({serial})'
+        self._log_operation_start(operation, model)
 
         logger.info(f'Launching UI Inspector for device: {model} ({serial})')
 
-        # Create and show UI Inspector window (non-modal)
         try:
             ui_inspector = UIInspectorDialog(self, serial, model)
             ui_inspector.show()

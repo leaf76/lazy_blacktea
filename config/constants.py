@@ -343,7 +343,7 @@ class PanelText:
 class PanelConfig:
     """Configuration collections used by tool panels."""
 
-    # Monitoring actions (single device only)
+    # Monitoring actions (opens a window per device)
     MONITORING_ACTIONS = [
         ('Logcat', 'show_logcat', 'logcat'),
         ('UI Inspector', 'launch_ui_inspector', 'inspector'),

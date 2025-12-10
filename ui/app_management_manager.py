@@ -90,8 +90,8 @@ class ScrcpyManager(QObject):
         else:
             self.parent_window.show_error('Error', f'Device {device_serial} not found.')
 
-    def launch_scrcpy_for_selected_devices(self):
-        """為選中的設備啟動scrcpy"""
+    def launch_scrcpy_for_selected_devices(self) -> None:
+        """Launch scrcpy for selected devices."""
         if not self.scrcpy_available:
             self.parent_window.show_scrcpy_installation_guide()
             return
@@ -101,36 +101,110 @@ class ScrcpyManager(QObject):
             self.parent_window.show_error('Error', 'No devices selected.')
             return
 
-        selected_device = self._select_device_for_mirroring(devices)
-        if not selected_device:
+        # Single device - launch directly
+        if len(devices) == 1:
+            self._launch_scrcpy_process(devices[0])
             return
 
-        self._launch_scrcpy_process(selected_device)
+        # Multiple devices - ask user what to do
+        selected_devices = self._select_devices_for_mirroring(devices)
+        if not selected_devices:
+            return
 
-    def _select_device_for_mirroring(self, devices: List[adb_models.DeviceInfo]) -> Optional[adb_models.DeviceInfo]:
-        """選擇要鏡像的設備"""
-        if len(devices) == 1:
-            return devices[0]
+        for device in selected_devices:
+            self._launch_scrcpy_process(device)
 
-        # 多設備選擇對話框
-        device_choices = [f"{d.device_model} ({d.device_serial_num})" for d in devices]
-        choice, ok = QInputDialog.getItem(
-            self.parent_window,
-            'Select Device for Mirroring',
-            'scrcpy can only mirror one device at a time.\nPlease select which device to mirror:',
-            device_choices,
-            0,
-            False
+    def _select_devices_for_mirroring(
+        self, devices: List[adb_models.DeviceInfo]
+    ) -> List[adb_models.DeviceInfo]:
+        """Show dialog for selecting which devices to mirror."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QCheckBox, QPushButton, QScrollArea, QWidget
         )
 
-        if not ok:
-            return None
+        dialog = QDialog(self.parent_window)
+        dialog.setWindowTitle('Select Devices for Mirroring')
+        dialog.setMinimumWidth(400)
 
-        selected_index = device_choices.index(choice)
-        return devices[selected_index]
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-    def _launch_scrcpy_process(self, device: adb_models.DeviceInfo):
-        """啟動scrcpy進程"""
+        # Header
+        header = QLabel(
+            f'{len(devices)} devices selected.\n'
+            'Choose which devices to open scrcpy windows for:'
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        # Scrollable device list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(300)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setSpacing(6)
+
+        checkboxes: List[tuple[QCheckBox, adb_models.DeviceInfo]] = []
+        for device in devices:
+            cb = QCheckBox(f'{device.device_model} ({device.device_serial_num})')
+            cb.setChecked(True)
+            scroll_layout.addWidget(cb)
+            checkboxes.append((cb, device))
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+
+        # Select all / none buttons
+        select_layout = QHBoxLayout()
+        def set_all_checked(checked: bool) -> None:
+            for cb, _ in checkboxes:
+                cb.setChecked(checked)
+
+        select_all_btn = QPushButton('Select All')
+        select_all_btn.clicked.connect(lambda: set_all_checked(True))
+        select_layout.addWidget(select_all_btn)
+
+        select_none_btn = QPushButton('Select None')
+        select_none_btn.clicked.connect(lambda: set_all_checked(False))
+        select_layout.addWidget(select_none_btn)
+        select_layout.addStretch()
+        layout.addLayout(select_layout)
+
+        # Note about multiple windows
+        note = QLabel(
+            'Note: Each selected device will open a separate scrcpy window.'
+        )
+        note.setStyleSheet('color: #888; font-size: 11px;')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        # Dialog buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton('Cancel')
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        launch_btn = QPushButton('Launch scrcpy')
+        launch_btn.setDefault(True)
+        launch_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(launch_btn)
+
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return []
+
+        return [device for cb, device in checkboxes if cb.isChecked()]
+
+    def _launch_scrcpy_process(self, device: adb_models.DeviceInfo) -> None:
+        """Launch scrcpy process for a single device."""
         serial = device.device_serial_num
         device_model = device.device_model
 
