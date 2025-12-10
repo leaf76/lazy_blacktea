@@ -29,8 +29,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS Intel
-          - os: macos-13
+          # macOS Intel (macos-13 retired, using macos-15 with x64 arch)
+          - os: macos-15
             platform: macos-intel
             arch: x86_64
             runner_arch: x64
