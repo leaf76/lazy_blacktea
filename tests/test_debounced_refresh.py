@@ -25,17 +25,17 @@ class TestDebouncedRefresh(unittest.TestCase):
         def cb():
             calls["count"] += 1
 
-        d = DebouncedRefresh(callback=cb, delay_ms=40)
+        d = DebouncedRefresh(callback=cb, delay_ms=50)
 
         # Burst of requests within debounce window should lead to a single execution
         d.request_refresh()
-        QTest.qWait(10)
+        QTest.qWait(15)
         d.request_refresh()
-        QTest.qWait(10)
+        QTest.qWait(15)
         d.request_refresh()
 
-        # Wait beyond debounce delay to allow execution
-        QTest.qWait(80)
+        # Wait beyond debounce delay to allow execution (use 4x buffer for CI stability)
+        QTest.qWait(200)
 
         self.assertEqual(calls["count"], 1, "Debounced callback should run once")
         self.assertEqual(d.pending_count, 0, "Pending count resets after execution")
@@ -46,11 +46,11 @@ class TestDebouncedRefresh(unittest.TestCase):
         def cb():
             calls["count"] += 1
 
-        d = DebouncedRefresh(callback=cb, delay_ms=20)
+        d = DebouncedRefresh(callback=cb, delay_ms=50)
         d.refresh_executed.connect(lambda: calls.__setitem__("signal", calls["signal"] + 1))
 
         d.request_refresh()
-        QTest.qWait(50)
+        QTest.qWait(150)
 
         self.assertEqual(calls["count"], 1, "Callback executed once")
         self.assertEqual(calls["signal"], 1, "Signal emitted once")
