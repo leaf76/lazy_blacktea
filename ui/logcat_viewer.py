@@ -12,16 +12,54 @@ from dataclasses import dataclass, replace
 from typing import Optional, Dict, List, Any, Callable, TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter, QListView,
-    QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox, QFrame, QMessageBox,
-    QInputDialog, QListWidget, QListWidgetItem, QAbstractItemView, QStyledItemDelegate,
-    QSpinBox, QSizePolicy, QGroupBox, QFormLayout, QApplication, QMenu
+    QWidget,
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QGridLayout,
+    QSplitter,
+    QListView,
+    QPushButton,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QCheckBox,
+    QFrame,
+    QMessageBox,
+    QInputDialog,
+    QListWidget,
+    QListWidgetItem,
+    QAbstractItemView,
+    QStyledItemDelegate,
+    QSpinBox,
+    QSizePolicy,
+    QGroupBox,
+    QFormLayout,
+    QApplication,
+    QMenu,
 )
 from PyQt6.QtCore import (
-    QObject, QProcess, QTimer, Qt, QAbstractListModel, QModelIndex, QSortFilterProxyModel, QSize,
-    QEvent
+    QObject,
+    QProcess,
+    QTimer,
+    Qt,
+    QAbstractListModel,
+    QModelIndex,
+    QSortFilterProxyModel,
+    QSize,
+    QEvent,
+    QPropertyAnimation,
+    QEasingCurve,
 )
-from PyQt6.QtGui import QFont, QCloseEvent, QAction, QKeySequence, QShortcut, QPen, QColor
+from PyQt6.QtGui import (
+    QFont,
+    QCloseEvent,
+    QAction,
+    QKeySequence,
+    QShortcut,
+    QPen,
+    QColor,
+)
 from PyQt6.QtWidgets import QStyle
 
 from ui.collapsible_panel import CollapsiblePanel
@@ -35,11 +73,16 @@ from ui.toast_notification import ToastNotification
 
 if TYPE_CHECKING:
     from ui.device_manager import DeviceManager
-    from config.config_manager import ConfigManager
+    from config.config_manager import (
+        ConfigManager,
+        LogcatViewerSettings,
+        LogcatViewerSettings,
+    )
 
 try:
     from utils import adb_tools
 except Exception:  # pragma: no cover - fallback when utils are unavailable
+
     class _AdbToolsFallback:
         """Fallback stub when adb_tools cannot be loaded."""
 
@@ -55,34 +98,34 @@ QT_QPROCESS = QProcess
 
 
 PERFORMANCE_PRESETS = {
-    'Balanced (default)': {
-        'max_lines': 1000,
-        'history_multiplier': 5,
-        'update_interval_ms': 200,
-        'lines_per_update': 50,
-        'max_buffer_size': 100,
+    "Balanced (default)": {
+        "max_lines": 1000,
+        "history_multiplier": 5,
+        "update_interval_ms": 200,
+        "lines_per_update": 50,
+        "max_buffer_size": 100,
     },
-    'Extended history': {
-        'max_lines': 1500,
-        'history_multiplier': 10,
-        'update_interval_ms': 250,
-        'lines_per_update': 60,
-        'max_buffer_size': 120,
+    "Extended history": {
+        "max_lines": 1500,
+        "history_multiplier": 10,
+        "update_interval_ms": 250,
+        "lines_per_update": 60,
+        "max_buffer_size": 120,
     },
-    'Low latency streaming': {
-        'max_lines': 800,
-        'history_multiplier': 5,
-        'update_interval_ms': 120,
-        'lines_per_update': 25,
-        'max_buffer_size': 60,
+    "Low latency streaming": {
+        "max_lines": 800,
+        "history_multiplier": 5,
+        "update_interval_ms": 120,
+        "lines_per_update": 25,
+        "max_buffer_size": 60,
     },
-    'Heavy throughput': {
-        'max_lines': 1200,
-        'history_multiplier': 6,
-        'update_interval_ms': 300,
-        'lines_per_update': 80,
-        'max_buffer_size': 160,
-    }
+    "Heavy throughput": {
+        "max_lines": 1200,
+        "history_multiplier": 6,
+        "update_interval_ms": 300,
+        "lines_per_update": 80,
+        "max_buffer_size": 160,
+    },
 }
 
 
@@ -100,11 +143,11 @@ class LogLine:
     line_no: int = 0
 
     _THREADTIME_PATTERN = re.compile(
-        r'^(?P<timestamp>\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+'
-        r'(?P<pid>\d+)\s+(?P<tid>\d+)\s+'
-        r'(?P<level>[VDIWEF])\s+'
-        r'(?P<tag>[^:]*):\s'
-        r'(?P<message>.*)$'
+        r"^(?P<timestamp>\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+"
+        r"(?P<pid>\d+)\s+(?P<tid>\d+)\s+"
+        r"(?P<level>[VDIWEF])\s+"
+        r"(?P<tag>[^:]*):\s"
+        r"(?P<message>.*)$"
     )
 
     @classmethod
@@ -113,16 +156,16 @@ class LogLine:
         if match:
             parts = match.groupdict()
             return cls(
-                timestamp=parts['timestamp'],
-                pid=parts['pid'],
-                tid=parts['tid'],
-                level=parts['level'],
-                tag=parts['tag'].strip(),
-                message=parts['message'].strip(),
+                timestamp=parts["timestamp"],
+                pid=parts["pid"],
+                tid=parts["tid"],
+                level=parts["level"],
+                tag=parts["tag"].strip(),
+                message=parts["message"].strip(),
                 raw=line,
             )
         cleaned = line.strip()
-        return cls('', '', '', 'I', 'Logcat', cleaned, raw=line)
+        return cls("", "", "", "I", "Logcat", cleaned, raw=line)
 
 
 class LogcatListModel(QAbstractListModel):
@@ -258,7 +301,11 @@ class LogcatFilterProxyModel(QSortFilterProxyModel):
         for row in range(model.rowCount() - 1, -1, -1):
             index = model.index(row, 0)
             log: Optional[LogLine] = model.data(index, Qt.ItemDataRole.UserRole)
-            text = log.raw if log else (model.data(index, Qt.ItemDataRole.DisplayRole) or '')
+            text = (
+                log.raw
+                if log
+                else (model.data(index, Qt.ItemDataRole.DisplayRole) or "")
+            )
             if self._matches(str(text)):
                 cache.add(row)
                 remaining -= 1
@@ -275,7 +322,9 @@ class LogcatFilterProxyModel(QSortFilterProxyModel):
 
         index = model.index(source_row, 0, source_parent)
         log: Optional[LogLine] = model.data(index, Qt.ItemDataRole.UserRole)
-        text = log.raw if log else (model.data(index, Qt.ItemDataRole.DisplayRole) or '')
+        text = (
+            log.raw if log else (model.data(index, Qt.ItemDataRole.DisplayRole) or "")
+        )
 
         if not self._matches(str(text)):
             return False
@@ -295,9 +344,9 @@ class _LogListItemDelegate(QStyledItemDelegate):
     """
 
     # Highlight colors
-    HIGHLIGHT_BG = '#623f00'         # Yellow-orange background for matches
-    HIGHLIGHT_CURRENT_BG = '#515c6a'  # Brighter for current match
-    HIGHLIGHT_TEXT = '#ffffff'       # White text for visibility
+    HIGHLIGHT_BG = "#623f00"  # Yellow-orange background for matches
+    HIGHLIGHT_CURRENT_BG = "#515c6a"  # Brighter for current match
+    HIGHLIGHT_TEXT = "#ffffff"  # White text for visibility
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -355,7 +404,9 @@ class _LogListItemDelegate(QStyledItemDelegate):
 
             # Calculate text position
             text_rect = option.rect.adjusted(4, 0, -4, 0)
-            y_offset = text_rect.top() + (text_rect.height() + fm.ascent() - fm.descent()) // 2
+            y_offset = (
+                text_rect.top() + (text_rect.height() + fm.ascent() - fm.descent()) // 2
+            )
 
             # Determine if this is the current match row
             is_current_row = index.row() == self._current_match_row
@@ -386,8 +437,18 @@ class _LogListItemDelegate(QStyledItemDelegate):
                     seg_width = fm.horizontalAdvance(segment)
 
                     # Draw highlight background
-                    bg_color = self.HIGHLIGHT_CURRENT_BG if is_current_row else self.HIGHLIGHT_BG
-                    painter.fillRect(x, text_rect.top(), seg_width, text_rect.height(), QColor(bg_color))
+                    bg_color = (
+                        self.HIGHLIGHT_CURRENT_BG
+                        if is_current_row
+                        else self.HIGHLIGHT_BG
+                    )
+                    painter.fillRect(
+                        x,
+                        text_rect.top(),
+                        seg_width,
+                        text_rect.height(),
+                        QColor(bg_color),
+                    )
 
                     # Draw text
                     painter.setPen(QColor(self.HIGHLIGHT_TEXT))
@@ -430,7 +491,7 @@ class PerformanceSettingsDialog(QDialog):
 
     def init_ui(self):
         """Initialize the performance settings dialog UI."""
-        self.setWindowTitle('Performance Settings')
+        self.setWindowTitle("Performance Settings")
         self.setMinimumSize(520, 360)
         self.setModal(True)
 
@@ -438,22 +499,24 @@ class PerformanceSettingsDialog(QDialog):
         main_layout.setSpacing(14)
         main_layout.setContentsMargins(18, 18, 18, 16)
 
-        title = QLabel('Tune Logcat Performance')
-        title.setStyleSheet('font-size: 16px; font-weight: 600; color: #1b4f72;')
+        title = QLabel("Tune Logcat Performance")
+        title.setStyleSheet("font-size: 16px; font-weight: 600; color: #1b4f72;")
         main_layout.addWidget(title)
 
-        subtitle = QLabel('Balance retained history with UI responsiveness. Adjust these knobs to fit your device throughput.')
+        subtitle = QLabel(
+            "Balance retained history with UI responsiveness. Adjust these knobs to fit your device throughput."
+        )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet('color: #5f6a6a;')
+        subtitle.setStyleSheet("color: #5f6a6a;")
         main_layout.addWidget(subtitle)
 
         preset_row = QHBoxLayout()
-        preset_label = QLabel('Preset')
-        preset_label.setStyleSheet('font-weight: bold;')
+        preset_label = QLabel("Preset")
+        preset_label.setStyleSheet("font-weight: bold;")
         preset_row.addWidget(preset_label)
 
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem('Custom')
+        self.preset_combo.addItem("Custom")
         for preset_name in PERFORMANCE_PRESETS.keys():
             self.preset_combo.addItem(preset_name)
         preset_row.addWidget(self.preset_combo, stretch=1)
@@ -464,98 +527,118 @@ class PerformanceSettingsDialog(QDialog):
         content_grid.setHorizontalSpacing(18)
         content_grid.setVerticalSpacing(12)
 
-        history_group = QGroupBox('History & Retention')
+        history_group = QGroupBox("History & Retention")
         history_form = QFormLayout(history_group)
         history_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        history_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        history_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
 
         self.max_lines_spin = QSpinBox()
         self.max_lines_spin.setRange(100, 50000)
         self.max_lines_spin.setSingleStep(100)
-        self.max_lines_spin.setValue(self.parent_window.max_lines if self.parent_window else 1000)
-        history_form.addRow('Visible lines', self.max_lines_spin)
+        self.max_lines_spin.setValue(
+            self.parent_window.max_lines if self.parent_window else 1000
+        )
+        history_form.addRow("Visible lines", self.max_lines_spin)
 
         self.history_multiplier_spin = QSpinBox()
         self.history_multiplier_spin.setRange(1, 20)
         self.history_multiplier_spin.setSingleStep(1)
-        self.history_multiplier_spin.setValue(self.parent_window.history_multiplier if self.parent_window else 5)
-        history_form.addRow('History multiplier', self.history_multiplier_spin)
+        self.history_multiplier_spin.setValue(
+            self.parent_window.history_multiplier if self.parent_window else 5
+        )
+        history_form.addRow("History multiplier", self.history_multiplier_spin)
 
         content_grid.addWidget(history_group, 0, 0)
 
-        cadence_group = QGroupBox('Streaming Cadence')
+        cadence_group = QGroupBox("Streaming Cadence")
         cadence_form = QFormLayout(cadence_group)
         cadence_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        cadence_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        cadence_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
 
         self.update_interval_spin = QSpinBox()
         self.update_interval_spin.setRange(50, 2000)
         self.update_interval_spin.setSingleStep(10)
-        self.update_interval_spin.setValue(self.parent_window.update_interval_ms if self.parent_window else 200)
+        self.update_interval_spin.setValue(
+            self.parent_window.update_interval_ms if self.parent_window else 200
+        )
         interval_row = QWidget()
         interval_layout = QHBoxLayout(interval_row)
         interval_layout.setContentsMargins(0, 0, 0, 0)
         interval_layout.setSpacing(6)
         interval_layout.addWidget(self.update_interval_spin)
-        interval_layout.addWidget(QLabel('ms'))
+        interval_layout.addWidget(QLabel("ms"))
         interval_layout.addStretch()
-        cadence_form.addRow('Refresh interval', interval_row)
+        cadence_form.addRow("Refresh interval", interval_row)
 
         self.lines_per_update_spin = QSpinBox()
         self.lines_per_update_spin.setRange(10, 500)
         self.lines_per_update_spin.setSingleStep(5)
-        self.lines_per_update_spin.setValue(self.parent_window.max_lines_per_update if self.parent_window else 50)
-        cadence_form.addRow('Lines per update', self.lines_per_update_spin)
+        self.lines_per_update_spin.setValue(
+            self.parent_window.max_lines_per_update if self.parent_window else 50
+        )
+        cadence_form.addRow("Lines per update", self.lines_per_update_spin)
 
         self.buffer_size_spin = QSpinBox()
         self.buffer_size_spin.setRange(10, 1000)
         self.buffer_size_spin.setSingleStep(10)
-        self.buffer_size_spin.setValue(self.parent_window.max_buffer_size if self.parent_window else 100)
+        self.buffer_size_spin.setValue(
+            self.parent_window.max_buffer_size if self.parent_window else 100
+        )
         buffer_row = QWidget()
         buffer_layout = QHBoxLayout(buffer_row)
         buffer_layout.setContentsMargins(0, 0, 0, 0)
         buffer_layout.setSpacing(6)
         buffer_layout.addWidget(self.buffer_size_spin)
-        buffer_layout.addWidget(QLabel('lines'))
+        buffer_layout.addWidget(QLabel("lines"))
         buffer_layout.addStretch()
-        cadence_form.addRow('Flush threshold', buffer_row)
+        cadence_form.addRow("Flush threshold", buffer_row)
 
         content_grid.addWidget(cadence_group, 0, 1)
 
         main_layout.addLayout(content_grid)
 
         preview_frame = QFrame()
-        preview_frame.setStyleSheet('background-color: #f4f6f6; border: 1px solid #d6dbdf; border-radius: 6px; padding: 10px;')
+        preview_frame.setStyleSheet(
+            "background-color: #f4f6f6; border: 1px solid #d6dbdf; border-radius: 6px; padding: 10px;"
+        )
         preview_layout = QVBoxLayout(preview_frame)
         preview_layout.setSpacing(4)
 
-        preview_title = QLabel('Preview')
-        preview_title.setStyleSheet('font-weight: bold; color: #34495e;')
+        preview_title = QLabel("Preview")
+        preview_title.setStyleSheet("font-weight: bold; color: #34495e;")
         preview_layout.addWidget(preview_title)
 
         self.capacity_label = QLabel()
-        self.capacity_label.setStyleSheet('color: #1f618d;')
+        self.capacity_label.setStyleSheet("color: #1f618d;")
         preview_layout.addWidget(self.capacity_label)
 
         self.latency_label = QLabel()
-        self.latency_label.setStyleSheet('color: #616a6b;')
+        self.latency_label.setStyleSheet("color: #616a6b;")
         preview_layout.addWidget(self.latency_label)
 
-        tips_label = QLabel('Lower intervals provide lower latency but increase CPU usage. Larger flush thresholds smooth bursty logs.')
+        tips_label = QLabel(
+            "Lower intervals provide lower latency but increase CPU usage. Larger flush thresholds smooth bursty logs."
+        )
         tips_label.setWordWrap(True)
-        tips_label.setStyleSheet('color: #7b8793; font-size: 11px;')
+        tips_label.setStyleSheet("color: #7b8793; font-size: 11px;")
         preview_layout.addWidget(tips_label)
 
         main_layout.addWidget(preview_frame)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        cancel_btn = QPushButton('Cancel')
+        cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
-        apply_btn = QPushButton('Apply')
-        apply_btn.setStyleSheet('background-color: #1f618d; color: white; font-weight: bold;')
+        apply_btn = QPushButton("Apply")
+        apply_btn.setStyleSheet(
+            "background-color: #1f618d; color: white; font-weight: bold;"
+        )
         apply_btn.clicked.connect(self.apply_settings)
         button_layout.addWidget(apply_btn)
 
@@ -592,12 +675,14 @@ class PerformanceSettingsDialog(QDialog):
             buffer_threshold = self.buffer_size_spin.value()
             self.parent_window.max_buffer_size = buffer_threshold
 
-            if hasattr(self.parent_window, 'on_performance_settings_updated'):
+            if hasattr(self.parent_window, "on_performance_settings_updated"):
                 self.parent_window.on_performance_settings_updated()
 
             self.accept()
         except ValueError:
-            QMessageBox.warning(self, 'Invalid Input', 'Please enter valid numbers for all settings.')
+            QMessageBox.warning(
+                self, "Invalid Input", "Please enter valid numbers for all settings."
+            )
 
     def _register_signal_handlers(self):
         """Connect widget signals for preset handling and previews."""
@@ -616,17 +701,17 @@ class PerformanceSettingsDialog(QDialog):
     def _handle_preset_selection(self, preset_name: str):
         """Apply preset values when a preset is selected."""
         preset_name = preset_name.strip()
-        if preset_name == 'Custom' or preset_name not in PERFORMANCE_PRESETS:
+        if preset_name == "Custom" or preset_name not in PERFORMANCE_PRESETS:
             return
 
         preset_values = PERFORMANCE_PRESETS[preset_name]
         self._updating_from_preset = True
         try:
-            self.max_lines_spin.setValue(preset_values['max_lines'])
-            self.history_multiplier_spin.setValue(preset_values['history_multiplier'])
-            self.update_interval_spin.setValue(preset_values['update_interval_ms'])
-            self.lines_per_update_spin.setValue(preset_values['lines_per_update'])
-            self.buffer_size_spin.setValue(preset_values['max_buffer_size'])
+            self.max_lines_spin.setValue(preset_values["max_lines"])
+            self.history_multiplier_spin.setValue(preset_values["history_multiplier"])
+            self.update_interval_spin.setValue(preset_values["update_interval_ms"])
+            self.lines_per_update_spin.setValue(preset_values["lines_per_update"])
+            self.buffer_size_spin.setValue(preset_values["max_buffer_size"])
         finally:
             self._updating_from_preset = False
             self._update_capacity_preview()
@@ -635,9 +720,9 @@ class PerformanceSettingsDialog(QDialog):
         """Switch preset selection back to custom when values change."""
         if self._updating_from_preset:
             return
-        if self.preset_combo.currentText() != 'Custom':
+        if self.preset_combo.currentText() != "Custom":
             self.preset_combo.blockSignals(True)
-            self.preset_combo.setCurrentText('Custom')
+            self.preset_combo.setCurrentText("Custom")
             self.preset_combo.blockSignals(False)
 
     def _update_capacity_preview(self):
@@ -646,7 +731,7 @@ class PerformanceSettingsDialog(QDialog):
         history_multiplier = self.history_multiplier_spin.value()
         capacity = max_lines * history_multiplier
         self.capacity_label.setText(
-            f'History capacity: {capacity:,} lines ({max_lines:,} visible × {history_multiplier} history)'
+            f"History capacity: {capacity:,} lines ({max_lines:,} visible × {history_multiplier} history)"
         )
 
         interval = self.update_interval_spin.value()
@@ -654,7 +739,7 @@ class PerformanceSettingsDialog(QDialog):
         flush_threshold = self.buffer_size_spin.value()
         hz = 0.0 if interval <= 0 else 1000.0 / interval
         self.latency_label.setText(
-            f'UI refresh ≈ every {interval} ms ({hz:.1f} Hz), {lines_per_update} lines/batch, flush at {flush_threshold} lines.'
+            f"UI refresh ≈ every {interval} ms ({hz:.1f} Hz), {lines_per_update} lines/batch, flush at {flush_threshold} lines."
         )
 
 
@@ -690,6 +775,11 @@ class LogcatWindow(QDialog):
         self._settings_callback = on_settings_changed
         self._config_manager = config_manager
 
+        # Load viewer UI settings from config
+        self._viewer_settings: Optional["LogcatViewerSettings"] = None
+        if self._config_manager:
+            self._viewer_settings = self._config_manager.get_logcat_viewer_settings()
+
         # Device monitoring for graceful disconnection handling
         self._device_manager = device_manager
         self._device_watcher: Optional[DeviceWatcher] = None
@@ -713,15 +803,17 @@ class LogcatWindow(QDialog):
         self.update_timer.timeout.connect(self.process_buffered_logs)
         self.update_timer.setSingleShot(True)
         self.update_interval_ms = 200
-        self._partial_line = ''
+        self._partial_line = ""
         self._suppress_logcat_errors = False
 
         self.max_lines_per_update = 50
         self.last_update_time = 0
         self.history_multiplier = 5
 
-        # Auto scroll state
-        self._auto_scroll_enabled = True
+        if self._viewer_settings:
+            self._auto_scroll_enabled = self._viewer_settings.auto_scroll_enabled
+        else:
+            self._auto_scroll_enabled = True
         self._suppress_scroll_signal = False
 
         # Line numbering for log display
@@ -730,14 +822,14 @@ class LogcatWindow(QDialog):
         self._apply_persisted_settings(settings or {})
 
         # Filtering state
-        self.log_levels_order = ['V', 'D', 'I', 'W', 'E', 'F']
+        self.log_levels_order = ["V", "D", "I", "W", "E", "F"]
         self.live_filter_pattern: Optional[str] = None
         self.active_filters: List[str] = []
 
         # Search state (for highlight search feature)
         self._search_pattern: Optional[re.Pattern] = None
         self._search_match_rows: List[int] = []  # Rows with matches
-        self._current_match_index: int = -1      # Current match in _search_match_rows
+        self._current_match_index: int = -1  # Current match in _search_match_rows
         self._log_delegate: Optional[_LogListItemDelegate] = None
 
         self.init_ui()
@@ -745,10 +837,11 @@ class LogcatWindow(QDialog):
         self._setup_search_shortcut()
         self._setup_device_watcher()
         self._migrate_legacy_filters()
+        self._apply_viewer_settings()
 
     def _get_status_prefix(self):
         """Get status prefix emoji based on running state."""
-        return '🟢' if self.is_running else '⏸️'
+        return "🟢" if self.is_running else "⏸️"
 
     def _apply_persisted_settings(self, settings: Dict[str, int]) -> None:
         """Apply persisted performance settings with basic validation."""
@@ -764,28 +857,63 @@ class LogcatWindow(QDialog):
                 return minimum
             return numeric
 
-        if 'max_lines' in settings:
-            self.max_lines = _coerce(settings.get('max_lines'), 100, self.max_lines)
+        if "max_lines" in settings:
+            self.max_lines = _coerce(settings.get("max_lines"), 100, self.max_lines)
             self.log_proxy.set_visible_limit(self.max_lines)
 
-        if 'history_multiplier' in settings:
-            self.history_multiplier = _coerce(settings.get('history_multiplier'), 1, self.history_multiplier)
+        if "history_multiplier" in settings:
+            self.history_multiplier = _coerce(
+                settings.get("history_multiplier"), 1, self.history_multiplier
+            )
 
-        if 'update_interval_ms' in settings:
-            self.update_interval_ms = _coerce(settings.get('update_interval_ms'), 50, self.update_interval_ms)
+        if "update_interval_ms" in settings:
+            self.update_interval_ms = _coerce(
+                settings.get("update_interval_ms"), 50, self.update_interval_ms
+            )
 
-        if 'max_lines_per_update' in settings:
-            self.max_lines_per_update = _coerce(settings.get('max_lines_per_update'), 5, self.max_lines_per_update)
+        if "max_lines_per_update" in settings:
+            self.max_lines_per_update = _coerce(
+                settings.get("max_lines_per_update"), 5, self.max_lines_per_update
+            )
 
-        if 'max_buffer_size' in settings:
-            self.max_buffer_size = _coerce(settings.get('max_buffer_size'), 10, self.max_buffer_size)
+        if "max_buffer_size" in settings:
+            self.max_buffer_size = _coerce(
+                settings.get("max_buffer_size"), 10, self.max_buffer_size
+            )
 
         self.update_timer.setInterval(self.update_interval_ms)
+
+    def _apply_viewer_settings(self) -> None:
+        if not self._viewer_settings:
+            return
+
+        if hasattr(self, "follow_latest_checkbox"):
+            self.follow_latest_checkbox.setChecked(self._auto_scroll_enabled)
+
+        if hasattr(self, "_preview_panel") and self._preview_panel:
+            self._preview_panel.setVisible(self._viewer_settings.show_preview_panel)
+            if hasattr(self, "preview_toggle_btn"):
+                self.preview_toggle_btn.setChecked(
+                    self._viewer_settings.show_preview_panel
+                )
+
+    def _save_viewer_settings(self) -> None:
+        if not self._config_manager:
+            return
+
+        show_preview = False
+        if hasattr(self, "_preview_panel") and self._preview_panel:
+            show_preview = self._preview_panel.isVisible()
+
+        self._config_manager.update_logcat_viewer_settings(
+            auto_scroll_enabled=self._auto_scroll_enabled,
+            show_preview_panel=show_preview,
+        )
 
     def _update_status_label(self, text):
         """Update status label with consistent formatting."""
         prefix = self._get_status_prefix()
-        self.status_label.setText(f'{prefix} {text}')
+        self.status_label.setText(f"{prefix} {text}")
 
     def _get_buffer_stats(self):
         """Get buffer statistics."""
@@ -796,9 +924,9 @@ class LogcatWindow(QDialog):
             total_logs = self.log_model.rowCount()
             filtered_count = 0
         return {
-            'total_logs': total_logs,
-            'buffer_size': len(self.log_buffer),
-            'filtered_count': filtered_count,
+            "total_logs": total_logs,
+            "buffer_size": len(self.log_buffer),
+            "filtered_count": filtered_count,
         }
 
     def _manage_buffer_size(self):
@@ -855,7 +983,9 @@ class LogcatWindow(QDialog):
     def _line_matches_filters(self, line: LogLine) -> bool:
         if not self._compiled_filter_patterns:
             return False
-        return any(pattern.search(line.raw) for pattern in self._compiled_filter_patterns)
+        return any(
+            pattern.search(line.raw) for pattern in self._compiled_filter_patterns
+        )
 
     def _rebuild_filtered_model(self) -> None:
         self.filtered_model.clear()
@@ -889,7 +1019,9 @@ class LogcatWindow(QDialog):
 
     def init_ui(self):
         """Initialize the logcat window UI."""
-        self.setWindowTitle(f'Logcat Viewer - {self.device.device_model} ({self.device.device_serial_num[:8]}...)')
+        self.setWindowTitle(
+            f"Logcat Viewer - {self.device.device_model} ({self.device.device_serial_num[:8]}...)"
+        )
         self.setGeometry(100, 100, 1200, 800)
 
         # Main layout and splitter configuration
@@ -901,13 +1033,19 @@ class LogcatWindow(QDialog):
 
         # Extract levels and filters into collapsible panels for a cleaner UI.
         levels_content = self._create_levels_widget()
-        levels_panel = CollapsiblePanel('Levels', levels_content, collapsed=False, parent=self)
+        levels_panel = CollapsiblePanel(
+            "Levels", levels_content, collapsed=False, parent=self
+        )
 
         filters_content = self.create_filter_panel()
-        filters_panel = CollapsiblePanel('Filters', filters_content, collapsed=False, parent=self)
+        filters_panel = CollapsiblePanel(
+            "Filters", filters_content, collapsed=False, parent=self
+        )
 
         top_panel = QWidget()
-        top_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        top_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
         top_layout = QVBoxLayout(top_panel)
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(2)
@@ -929,27 +1067,36 @@ class LogcatWindow(QDialog):
             pass
 
         # If toolbar toggle buttons exist, ensure they reflect and control panel state
-        if hasattr(self, 'levels_toggle_btn'):
+        if hasattr(self, "levels_toggle_btn"):
             self.levels_toggle_btn.setCheckable(True)
             self.levels_toggle_btn.setChecked(not self.levels_panel.is_collapsed())
-        if hasattr(self, 'filters_toggle_btn'):
+        if hasattr(self, "filters_toggle_btn"):
             self.filters_toggle_btn.setCheckable(True)
             self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
 
         self.log_display = QListView()
         self.log_display.setModel(self.log_proxy)
-        self.log_display.setFont(QFont('Consolas', 10))
+        self.log_display.setFont(QFont("Consolas", 10))
         # Enable correct width calculation for long lines and allow horizontal scroll
         self.log_display.setUniformItemSizes(False)
-        self.log_display.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.log_display.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.log_display.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.log_display.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.log_display.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.log_display.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.log_display.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.log_display.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.log_display.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.log_display.setWordWrap(False)
         try:
             # Avoid eliding long log lines; show full width with horizontal scroll
             from PyQt6.QtCore import Qt as _Qt
+
             self.log_display.setTextElideMode(_Qt.TextElideMode.ElideNone)
         except Exception:
             pass
@@ -968,12 +1115,16 @@ class LogcatWindow(QDialog):
             }
             """
         )
-        self.log_display.verticalScrollBar().valueChanged.connect(self._on_log_view_scrolled)
+        self.log_display.verticalScrollBar().valueChanged.connect(
+            self._on_log_view_scrolled
+        )
 
-        self.status_label = QLabel('Ready to start logcat...')
+        self.status_label = QLabel("Ready to start logcat...")
 
         log_container = QWidget()
-        log_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        log_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         log_layout = QVBoxLayout(log_container)
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(4)
@@ -1001,7 +1152,9 @@ class LogcatWindow(QDialog):
 
         # Create left panel container for logcat content
         left_panel = QWidget()
-        left_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(vertical_splitter)
@@ -1015,6 +1168,7 @@ class LogcatWindow(QDialog):
         )
         self._preview_panel.error_occurred.connect(self._on_preview_error)
         self._preview_panel.recording_stopped.connect(self._on_recording_stopped)
+        self._preview_panel.setVisible(False)
 
         # Create horizontal splitter for main layout (logcat | preview)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1034,21 +1188,23 @@ class LogcatWindow(QDialog):
         """Enable context menu and keyboard shortcuts for copying logs."""
         self.log_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.log_display.customContextMenuRequested.connect(self._show_log_context_menu)
-        self.log_display.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.log_display.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
 
         copy_sequence = QKeySequence(QKeySequence.StandardKey.Copy)
         select_all_sequence = QKeySequence(QKeySequence.StandardKey.SelectAll)
-        copy_all_sequence = QKeySequence('Ctrl+Shift+C')
+        copy_all_sequence = QKeySequence("Ctrl+Shift+C")
 
-        self._copy_selected_action = QAction('Copy Selected', self)
+        self._copy_selected_action = QAction("Copy Selected", self)
         self._copy_selected_action.setShortcut(copy_sequence)
         self._copy_selected_action.triggered.connect(self.copy_selected_logs)
 
-        self._copy_all_action = QAction('Copy All', self)
+        self._copy_all_action = QAction("Copy All", self)
         self._copy_all_action.setShortcut(copy_all_sequence)
         self._copy_all_action.triggered.connect(self.copy_all_logs)
 
-        self._select_all_action = QAction('Select All', self)
+        self._select_all_action = QAction("Select All", self)
         self._select_all_action.setShortcut(select_all_sequence)
         self._select_all_action.triggered.connect(self.select_all_logs)
 
@@ -1084,7 +1240,7 @@ class LogcatWindow(QDialog):
 
     def _handle_find_shortcut(self) -> None:
         """Show the floating search bar and focus it."""
-        if hasattr(self, '_search_bar') and self._search_bar:
+        if hasattr(self, "_search_bar") and self._search_bar:
             self._position_search_bar()
             self._search_bar.show_search()
             self._search_bar.raise_()  # Ensure it's on top
@@ -1102,7 +1258,9 @@ class LogcatWindow(QDialog):
                 self._device_manager,
                 parent=self,
             )
-            self._device_watcher.device_disconnected.connect(self._on_device_disconnected)
+            self._device_watcher.device_disconnected.connect(
+                self._on_device_disconnected
+            )
         except Exception as exc:
             logger.warning("Failed to setup device watcher: %s", exc)
 
@@ -1147,7 +1305,10 @@ class LogcatWindow(QDialog):
 
     def _build_log_context_menu(self) -> QMenu:
         """Create the context menu used by the log view."""
-        has_selection = bool(self.log_display.selectionModel() and self.log_display.selectionModel().hasSelection())
+        has_selection = bool(
+            self.log_display.selectionModel()
+            and self.log_display.selectionModel().hasSelection()
+        )
         self._copy_selected_action.setEnabled(has_selection)
 
         menu = QMenu(self)
@@ -1197,7 +1358,7 @@ class LogcatWindow(QDialog):
     def copy_selected_logs(self) -> str:
         """Copy the selected log rows to the clipboard and return the payload."""
         lines = self._collect_selected_lines()
-        text = '\n'.join(lines)
+        text = "\n".join(lines)
         if text:
             QApplication.clipboard().setText(text)
         return text
@@ -1205,7 +1366,7 @@ class LogcatWindow(QDialog):
     def copy_all_logs(self) -> str:
         """Copy all visible log rows to the clipboard and return the payload."""
         lines = self._collect_all_visible_lines()
-        text = '\n'.join(lines)
+        text = "\n".join(lines)
         if text:
             QApplication.clipboard().setText(text)
         return text
@@ -1224,79 +1385,157 @@ class LogcatWindow(QDialog):
         primary_row.setContentsMargins(0, 0, 0, 0)
         primary_row.setSpacing(8)
 
-        # Start/Stop buttons
-        self.start_btn = QPushButton('▶️ Start Logcat')
+        self.start_btn = QPushButton("▶️ Start Logcat")
         self.start_btn.clicked.connect(self.start_logcat)
         primary_row.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton('⏹️ Stop')
+        self.stop_btn = QPushButton("⏹️ Stop")
         self.stop_btn.clicked.connect(self.stop_logcat)
         self.stop_btn.setEnabled(False)
         primary_row.addWidget(self.stop_btn)
 
-        clear_btn = QPushButton('🗑️ Clear')
+        clear_btn = QPushButton("🗑️ Clear")
         clear_btn.clicked.connect(self.clear_logs)
         primary_row.addWidget(clear_btn)
 
-        perf_btn = QPushButton('⚙️ Performance')
-        perf_btn.clicked.connect(self.open_performance_settings)
-        primary_row.addWidget(perf_btn)
-
         primary_row.addWidget(self.create_vertical_separator())
 
-        self.follow_latest_checkbox = QCheckBox('Follow newest')
+        self.follow_latest_checkbox = QCheckBox("Follow newest")
         self.follow_latest_checkbox.setChecked(True)
         self.follow_latest_checkbox.toggled.connect(self.set_auto_scroll_enabled)
         primary_row.addWidget(self.follow_latest_checkbox)
 
-        jump_btn = QPushButton('Jump to latest')
+        jump_btn = QPushButton("Jump to latest")
         jump_btn.clicked.connect(lambda: self.set_auto_scroll_enabled(True))
-        jump_btn.setToolTip('Re-enable auto-follow and scroll to newest log entries')
+        jump_btn.setToolTip("Re-enable auto-follow and scroll to newest log entries")
         primary_row.addWidget(jump_btn)
 
-        # Inline toggles to expand/collapse Levels and Filters panels just below
         primary_row.addWidget(self.create_vertical_separator())
 
-        self.levels_toggle_btn = QPushButton('Levels')
+        self.levels_toggle_btn = QPushButton("Levels")
         self.levels_toggle_btn.clicked.connect(self.toggle_levels_visibility)
         primary_row.addWidget(self.levels_toggle_btn)
 
-        self.filters_toggle_btn = QPushButton('Filters')
+        self.filters_toggle_btn = QPushButton("Filters")
         self.filters_toggle_btn.clicked.connect(self.toggle_filters_visibility)
         primary_row.addWidget(self.filters_toggle_btn)
 
-        self.preview_toggle_btn = QPushButton('Preview')
+        self.preview_toggle_btn = QPushButton("Preview")
         self.preview_toggle_btn.setCheckable(True)
-        self.preview_toggle_btn.setChecked(True)
-        self.preview_toggle_btn.setToolTip('Toggle device preview and recording panel')
+        self.preview_toggle_btn.setChecked(False)
+        self.preview_toggle_btn.setToolTip("Toggle device preview and recording panel")
         self.preview_toggle_btn.clicked.connect(self.toggle_preview_visibility)
         primary_row.addWidget(self.preview_toggle_btn)
 
         primary_row.addStretch(1)
+
+        more_btn = QPushButton("⋮")
+        more_btn.setFixedWidth(32)
+        more_btn.setToolTip("More options")
+        more_menu = QMenu(more_btn)
+
+        self._compact_mode_action = more_menu.addAction("📦 Compact Mode")
+        self._compact_mode_action.setCheckable(True)
+        is_compact = (
+            self._viewer_settings.compact_mode if self._viewer_settings else True
+        )
+        self._compact_mode_action.setChecked(is_compact)
+        self._compact_mode_action.triggered.connect(self._toggle_compact_mode)
+
+        more_menu.addSeparator()
+
+        perf_action = more_menu.addAction("⚙️ Performance Settings")
+        perf_action.triggered.connect(self.open_performance_settings)
+        more_btn.setMenu(more_menu)
+        primary_row.addWidget(more_btn)
+
         layout.addLayout(primary_row)
         return layout
 
+    def _toggle_compact_mode(self, checked: bool) -> None:
+        if hasattr(self, "levels_panel") and self.levels_panel:
+            self.levels_panel.set_collapsed(checked)
+        if hasattr(self, "filters_panel") and self.filters_panel:
+            self.filters_panel.set_collapsed(checked)
+        if self._viewer_settings:
+            self._viewer_settings.compact_mode = checked
+
     def toggle_levels_visibility(self):
         """Toggle the visibility of the Levels panel content."""
-        if hasattr(self, 'levels_panel') and self.levels_panel:
+        if hasattr(self, "levels_panel") and self.levels_panel:
             self.levels_panel.set_collapsed(not self.levels_panel.is_collapsed())
-            if hasattr(self, 'levels_toggle_btn'):
+            if hasattr(self, "levels_toggle_btn"):
                 self.levels_toggle_btn.setChecked(not self.levels_panel.is_collapsed())
 
     def toggle_filters_visibility(self):
         """Toggle the visibility of the Filters panel content."""
-        if hasattr(self, 'filters_panel') and self.filters_panel:
+        if hasattr(self, "filters_panel") and self.filters_panel:
             self.filters_panel.set_collapsed(not self.filters_panel.is_collapsed())
-            if hasattr(self, 'filters_toggle_btn'):
-                self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
+            if hasattr(self, "filters_toggle_btn"):
+                self.filters_toggle_btn.setChecked(
+                    not self.filters_panel.is_collapsed()
+                )
 
     def toggle_preview_visibility(self):
-        """Toggle the visibility of the preview panel."""
-        if hasattr(self, '_preview_panel') and self._preview_panel:
-            is_visible = self._preview_panel.isVisible()
-            self._preview_panel.setVisible(not is_visible)
-            if hasattr(self, 'preview_toggle_btn'):
-                self.preview_toggle_btn.setChecked(not is_visible)
+        if not hasattr(self, "_preview_panel") or not self._preview_panel:
+            return
+
+        is_visible = self._preview_panel.isVisible()
+        target_visible = not is_visible
+
+        if hasattr(self, "preview_toggle_btn"):
+            self.preview_toggle_btn.setChecked(target_visible)
+
+        if target_visible:
+            self._preview_panel.setVisible(True)
+            self._animate_splitter_show()
+        else:
+            self._animate_splitter_hide()
+
+    def _animate_splitter_show(self) -> None:
+        if not hasattr(self, "_main_splitter"):
+            return
+
+        sizes = self._main_splitter.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return
+
+        target_preview_width = total // 4
+        target_left_width = total - target_preview_width
+
+        self._splitter_anim = QPropertyAnimation(self, b"_splitter_sizes_anim")
+        self._splitter_anim.setDuration(200)
+        self._splitter_anim.setStartValue([sizes[0], 0])
+        self._splitter_anim.setEndValue([target_left_width, target_preview_width])
+        self._splitter_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._splitter_anim.valueChanged.connect(self._on_splitter_anim_value)
+        self._splitter_anim.start()
+
+    def _animate_splitter_hide(self) -> None:
+        if not hasattr(self, "_main_splitter"):
+            self._preview_panel.setVisible(False)
+            return
+
+        sizes = self._main_splitter.sizes()
+        total = sum(sizes)
+
+        self._splitter_anim = QPropertyAnimation(self, b"_splitter_sizes_anim")
+        self._splitter_anim.setDuration(200)
+        self._splitter_anim.setStartValue(sizes)
+        self._splitter_anim.setEndValue([total, 0])
+        self._splitter_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._splitter_anim.valueChanged.connect(self._on_splitter_anim_value)
+        self._splitter_anim.finished.connect(self._on_splitter_hide_finished)
+        self._splitter_anim.start()
+
+    def _on_splitter_anim_value(self, value) -> None:
+        if hasattr(self, "_main_splitter"):
+            self._main_splitter.setSizes([int(value[0]), int(value[1])])
+
+    def _on_splitter_hide_finished(self) -> None:
+        if hasattr(self, "_preview_panel") and self._preview_panel:
+            self._preview_panel.setVisible(False)
 
     def _on_preview_error(self, message: str) -> None:
         """Handle errors from the preview panel."""
@@ -1319,25 +1558,25 @@ class LogcatWindow(QDialog):
     def _create_levels_widget(self) -> QWidget:
         """Create content widget for log levels checkboxes."""
         levels_container = QWidget()
-        levels_container.setObjectName('logcat_levels_container')
+        levels_container.setObjectName("logcat_levels_container")
         levels_container.setStyleSheet(
-            'QWidget#logcat_levels_container {'
-            ' background-color: #2c2c2c;'
-            ' border: 1px solid #3e3e3e;'
-            ' border-radius: 6px;'
-            '}'
+            "QWidget#logcat_levels_container {"
+            " background-color: #2c2c2c;"
+            " border: 1px solid #3e3e3e;"
+            " border-radius: 6px;"
+            "}"
         )
         levels_layout = QHBoxLayout(levels_container)
         levels_layout.setContentsMargins(8, 6, 8, 6)
         levels_layout.setSpacing(8)
 
         self.log_levels = {
-            'V': QCheckBox('Verbose'),
-            'D': QCheckBox('Debug'),
-            'I': QCheckBox('Info'),
-            'W': QCheckBox('Warn'),
-            'E': QCheckBox('Error'),
-            'F': QCheckBox('Fatal'),
+            "V": QCheckBox("Verbose"),
+            "D": QCheckBox("Debug"),
+            "I": QCheckBox("Info"),
+            "W": QCheckBox("Warn"),
+            "E": QCheckBox("Error"),
+            "F": QCheckBox("Fatal"),
         }
 
         for level in self.log_levels_order:
@@ -1367,20 +1606,20 @@ class LogcatWindow(QDialog):
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.setSpacing(8)
 
-        source_label = QLabel('Source')
-        source_label.setStyleSheet('font-weight: bold;')
+        source_label = QLabel("Source")
+        source_label.setStyleSheet("font-weight: bold;")
         source_layout.addWidget(source_label)
 
         self.log_source_mode = QComboBox()
-        self.log_source_mode.addItem('Tag', 'tag')
-        self.log_source_mode.addItem('Package', 'package')
-        self.log_source_mode.addItem('Raw', 'raw')
+        self.log_source_mode.addItem("Tag", "tag")
+        self.log_source_mode.addItem("Package", "package")
+        self.log_source_mode.addItem("Raw", "raw")
         self.log_source_mode.setCurrentIndex(0)
         self.log_source_mode.setFixedWidth(110)
         source_layout.addWidget(self.log_source_mode)
 
         self.log_source_input = QLineEdit()
-        self.log_source_input.setPlaceholderText('Tag or package filter (optional)')
+        self.log_source_input.setPlaceholderText("Tag or package filter (optional)")
         self.log_source_input.setMinimumWidth(220)
         source_layout.addWidget(self.log_source_input, stretch=1)
 
@@ -1392,7 +1631,9 @@ class LogcatWindow(QDialog):
             preset_manager=self._preset_manager,
         )
         self._filter_panel_widget.filters_changed.connect(self._on_filter_panel_changed)
-        self._filter_panel_widget.live_filter_changed.connect(self._on_live_filter_changed)
+        self._filter_panel_widget.live_filter_changed.connect(
+            self._on_live_filter_changed
+        )
 
         main_layout.addWidget(self._filter_panel_widget)
 
@@ -1414,27 +1655,29 @@ class LogcatWindow(QDialog):
     def _update_status_counts(self) -> None:
         """Update the status label based on current filter state."""
         if self._has_active_filters():
-            active_count = len(self.active_filters) + (1 if self.live_filter_pattern else 0)
+            active_count = len(self.active_filters) + (
+                1 if self.live_filter_pattern else 0
+            )
             filtered_count = self.filtered_model.rowCount()
             capacity = self.max_lines
             self._update_status_label(
-                f'Filtered: {filtered_count}/{capacity} lines (active: {active_count})'
+                f"Filtered: {filtered_count}/{capacity} lines (active: {active_count})"
             )
         else:
             capacity = self.max_lines * self.history_multiplier
             total_logs = self.log_model.rowCount()
-            self._update_status_label(f'Total: {total_logs}/{capacity} lines')
+            self._update_status_label(f"Total: {total_logs}/{capacity} lines")
 
     def _notify_settings_changed(self) -> None:
         """Emit persisted settings through callback if provided."""
         if callable(self._settings_callback):
             self._settings_callback(
                 {
-                    'max_lines': self.max_lines,
-                    'history_multiplier': self.history_multiplier,
-                    'update_interval_ms': self.update_interval_ms,
-                    'max_lines_per_update': self.max_lines_per_update,
-                    'max_buffer_size': self.max_buffer_size,
+                    "max_lines": self.max_lines,
+                    "history_multiplier": self.history_multiplier,
+                    "update_interval_ms": self.update_interval_ms,
+                    "max_lines_per_update": self.max_lines_per_update,
+                    "max_buffer_size": self.max_buffer_size,
                 }
             )
 
@@ -1460,7 +1703,7 @@ class LogcatWindow(QDialog):
 
         try:
             self._clear_device_logcat_buffer()
-            self._partial_line = ''
+            self._partial_line = ""
             self._suppress_logcat_errors = False
 
             # Create QProcess for logcat
@@ -1474,41 +1717,47 @@ class LogcatWindow(QDialog):
 
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(False)
-            self._update_status_label(f'Starting logcat for {self.device.device_model}...')
+            self._update_status_label(
+                f"Starting logcat for {self.device.device_model}..."
+            )
 
             # Use adb logcat with device serial
-            cmd = 'adb'
+            cmd = "adb"
             process.start(cmd, args)
 
         except Exception as exc:
-            self.show_error(f'Error starting logcat: {exc}')
+            self.show_error(f"Error starting logcat: {exc}")
             self._cleanup_logcat_process()
             self._handle_logcat_stopped()
 
     def _get_selected_levels(self) -> List[str]:
         """Return selected log severity levels in configured order."""
-        selected = [level for level in self.log_levels_order if self.log_levels[level].isChecked()]
-        return selected or ['E']
+        selected = [
+            level
+            for level in self.log_levels_order
+            if self.log_levels[level].isChecked()
+        ]
+        return selected or ["E"]
 
     def _clear_device_logcat_buffer(self) -> None:
         """Clear device-side logcat buffer so streaming starts from current time."""
         try:
             subprocess.run(
-                ['adb', '-s', self.device.device_serial_num, 'logcat', '-c'],
+                ["adb", "-s", self.device.device_serial_num, "logcat", "-c"],
                 check=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            logger.warning('ADB executable not found when clearing logcat buffer.')
+            logger.warning("ADB executable not found when clearing logcat buffer.")
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug('Clearing logcat buffer failed but continuing: %s', exc)
+            logger.debug("Clearing logcat buffer failed but continuing: %s", exc)
 
     def _handle_logcat_started(self):
         """Update state when the logcat process reports it has started."""
         self.is_running = True
         self.stop_btn.setEnabled(True)
-        self._update_status_label(f'Logcat running for {self.device.device_model}...')
+        self._update_status_label(f"Logcat running for {self.device.device_model}...")
 
     def _handle_logcat_error(self, error):
         """Handle asynchronous logcat process errors."""
@@ -1516,18 +1765,18 @@ class LogcatWindow(QDialog):
             return
 
         error_map = {
-            QT_QPROCESS.ProcessError.FailedToStart: 'Failed to start logcat process. Ensure ADB is available on PATH.',
-            QT_QPROCESS.ProcessError.Crashed: 'Logcat process crashed unexpectedly.',
-            QT_QPROCESS.ProcessError.Timedout: 'Timed out while starting logcat process.',
+            QT_QPROCESS.ProcessError.FailedToStart: "Failed to start logcat process. Ensure ADB is available on PATH.",
+            QT_QPROCESS.ProcessError.Crashed: "Logcat process crashed unexpectedly.",
+            QT_QPROCESS.ProcessError.Timedout: "Timed out while starting logcat process.",
         }
-        message = error_map.get(error, f'Logcat process error: {error}')
+        message = error_map.get(error, f"Logcat process error: {error}")
         self.show_error(message)
         self._cleanup_logcat_process()
         self._handle_logcat_stopped()
 
     def _build_logcat_arguments(self, selected_levels: List[str]) -> List[str]:
         """Build the adb logcat command arguments based on selected filters."""
-        base_args = ['-s', self.device.device_serial_num, 'logcat', '-v', 'threadtime']
+        base_args = ["-s", self.device.device_serial_num, "logcat", "-v", "threadtime"]
         base_args.extend(self._build_source_filters(selected_levels))
         return base_args
 
@@ -1535,37 +1784,37 @@ class LogcatWindow(QDialog):
         """Construct filter arguments for tag/package/raw modes."""
         lowest_level = self._get_lowest_level(selected_levels)
 
-        if not hasattr(self, 'log_source_input'):
-            return [f'*:{lowest_level}']
+        if not hasattr(self, "log_source_input"):
+            return [f"*:{lowest_level}"]
 
         filter_text = self.log_source_input.text().strip()
         if not filter_text:
-            return [f'*:{lowest_level}']
+            return [f"*:{lowest_level}"]
 
         mode = self.log_source_mode.currentData()
 
-        if mode == 'tag':
+        if mode == "tag":
             tag_level = self._get_lowest_level(selected_levels)
-            return [f'{filter_text}:{tag_level}', '*:S']
+            return [f"{filter_text}:{tag_level}", "*:S"]
 
-        if mode == 'package':
+        if mode == "package":
             pids = self._resolve_package_pids(filter_text)
             if not pids:
                 raise ValueError(
                     f'No running process found for "{filter_text}". '
-                    'Launch the app and try again.'
+                    "Launch the app and try again."
                 )
 
             pid_args: List[str] = []
             for pid in pids:
-                pid_args.extend(['--pid', pid])
-            pid_args.append(f'*:{lowest_level}')
+                pid_args.extend(["--pid", pid])
+            pid_args.append(f"*:{lowest_level}")
             return pid_args
 
-        if mode == 'raw':
+        if mode == "raw":
             return filter_text.split()
 
-        return [f'*:{lowest_level}']
+        return [f"*:{lowest_level}"]
 
     def _get_lowest_level(self, selected_levels: List[str]) -> str:
         """Get the least restrictive (most verbose) level from selection."""
@@ -1575,10 +1824,12 @@ class LogcatWindow(QDialog):
     def _resolve_package_pids(self, package_name: str) -> List[str]:
         """Resolve running process IDs for the provided package name."""
         try:
-            pids = adb_tools.get_package_pids(self.device.device_serial_num, package_name)
+            pids = adb_tools.get_package_pids(
+                self.device.device_serial_num, package_name
+            )
             return [pid.strip() for pid in pids if pid and pid.strip()]
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning('PID lookup failed for %s: %s', package_name, exc)
+            logger.warning("PID lookup failed for %s: %s", package_name, exc)
             return []
 
     def read_logcat_output(self):
@@ -1587,17 +1838,19 @@ class LogcatWindow(QDialog):
             return
 
         data = self.logcat_process.readAllStandardOutput()
-        text = bytes(data).decode('utf-8', errors='replace')
+        text = bytes(data).decode("utf-8", errors="replace")
 
         if not text:
             return
 
-        normalized = text.replace('\r\n', '\n').replace('\r', '\n')
-        combined = f'{self._partial_line}{normalized}' if self._partial_line else normalized
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        combined = (
+            f"{self._partial_line}{normalized}" if self._partial_line else normalized
+        )
 
-        lines = combined.split('\n')
-        if combined.endswith('\n'):
-            self._partial_line = ''
+        lines = combined.split("\n")
+        if combined.endswith("\n"):
+            self._partial_line = ""
         else:
             self._partial_line = lines.pop() if lines else combined
 
@@ -1622,7 +1875,9 @@ class LogcatWindow(QDialog):
         if should_flush:
             self.process_buffered_logs()
         elif not self.update_timer.isActive():
-            remaining_time = max(1, int(self.update_interval_ms - time_since_last_update))
+            remaining_time = max(
+                1, int(self.update_interval_ms - time_since_last_update)
+            )
             self.update_timer.start(remaining_time)
 
     def process_buffered_logs(self):
@@ -1633,8 +1888,8 @@ class LogcatWindow(QDialog):
         current_time = time.time() * 1000
         self.last_update_time = current_time
 
-        lines_to_process = self.log_buffer[:self.max_lines_per_update]
-        self.log_buffer = self.log_buffer[self.max_lines_per_update:]
+        lines_to_process = self.log_buffer[: self.max_lines_per_update]
+        self.log_buffer = self.log_buffer[self.max_lines_per_update :]
 
         if not lines_to_process:
             if self.log_buffer and not self.update_timer.isActive():
@@ -1654,11 +1909,15 @@ class LogcatWindow(QDialog):
 
         if self.is_running:
             stats = self._get_buffer_stats()
-            if stats['buffer_size'] > 0:
-                self._update_status_label(f'Logcat running... (buffered: {stats["buffer_size"]} lines)')
+            if stats["buffer_size"] > 0:
+                self._update_status_label(
+                    f"Logcat running... (buffered: {stats['buffer_size']} lines)"
+                )
             else:
-                suffix = 'visible lines' if self._has_active_filters() else 'lines'
-                self._update_status_label(f'Logcat running... ({stats["total_logs"]} {suffix})')
+                suffix = "visible lines" if self._has_active_filters() else "lines"
+                self._update_status_label(
+                    f"Logcat running... ({stats['total_logs']} {suffix})"
+                )
 
         if self.log_buffer and not self.update_timer.isActive():
             self.update_timer.start(self.update_interval_ms)
@@ -1709,30 +1968,34 @@ class LogcatWindow(QDialog):
                 try:
                     process.kill()
                 except RuntimeError as exc:
-                    logger.debug('Kill skipped (process already gone): %s', exc)
+                    logger.debug("Kill skipped (process already gone): %s", exc)
                 except AttributeError:
                     pass
                 try:
                     process.waitForFinished(3000)
                 except RuntimeError as exc:
-                    logger.debug('waitForFinished skipped (process already gone): %s', exc)
+                    logger.debug(
+                        "waitForFinished skipped (process already gone): %s", exc
+                    )
                 except AttributeError:
                     pass
         except Exception as exc:
-            logger.warning('Failed to terminate logcat process: %s', exc)
+            logger.warning("Failed to terminate logcat process: %s", exc)
         finally:
-            delete_later = getattr(process, 'deleteLater', None)
+            delete_later = getattr(process, "deleteLater", None)
             if callable(delete_later):
                 try:
                     delete_later()
                 except RuntimeError as exc:
-                    logger.debug('deleteLater skipped (process already deleted): %s', exc)
+                    logger.debug(
+                        "deleteLater skipped (process already deleted): %s", exc
+                    )
 
     def _handle_logcat_stopped(self):
         """Reset state and UI once logcat streaming halts."""
         self.update_timer.stop()
         self.log_buffer.clear()
-        self._partial_line = ''
+        self._partial_line = ""
         self._suppress_logcat_errors = False
 
         self.is_running = False
@@ -1743,22 +2006,24 @@ class LogcatWindow(QDialog):
             self.limit_log_lines()
             self._update_status_counts()
         else:
-            self._update_status_label('Logcat stopped.')
+            self._update_status_label("Logcat stopped.")
 
     def clear_logs(self):
         """Clear the log display."""
         self.log_model.clear()
         self.filtered_model.clear()
         self.log_buffer.clear()
-        self._partial_line = ''
+        self._partial_line = ""
         self.log_proxy.reset_limit_cache()
         if self._has_active_filters():
             self._handle_filters_changed()
         else:
-            self._update_status_label('Logs cleared')
+            self._update_status_label("Logs cleared")
         self._next_line_number = 1
 
-    def set_auto_scroll_enabled(self, enabled: bool, *, from_scroll: bool = False) -> None:
+    def set_auto_scroll_enabled(
+        self, enabled: bool, *, from_scroll: bool = False
+    ) -> None:
         """Enable or disable automatic scrolling to the latest log entry."""
         enabled = bool(enabled)
         if enabled == self._auto_scroll_enabled and not from_scroll:
@@ -1766,7 +2031,7 @@ class LogcatWindow(QDialog):
 
         self._auto_scroll_enabled = enabled
 
-        if hasattr(self, 'follow_latest_checkbox'):
+        if hasattr(self, "follow_latest_checkbox"):
             self.follow_latest_checkbox.blockSignals(True)
             self.follow_latest_checkbox.setChecked(enabled)
             self.follow_latest_checkbox.blockSignals(False)
@@ -1818,7 +2083,9 @@ class LogcatWindow(QDialog):
         try:
             if scroll_bar is not None:
                 scroll_bar.setValue(scroll_bar.maximum())
-            self.log_display.scrollTo(last_index, QAbstractItemView.ScrollHint.PositionAtBottom)
+            self.log_display.scrollTo(
+                last_index, QAbstractItemView.ScrollHint.PositionAtBottom
+            )
         finally:
             self._suppress_scroll_signal = False
 
@@ -1948,7 +2215,7 @@ class LogcatWindow(QDialog):
 
     def _position_search_bar(self) -> None:
         """Position the search bar in the top-right corner of the log display."""
-        if not hasattr(self, '_search_bar') or not self._search_bar:
+        if not hasattr(self, "_search_bar") or not self._search_bar:
             return
 
         parent = self._search_bar.parentWidget()
@@ -1975,7 +2242,7 @@ class LogcatWindow(QDialog):
     def eventFilter(self, watched: QObject, event) -> bool:
         """Handle resize events to reposition the search bar."""
         if (
-            hasattr(self, 'log_display')
+            hasattr(self, "log_display")
             and watched is self.log_display
             and event.type() == QEvent.Type.Resize
         ):
@@ -1994,6 +2261,8 @@ class LogcatWindow(QDialog):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         """Ensure the logcat process and device watcher are cleaned up."""
+        self._save_viewer_settings()
+
         if self.logcat_process:
             self.stop_logcat()
 
@@ -2003,7 +2272,7 @@ class LogcatWindow(QDialog):
             self._device_watcher = None
 
         # Cleanup preview panel (scrcpy and recording)
-        if hasattr(self, '_preview_panel') and self._preview_panel:
+        if hasattr(self, "_preview_panel") and self._preview_panel:
             self._preview_panel.cleanup()
 
         super().closeEvent(event)
@@ -2030,4 +2299,5 @@ class LogcatWindow(QDialog):
     def show_error(self, message):
         """Show error message dialog."""
         from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.critical(self, 'Logcat Error', message)
+
+        QMessageBox.critical(self, "Logcat Error", message)

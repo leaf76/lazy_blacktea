@@ -56,6 +56,7 @@ class FilterPanelWidget(QWidget):
         self._preset_manager = preset_manager or PresetManager()
         self._filter_state = ActiveFilterState()
         self._init_ui()
+        self._refresh_active_list()
         self._refresh_presets()
 
     def _init_ui(self) -> None:
@@ -87,7 +88,9 @@ class FilterPanelWidget(QWidget):
         layout.addWidget(label)
 
         self._live_filter_input = QLineEdit()
-        self._live_filter_input.setPlaceholderText("Type to filter logs in real-time...")
+        self._live_filter_input.setPlaceholderText(
+            "Type to filter logs in real-time..."
+        )
         self._live_filter_input.textChanged.connect(self._on_live_filter_changed)
         layout.addWidget(self._live_filter_input)
 
@@ -124,10 +127,17 @@ class FilterPanelWidget(QWidget):
 
         # Active filters list
         self._active_list = QListWidget()
-        self._active_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._active_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._active_list.setMaximumHeight(80)
-        self._active_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._active_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._active_list.setMinimumHeight(24)  # Single row when empty
+        self._active_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._active_list.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         layout.addWidget(self._active_list)
 
         # Actions row
@@ -269,18 +279,23 @@ class FilterPanelWidget(QWidget):
     # -------------------------------------------------------------------------
 
     def _refresh_active_list(self) -> None:
-        """Refresh the active filters list widget."""
         self._active_list.clear()
 
         if not self._filter_state.active_patterns:
             placeholder = QListWidgetItem("No active filters")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self._active_list.addItem(placeholder)
+            self._active_list.setFixedHeight(24)
             return
 
         for pattern in self._filter_state.active_patterns:
             item = QListWidgetItem(pattern)
             self._active_list.addItem(item)
+
+        row_height = 20
+        padding = 8
+        content_height = len(self._filter_state.active_patterns) * row_height + padding
+        self._active_list.setFixedHeight(min(content_height, 80))
 
     def _remove_selected(self) -> None:
         """Remove selected patterns from active filters."""
@@ -344,7 +359,9 @@ class FilterPanelWidget(QWidget):
             index = self._preset_combo.findText(name)
             if index >= 0:
                 self._preset_combo.setCurrentIndex(index)
-            QMessageBox.information(self, "Saved", f'Preset "{name}" saved successfully!')
+            QMessageBox.information(
+                self, "Saved", f'Preset "{name}" saved successfully!'
+            )
         else:
             QMessageBox.warning(self, "Error", "Failed to save preset.")
 
@@ -353,14 +370,23 @@ class FilterPanelWidget(QWidget):
     # -------------------------------------------------------------------------
 
     def _refresh_presets(self) -> None:
-        """Refresh the presets combo box."""
         current = self._preset_combo.currentText()
         self._preset_combo.clear()
 
         presets = self._preset_manager.list_presets()
+        has_presets = len(presets) > 0
+
+        self._load_preset_btn.setVisible(has_presets)
+        self._delete_preset_btn.setVisible(has_presets)
+
+        if not has_presets:
+            self._preset_combo.addItem("No saved presets")
+            self._preset_combo.setEnabled(False)
+            return
+
+        self._preset_combo.setEnabled(True)
         for preset in presets:
             self._preset_combo.addItem(preset.name)
-            # Store filter count in tooltip
             idx = self._preset_combo.count() - 1
             self._preset_combo.setItemData(
                 idx,
@@ -368,7 +394,6 @@ class FilterPanelWidget(QWidget):
                 Qt.ItemDataRole.ToolTipRole,
             )
 
-        # Restore selection if possible
         if current:
             idx = self._preset_combo.findText(current)
             if idx >= 0:
