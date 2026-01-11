@@ -16,7 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
 
 
-logger = common.get_logger('lazy_blacktea')
+logger = common.get_logger("lazy_blacktea")
 
 
 class _SelectionProxy:
@@ -40,7 +40,7 @@ class _SelectionProxy:
         def polish(self, _):  # pragma: no cover - no-op for compatibility
             return None
 
-    def __init__(self, controller: 'DeviceListController', serial: str) -> None:
+    def __init__(self, controller: "DeviceListController", serial: str) -> None:
         self._controller = controller
         self._serial = serial
         self._visible = True
@@ -49,7 +49,9 @@ class _SelectionProxy:
 
     # Qt-like API ------------------------------------------------------
     def isChecked(self) -> bool:
-        selected = self._controller.window.device_selection_manager.get_selected_serials()
+        selected = (
+            self._controller.window.device_selection_manager.get_selected_serials()
+        )
         return self._serial in selected
 
     def setChecked(self, value: bool) -> None:
@@ -61,7 +63,9 @@ class _SelectionProxy:
             selected = [serial for serial in selected if serial != self._serial]
         self._controller._set_selection(selected)
 
-    def blockSignals(self, *_args, **_kwargs) -> None:  # pragma: no cover - compatibility hook
+    def blockSignals(
+        self, *_args, **_kwargs
+    ) -> None:  # pragma: no cover - compatibility hook
         return None
 
     def hide(self) -> None:  # pragma: no cover - legacy compatibility
@@ -82,7 +86,9 @@ class _SelectionProxy:
     def setFont(self, *_args, **_kwargs) -> None:  # pragma: no cover - no-op
         return None
 
-    def setContextMenuPolicy(self, *_args, **_kwargs) -> None:  # pragma: no cover - no-op
+    def setContextMenuPolicy(
+        self, *_args, **_kwargs
+    ) -> None:  # pragma: no cover - no-op
         return None
 
     def style(self):  # pragma: no cover - compatibility shim
@@ -106,14 +112,14 @@ class DeviceListController:
     """Encapsulates device list updates to keep the main window lean."""
 
     _SORT_MODE_BY_COLUMN: Dict[int, str] = {
-        0: 'selected',
-        1: 'name',
-        2: 'serial',
-        3: 'android',
-        4: 'api',
-        5: 'gms',
-        6: 'wifi',
-        7: 'bt',
+        0: "selected",
+        1: "name",
+        2: "serial",
+        3: "android",
+        4: "api",
+        5: "gms",
+        6: "wifi",
+        7: "bt",
     }
 
     def __init__(self, main_window: "WindowMain") -> None:
@@ -124,12 +130,12 @@ class DeviceListController:
         self._captured_sort: Optional[tuple[int, Qt.SortOrder]] = None
 
         # Try to attach the new device list component
-        device_list = getattr(main_window, 'device_list', None)
+        device_list = getattr(main_window, "device_list", None)
         if isinstance(device_list, ExpandableDeviceList):
             self.attach_device_list(device_list)
 
         # Legacy: attach table if available
-        table = getattr(main_window, 'device_table', None)
+        table = getattr(main_window, "device_table", None)
         if isinstance(table, DeviceTableWidget):
             self.attach_table(table)
 
@@ -143,22 +149,32 @@ class DeviceListController:
 
         if self.table is not None:
             try:
-                self.table.selection_toggled.disconnect(self._on_table_selection_toggled)
+                self.table.selection_toggled.disconnect(
+                    self._on_table_selection_toggled
+                )
             except TypeError:  # pragma: no cover - safeguard
                 pass
             try:
-                self.table.horizontalHeader().sortIndicatorChanged.disconnect(self._on_sort_indicator_changed)
+                self.table.horizontalHeader().sortIndicatorChanged.disconnect(
+                    self._on_sort_indicator_changed
+                )
             except TypeError:  # pragma: no cover
                 pass
             try:
-                self.table.device_context_menu_requested.disconnect(self._on_table_device_context_menu)
+                self.table.device_context_menu_requested.disconnect(
+                    self._on_table_device_context_menu
+                )
             except TypeError:  # pragma: no cover
                 pass
 
         self.table = table
         self.table.selection_toggled.connect(self._on_table_selection_toggled)
-        self.table.horizontalHeader().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
-        self.table.device_context_menu_requested.connect(self._on_table_device_context_menu)
+        self.table.horizontalHeader().sortIndicatorChanged.connect(
+            self._on_sort_indicator_changed
+        )
+        self.table.device_context_menu_requested.connect(
+            self._on_table_device_context_menu
+        )
         self._captured_sort = self.table.get_sort_indicator()
 
     def attach_device_list(self, device_list: ExpandableDeviceList) -> None:
@@ -168,17 +184,25 @@ class DeviceListController:
 
         if self.device_list is not None:
             try:
-                self.device_list.selection_changed.disconnect(self._on_device_list_selection_changed)
+                self.device_list.selection_changed.disconnect(
+                    self._on_device_list_selection_changed
+                )
             except TypeError:
                 pass
             try:
-                self.device_list.context_menu_requested.disconnect(self._on_device_list_context_menu)
+                self.device_list.context_menu_requested.disconnect(
+                    self._on_device_list_context_menu
+                )
             except TypeError:
                 pass
 
         self.device_list = device_list
-        self.device_list.selection_changed.connect(self._on_device_list_selection_changed)
-        self.device_list.context_menu_requested.connect(self._on_device_list_context_menu)
+        self.device_list.selection_changed.connect(
+            self._on_device_list_selection_changed
+        )
+        self.device_list.context_menu_requested.connect(
+            self._on_device_list_context_menu
+        )
 
     def _on_device_list_selection_changed(self, serials: List[str]) -> None:
         """Handle selection changes from the new device list."""
@@ -215,7 +239,9 @@ class DeviceListController:
         """Update the device list display with the current device dictionary."""
         self.window.device_dict = device_dict
 
-        selected_serials = self.window.device_selection_manager.prune_selection(device_dict.keys())
+        selected_serials = self.window.device_selection_manager.prune_selection(
+            device_dict.keys()
+        )
         active_serial = self.window.device_selection_manager.get_active_serial()
 
         filtered_devices = self._get_filtered_sorted_devices(device_dict)
@@ -248,29 +274,33 @@ class DeviceListController:
             keep = serials[-1:] if serials else []
             selected = self.window.device_selection_manager.set_selected_serials(keep)
         else:
-            selected = self.window.device_selection_manager.set_selected_serials(serials)
-        self._synchronize_ui_selection(selected, self.window.device_selection_manager.get_active_serial())
+            selected = self.window.device_selection_manager.set_selected_serials(
+                serials
+            )
+        self._synchronize_ui_selection(
+            selected, self.window.device_selection_manager.get_active_serial()
+        )
         self.update_selection_count()
-        logger.info('Selected all %s devices', len(serials))
+        logger.info("Selected all %s devices", len(serials))
 
     def select_last_visible_device(self) -> None:
         """Select the last device in the currently visible (filtered/sorted) list."""
         devices = self._get_filtered_sorted_devices(self.window.device_dict)
         if not devices:
-            logger.info('No visible devices to select')
+            logger.info("No visible devices to select")
             self._set_selection([])
             return
         last = devices[-1]
         serial = last.device_serial_num
         self._set_selection([serial], active_serial=serial)
-        logger.info('Selected last visible device: %s', serial)
+        logger.info("Selected last visible device: %s", serial)
 
     def select_no_devices(self) -> None:
         """Clear selection state."""
         self.window.device_selection_manager.clear()
         self._synchronize_ui_selection([], None)
         self.update_selection_count()
-        logger.info('Deselected all devices')
+        logger.info("Deselected all devices")
 
     def _set_selection(
         self,
@@ -278,11 +308,15 @@ class DeviceListController:
         active_serial: Optional[str] = None,
     ) -> List[str]:
         """Programmatically replace the tracked selection."""
-        serial_list = [serial for serial in serials if serial in self.window.device_dict]
+        serial_list = [
+            serial for serial in serials if serial in self.window.device_dict
+        ]
         self.window.device_selection_manager.set_selected_serials(serial_list)
         if active_serial is not None:
             self.window.device_selection_manager.set_active_serial(active_serial)
-        self._synchronize_ui_selection(serial_list, self.window.device_selection_manager.get_active_serial())
+        self._synchronize_ui_selection(
+            serial_list, self.window.device_selection_manager.get_active_serial()
+        )
         self.update_selection_count()
         return serial_list
 
@@ -299,49 +333,64 @@ class DeviceListController:
         # Build active device label
         if active_serial and active_serial in self.window.device_dict:
             device = self.window.device_dict[active_serial]
-            active_label = f'{device.device_model} ({active_serial[:8]}...)'
+            active_label = f"{device.device_model} ({active_serial[:8]}...)"
         elif active_serial:
             active_label = active_serial
         else:
-            active_label = 'None'
+            active_label = "None"
 
         # New compact title format: "X Devices • Y Selected"
         if search_text:
-            title_text = f'{visible_count}/{total_count} Devices \u2022 {selected_count} Selected'
+            title_text = f"{visible_count}/{total_count} Devices \u2022 {selected_count} Selected"
         else:
-            title_text = f'{total_count} Devices \u2022 {selected_count} Selected'
+            title_text = f"{total_count} Devices \u2022 {selected_count} Selected"
 
-        if hasattr(self.window, 'title_label') and self.window.title_label is not None:
+        if hasattr(self.window, "title_label") and self.window.title_label is not None:
             self.window.title_label.setText(title_text)
 
         # Update subtitle (new) or selection_summary_label (legacy)
-        subtitle_text = f'Active: {active_label}'
-        if hasattr(self.window, 'subtitle_label') and self.window.subtitle_label is not None:
+        subtitle_text = f"Active: {active_label}"
+        if (
+            hasattr(self.window, "subtitle_label")
+            and self.window.subtitle_label is not None
+        ):
             self.window.subtitle_label.setText(subtitle_text)
 
-        if hasattr(self.window, 'selection_summary_label') and self.window.selection_summary_label is not None:
+        if (
+            hasattr(self.window, "selection_summary_label")
+            and self.window.selection_summary_label is not None
+        ):
             # Legacy format for backward compatibility
-            if self.window.selection_summary_label != getattr(self.window, 'subtitle_label', None):
+            if self.window.selection_summary_label != getattr(
+                self.window, "subtitle_label", None
+            ):
                 self.window.selection_summary_label.setText(
-                    f'Selected {selected_count} of {total_count} \u00b7 Active: {active_label}'
+                    f"Selected {selected_count} of {total_count} \u00b7 Active: {active_label}"
                 )
 
         # Update hint label according to selection mode
-        if hasattr(self.window, 'selection_hint_label') and self.window.selection_hint_label is not None:
+        if (
+            hasattr(self.window, "selection_hint_label")
+            and self.window.selection_hint_label is not None
+        ):
             if self.window.device_selection_manager.is_single_selection():
                 hint_text = (
-                    'Tip: Single-select mode is ON. Clicking a row selects only that device. '
-                    'Toggle again to clear.'
+                    "Tip: Single-select mode is ON. Clicking a row selects only that device. "
+                    "Toggle again to clear."
                 )
             else:
-                hint_text = (
-                    'Tip: Use the checkboxes for multi-select. Toggle a device last to mark it active for single-device actions.'
-                )
+                hint_text = "Tip: Use the checkboxes for multi-select. Toggle a device last to mark it active for single-device actions."
             self.window.selection_hint_label.setText(hint_text)
 
-        update_overview = getattr(self.window, 'update_device_overview', None)
+        update_overview = getattr(self.window, "update_device_overview", None)
         if callable(update_overview):
             update_overview()
+
+        terminal_manager = getattr(self.window, "terminal_manager", None)
+        if terminal_manager is not None and hasattr(
+            terminal_manager, "update_device_count"
+        ):
+            terminal_manager.update_device_count()
 
     def filter_and_sort_devices(self) -> None:
         """Reapply search filtering and render the table."""
@@ -368,7 +417,11 @@ class DeviceListController:
         if self.table is None:
             return
         selected_list = list(selected_serials)
-        active_serial = active_serial if active_serial in selected_list else (selected_list[-1] if selected_list else None)
+        active_serial = (
+            active_serial
+            if active_serial in selected_list
+            else (selected_list[-1] if selected_list else None)
+        )
 
         self._syncing_selection = True
         try:
@@ -381,15 +434,19 @@ class DeviceListController:
         if self._syncing_selection:
             return
 
-        selected = self.window.device_selection_manager.apply_toggle(serial, is_checked, self.window.device_dict.keys())
-        self._synchronize_ui_selection(selected, self.window.device_selection_manager.get_active_serial())
+        selected = self.window.device_selection_manager.apply_toggle(
+            serial, is_checked, self.window.device_dict.keys()
+        )
+        self._synchronize_ui_selection(
+            selected, self.window.device_selection_manager.get_active_serial()
+        )
         self.update_selection_count()
 
     def _on_sort_indicator_changed(self, column: int, order: Qt.SortOrder) -> None:
         self._captured_sort = (column, order)
         sort_mode = self._SORT_MODE_BY_COLUMN.get(column)
         if sort_mode:
-            mapped_mode = f'{sort_mode}:{order.name.lower()}'
+            mapped_mode = f"{sort_mode}:{order.name.lower()}"
             self.window.device_search_manager.set_sort_mode(mapped_mode)
 
     def _on_table_device_context_menu(self, position: QPoint, serial: str) -> None:
@@ -413,12 +470,12 @@ class DeviceListController:
     def _update_empty_state(self, total_count: int, visible_count: int) -> None:
         # Use device_list (ExpandableDeviceList) if available, fallback to table
         list_widget = self.device_list if self.device_list is not None else self.table
-        no_devices_label = getattr(self.window, 'no_devices_label', None)
+        no_devices_label = getattr(self.window, "no_devices_label", None)
         if list_widget is None:
             return
 
         show_placeholder = total_count == 0
-        device_stack = getattr(self.window, 'device_panel_stack', None)
+        device_stack = getattr(self.window, "device_panel_stack", None)
         handled_by_stack = isinstance(device_stack, QStackedWidget)
 
         if handled_by_stack:
@@ -429,16 +486,18 @@ class DeviceListController:
         else:
             list_widget.setHidden(show_placeholder)
 
-        if no_devices_label is not None and hasattr(no_devices_label, 'setText'):
+        if no_devices_label is not None and hasattr(no_devices_label, "setText"):
             if show_placeholder:
                 if self.window.device_search_manager.get_search_text():
-                    no_devices_label.setText('No devices match the current search')
+                    no_devices_label.setText("No devices match the current search")
                 else:
-                    no_devices_label.setText('No devices found')
-            if not handled_by_stack and hasattr(no_devices_label, 'setVisible'):
+                    no_devices_label.setText("No devices found")
+            if not handled_by_stack and hasattr(no_devices_label, "setVisible"):
                 no_devices_label.setVisible(show_placeholder)
 
-        logger.debug('Empty state updated (total=%s, visible=%s)', total_count, visible_count)
+        logger.debug(
+            "Empty state updated (total=%s, visible=%s)", total_count, visible_count
+        )
 
     def _refresh_check_devices(self) -> None:
         proxies = {
@@ -473,60 +532,60 @@ class DeviceListController:
         try:
             additional_info = self._get_additional_device_info(serial)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.debug('Failed to obtain additional info for %s: %s', serial, exc)
+            logger.debug("Failed to obtain additional info for %s: %s", serial, exc)
             additional_info = {}
 
-        def _info(key: str, fallback: str = 'Unknown') -> str:
+        def _info(key: str, fallback: str = "Unknown") -> str:
             value = additional_info.get(key)
-            if value in (None, ''):
+            if value in (None, ""):
                 return fallback
             return str(value)
 
         sections: OrderedDict[str, List[Tuple[str, str]]] = OrderedDict()
-        sections['device'] = [
-            ('Model', device.device_model or 'Unknown'),
-            ('Serial', device.device_serial_num or 'Unknown'),
+        sections["device"] = [
+            ("Model", device.device_model or "Unknown"),
+            ("Serial", device.device_serial_num or "Unknown"),
             (
-                'Android',
+                "Android",
                 f"{device.android_ver or 'Unknown'} (API {device.android_api_level or 'Unknown'})",
             ),
-            ('Build Fingerprint', device.build_fingerprint or 'Unknown'),
-            ('Product', device.device_prod or 'Unknown'),
-            ('USB', device.device_usb or 'Unknown'),
+            ("Build Fingerprint", device.build_fingerprint or "Unknown"),
+            ("Product", device.device_prod or "Unknown"),
+            ("USB", device.device_usb or "Unknown"),
         ]
 
-        sections['connectivity'] = [
-            ('WiFi', status_helper(device.wifi_is_on)),
-            ('Bluetooth', status_helper(device.bt_is_on)),
+        sections["connectivity"] = [
+            ("WiFi", status_helper(device.wifi_is_on)),
+            ("Bluetooth", status_helper(device.bt_is_on)),
         ]
 
-        sections['hardware'] = [
-            ('Screen Size', _info('screen_size')),
-            ('Screen Density', _info('screen_density')),
-            ('CPU Architecture', _info('cpu_arch')),
+        sections["hardware"] = [
+            ("Screen Size", _info("screen_size")),
+            ("Screen Density", _info("screen_density")),
+            ("CPU Architecture", _info("cpu_arch")),
         ]
 
-        sections['battery'] = [
-            ('Battery Level', _info('battery_level')),
-            ('Capacity (mAh)', _info('battery_capacity_mah')),
-            ('Battery mAs', _info('battery_mas')),
-            ('Estimated DOU', _info('battery_dou_hours')),
+        sections["battery"] = [
+            ("Battery Level", _info("battery_level")),
+            ("Capacity (mAh)", _info("battery_capacity_mah")),
+            ("Battery mAs", _info("battery_mas")),
+            ("Estimated DOU", _info("battery_dou_hours")),
         ]
 
         status_lines: List[Tuple[str, str]] = []
         operation_status = self.get_device_operation_status(serial)
         recording_status = self.get_device_recording_status(serial)
         if operation_status:
-            status_lines.append(('Operation', operation_status))
+            status_lines.append(("Operation", operation_status))
         if recording_status:
-            status_lines.append(('Recording', recording_status))
+            status_lines.append(("Recording", recording_status))
         if device.audio_state:
-            status_lines.append(('Audio', device.audio_state))
+            status_lines.append(("Audio", device.audio_state))
         if device.bluetooth_manager_state:
-            status_lines.append(('BT Manager', device.bluetooth_manager_state))
+            status_lines.append(("BT Manager", device.bluetooth_manager_state))
 
         if status_lines:
-            sections['status'] = status_lines
+            sections["status"] = status_lines
 
         return sections
 
@@ -557,7 +616,7 @@ class DeviceListController:
     # Internal detail-building helpers (ported from legacy implementation)
     # ------------------------------------------------------------------
     def _get_additional_device_info(self, serial: str) -> Dict[str, str]:
-        cache_source = getattr(self.window, 'battery_info_manager', None)
+        cache_source = getattr(self.window, "battery_info_manager", None)
         if cache_source is not None:
             cached = cache_source.get_cached_info(serial)
             if cached:
@@ -569,15 +628,15 @@ class DeviceListController:
                 cache_source.update_cache(serial, info)
             return info
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.error('Error getting additional device info for %s: %s', serial, exc)
+            logger.error("Error getting additional device info for %s: %s", serial, exc)
             info = {
-                'screen_density': 'Unknown',
-                'screen_size': 'Unknown',
-                'battery_level': 'Unknown',
-                'battery_capacity_mah': 'Unknown',
-                'battery_mas': 'Unknown',
-                'battery_dou_hours': 'Unknown',
-                'cpu_arch': 'Unknown',
+                "screen_density": "Unknown",
+                "screen_size": "Unknown",
+                "battery_level": "Unknown",
+                "battery_capacity_mah": "Unknown",
+                "battery_mas": "Unknown",
+                "battery_dou_hours": "Unknown",
+                "cpu_arch": "Unknown",
             }
             if cache_source is not None:
                 cache_source.update_cache(serial, info)
@@ -596,9 +655,13 @@ class DeviceListController:
         operation_status = self.get_device_operation_status(serial)
         recording_status = self.get_device_recording_status(serial)
 
-        android_ver = device.android_ver or 'Unknown'
-        android_api = device.android_api_level or 'Unknown'
-        gms_display = device.gms_version if device.gms_version and device.gms_version != 'N/A' else 'N/A'
+        android_ver = device.android_ver or "Unknown"
+        android_api = device.android_api_level or "Unknown"
+        gms_display = (
+            device.gms_version
+            if device.gms_version and device.gms_version != "N/A"
+            else "N/A"
+        )
 
         wifi_status = self.get_on_off_status(device.wifi_is_on)
         bt_status = self.get_on_off_status(device.bt_is_on)
@@ -607,86 +670,109 @@ class DeviceListController:
 
         if include_identity:
             identity_lines = [
-                self._format_detail('Model', device.device_model),
-                self._format_detail('Serial', device.device_serial_num),
+                self._format_detail("Model", device.device_model),
+                self._format_detail("Serial", device.device_serial_num),
                 f"{self._format_detail('Android', android_ver)} (API {android_api})",
-                self._format_detail('GMS Version', gms_display),
-                self._format_detail('Build Fingerprint', device.build_fingerprint),
-                self._format_detail('Product', device.device_prod),
-                self._format_detail('USB', device.device_usb),
+                self._format_detail("GMS Version", gms_display),
+                self._format_detail("Build Fingerprint", device.build_fingerprint),
+                self._format_detail("Product", device.device_prod),
+                self._format_detail("USB", device.device_usb),
             ]
-            sections.append('📱 Device Overview\n' + '\n'.join(identity_lines))
+            sections.append("📱 Device Overview\n" + "\n".join(identity_lines))
 
         if include_connectivity:
             connectivity_lines = [
-                self._format_detail('WiFi', wifi_status),
-                self._format_detail('Bluetooth', bt_status),
+                self._format_detail("WiFi", wifi_status),
+                self._format_detail("Bluetooth", bt_status),
             ]
-            sections.append('📡 Connectivity\n' + '\n'.join(connectivity_lines))
+            sections.append("📡 Connectivity\n" + "\n".join(connectivity_lines))
 
         if include_status:
             status_lines = []
             if operation_status:
-                status_lines.append(self._format_detail('Operation', operation_status))
+                status_lines.append(self._format_detail("Operation", operation_status))
             if recording_status:
-                status_lines.append(self._format_detail('Recording', recording_status))
+                status_lines.append(self._format_detail("Recording", recording_status))
             if device.audio_state:
-                status_lines.append(self._format_detail('Audio', device.audio_state))
+                status_lines.append(self._format_detail("Audio", device.audio_state))
             if device.bluetooth_manager_state:
-                status_lines.append(self._format_detail('BT Manager', device.bluetooth_manager_state))
+                status_lines.append(
+                    self._format_detail("BT Manager", device.bluetooth_manager_state)
+                )
             if status_lines:
-                sections.append('⚙️ Status\n' + '\n'.join(status_lines))
-            elif not include_identity and not include_connectivity and not include_additional:
-                sections.append('⚙️ Status\nNo additional status data.')
+                sections.append("⚙️ Status\n" + "\n".join(status_lines))
+            elif (
+                not include_identity
+                and not include_connectivity
+                and not include_additional
+            ):
+                sections.append("⚙️ Status\nNo additional status data.")
 
         if include_additional:
             try:
                 additional_info = self._get_additional_device_info(serial)
             except Exception as exc:  # pragma: no cover - defensive logging
-                logger.debug('Failed to build extended tooltip for %s: %s', serial, exc)
+                logger.debug("Failed to build extended tooltip for %s: %s", serial, exc)
             else:
                 hardware_lines = [
-                    self._format_detail('Screen Size', additional_info.get('screen_size', 'Unknown')),
-                    self._format_detail('Screen Density', additional_info.get('screen_density', 'Unknown')),
-                    self._format_detail('CPU Architecture', additional_info.get('cpu_arch', 'Unknown')),
+                    self._format_detail(
+                        "Screen Size", additional_info.get("screen_size", "Unknown")
+                    ),
+                    self._format_detail(
+                        "Screen Density",
+                        additional_info.get("screen_density", "Unknown"),
+                    ),
+                    self._format_detail(
+                        "CPU Architecture", additional_info.get("cpu_arch", "Unknown")
+                    ),
                 ]
                 battery_lines = [
-                    self._format_detail('Battery Level', additional_info.get('battery_level', 'Unknown')),
-                    self._format_detail('Capacity (mAh)', additional_info.get('battery_capacity_mah', 'Unknown')),
-                    self._format_detail('Battery mAs', additional_info.get('battery_mas', 'Unknown')),
-                    self._format_detail('Estimated DOU', additional_info.get('battery_dou_hours', 'Unknown')),
+                    self._format_detail(
+                        "Battery Level", additional_info.get("battery_level", "Unknown")
+                    ),
+                    self._format_detail(
+                        "Capacity (mAh)",
+                        additional_info.get("battery_capacity_mah", "Unknown"),
+                    ),
+                    self._format_detail(
+                        "Battery mAs", additional_info.get("battery_mas", "Unknown")
+                    ),
+                    self._format_detail(
+                        "Estimated DOU",
+                        additional_info.get("battery_dou_hours", "Unknown"),
+                    ),
                 ]
-                sections.append('🖥️ Hardware Information\n' + '\n'.join(hardware_lines))
-                sections.append('🔋 Battery Information\n' + '\n'.join(battery_lines))
+                sections.append("🖥️ Hardware Information\n" + "\n".join(hardware_lines))
+                sections.append("🔋 Battery Information\n" + "\n".join(battery_lines))
 
         if not sections:
-            return 'No additional details available.'
+            return "No additional details available."
 
-        separator = '\n' + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' + '\n'
+        separator = "\n" + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" + "\n"
         return separator.join(sections)
 
     # ------------------------------------------------------------------
     # Legacy compatibility helpers retained for other modules
     # ------------------------------------------------------------------
     def get_device_operation_status(self, serial: str) -> str:
-        manager = getattr(self.window, 'device_manager', None)
-        if manager is not None and hasattr(manager, 'get_device_operation_status'):
-            return manager.get_device_operation_status(serial) or ''
-        return ''
+        manager = getattr(self.window, "device_manager", None)
+        if manager is not None and hasattr(manager, "get_device_operation_status"):
+            return manager.get_device_operation_status(serial) or ""
+        return ""
 
     def get_device_recording_status(self, serial: str) -> str:
-        manager = getattr(self.window, 'device_manager', None)
-        if manager is not None and hasattr(manager, 'get_device_recording_status'):
+        manager = getattr(self.window, "device_manager", None)
+        if manager is not None and hasattr(manager, "get_device_recording_status"):
             status = manager.get_device_recording_status(serial)
             if status:
-                return status.get('status', '')
-        return ''
+                return status.get("status", "")
+        return ""
 
     @staticmethod
     def get_on_off_status(value: Optional[bool]) -> str:
         if value is None:
-            return 'Unknown'
-        return 'On' if value else 'Off'
+            return "Unknown"
+        return "On" if value else "Off"
 
     @staticmethod
     def _format_title(text: str) -> str:

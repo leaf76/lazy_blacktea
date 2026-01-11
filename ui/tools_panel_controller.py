@@ -405,6 +405,7 @@ class ToolsPanelController:
         self.window.terminal_manager = terminal_manager  # type: ignore[attr-defined]
 
         terminal_widget.command_submitted.connect(terminal_manager.execute_command)
+        terminal_widget.cancel_requested.connect(terminal_manager.cancel_all)
 
         terminal_manager.output_ready.connect(terminal_widget.append_output)
         terminal_manager.system_message.connect(terminal_widget.append_system_message)
@@ -440,13 +441,12 @@ class ToolsPanelController:
                 obj is terminal_widget.input_line
                 and event.type() == QEvent.Type.KeyPress
             ):
-                key_event = QKeyEvent(event)
-                if key_event.key() == Qt.Key.Key_Up:
+                if event.key() == Qt.Key.Key_Up:
                     prev_cmd = terminal_manager.get_previous_command()
                     if prev_cmd is not None:
                         terminal_widget.input_line.setText(prev_cmd)
                     return True
-                elif key_event.key() == Qt.Key.Key_Down:
+                elif event.key() == Qt.Key.Key_Down:
                     next_cmd = terminal_manager.get_next_command()
                     if next_cmd is not None:
                         terminal_widget.input_line.setText(next_cmd)
@@ -463,9 +463,7 @@ class ToolsPanelController:
         bar_layout.setSpacing(8)
 
         label = QLabel("Quick:")
-        label.setStyleSheet(
-            "color: #888; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;"
-        )
+        label.setObjectName("templatesBarLabel")
         bar_layout.addWidget(label)
 
         templates = [
@@ -478,41 +476,15 @@ class ToolsPanelController:
 
         for name, command in templates:
             btn = QPushButton(name)
+            btn.setObjectName("templatesBarButton")
             btn.setFixedHeight(28)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2a2a4a;
-                    color: #aaa;
-                    border: 1px solid #3a3a5a;
-                    border-radius: 6px;
-                    padding: 0px 12px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a5a;
-                    color: #00d9ff;
-                    border-color: #00d9ff;
-                }
-                QPushButton:pressed {
-                    background-color: #1a1a2e;
-                    border-color: #00d9ff;
-                }
-            """)
             btn.clicked.connect(
                 lambda checked, cmd=command: terminal_widget.input_line.setText(cmd)
             )
             bar_layout.addWidget(btn)
 
         bar_layout.addStretch()
-
-        # Set bar background
-        bar.setStyleSheet("""
-            #templatesBar {
-                background-color: #1a1a2e;
-                border-bottom: 1px solid #3A4052;
-            }
-        """)
 
         return bar
 

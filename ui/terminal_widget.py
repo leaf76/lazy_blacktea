@@ -27,10 +27,16 @@ class TerminalWidget(QWidget):
     Features a REPL-style layout with output area and input line.
     """
 
-    command_submitted = pyqtSignal(str)  # Emits the raw command string
+    MAX_OUTPUT_BLOCKS = 100
+    MAX_LINES_BEFORE_TRUNCATION = 2000
+
+    command_submitted = pyqtSignal(str)
+    cancel_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._output_block_count = 0
+        self._is_executing = False
         self._setup_ui()
         self._apply_styles()
         self._show_welcome_message()
@@ -57,7 +63,7 @@ class TerminalWidget(QWidget):
         for line in instructions:
             self._insert_text(cursor, line + "\n", "#888")
 
-        self._insert_text(cursor, "\nReady for commands...\n\n", "#555")
+        self._insert_text(cursor, "\nReady for commands...\n\n", "#888")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -87,7 +93,7 @@ class TerminalWidget(QWidget):
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setFrameShadow(QFrame.Shadow.Plain)
-        separator.setLineWidth(1)
+        separator.setLineWidth(2)
         separator.setObjectName("terminalSeparator")
         layout.addWidget(separator)
 
@@ -95,8 +101,8 @@ class TerminalWidget(QWidget):
         input_container = QWidget()
         input_container.setObjectName("inputContainer")
         input_layout = QHBoxLayout(input_container)
-        input_layout.setContentsMargins(8, 4, 8, 4)
-        input_layout.setSpacing(4)
+        input_layout.setContentsMargins(12, 8, 12, 8)
+        input_layout.setSpacing(8)
 
         self.prompt_label = QLabel("> ")
         self.prompt_label.setObjectName("promptLabel")
@@ -128,23 +134,29 @@ class TerminalWidget(QWidget):
         self.device_count_label.setObjectName("deviceCountLabel")
 
         self.clear_button = QPushButton("Clear")
-        self.clear_button.setFixedWidth(60)
         self.clear_button.clicked.connect(self.clear_output)
-        StyleManager.apply_button_style(
-            self.clear_button,
-            ButtonStyle.NEUTRAL,
-            fixed_height=24,
-        )
-        # Re-apply some terminal-specific styling to the button if needed
-        self.clear_button.setStyleSheet(
-            self.clear_button.styleSheet()
-            + """
-            QPushButton {
-                font-size: 10px;
-                padding: 2px 4px;
-            }
-        """
-        )
+        self.clear_button.setFixedSize(60, 24)
+        colors = StyleManager.COLORS
+        btn_bg = colors.get("neutral_bg", "#6c757d")
+        btn_fg = colors.get("neutral_fg", "#ffffff")
+        btn_hover = colors.get("neutral_hover", "#5a6268")
+        self.clear_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {btn_bg};
+                color: {btn_fg};
+                border: none;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 0px 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {btn_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {btn_hover};
+            }}
+        """)
 
         toolbar_layout.addWidget(self.device_count_label)
         toolbar_layout.addStretch(1)
@@ -202,12 +214,14 @@ class TerminalWidget(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self.input_line and event.type() == event.Type.KeyPress:
-            key_event = QKeyEvent(event)
             if (
-                key_event.key() == Qt.Key.Key_C
-                and key_event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                event.key() == Qt.Key.Key_C
+                and event.modifiers() == Qt.KeyboardModifier.ControlModifier
             ):
-                self.input_line.clear()
+                if self._is_executing:
+                    self.cancel_requested.emit()
+                else:
+                    self.input_line.clear()
                 return True
         return super().eventFilter(obj, event)
 
@@ -224,46 +238,41 @@ class TerminalWidget(QWidget):
         output_lines: List[str],
         is_error: bool = False,
     ):
-        """Append output for a specific device in its own visual block"""
-        header_color = "#4fc3f7"  # Cyan
-        error_color = "#ff6b6b"  # Red/Orange
+        self._output_block_count += 1
+        self._maybe_truncate_output()
 
-        # Build the block
+        header_color = "#4fc3f7"
+        error_color = "#ff6b6b"
+
         header = f"┌─ [Device: {device_name} ({device_serial})] "
         padding_len = max(0, 60 - len(header))
         header += "─" * padding_len
-
         footer = "└" + "─" * (len(header) - 1)
 
         cursor = self.output_area.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
-        # Insert Header
         self._insert_text(cursor, header + "\n", header_color, bold=True)
 
-        # Insert Body
         text_color = error_color if is_error else "#e0e0e0"
         for line in output_lines:
             self._insert_text(cursor, f"│ {line}\n", text_color)
 
-        # Insert Footer
         self._insert_text(cursor, footer + "\n\n", header_color)
 
-        # Auto-scroll
-        self.output_area.verticalScrollBar().setValue(
-            self.output_area.verticalScrollBar().maximum()
-        )
+        scrollbar = self.output_area.verticalScrollBar()
+        if scrollbar:
+            scrollbar.setValue(scrollbar.maximum())
 
     def append_system_message(self, message: str):
-        """Append a system/status message (not device-specific)"""
         system_color = StyleManager.COLORS.get("text_hint", "#888")
         cursor = self.output_area.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self._insert_text(cursor, f"[*] {message}\n", system_color, italic=True)
 
-        self.output_area.verticalScrollBar().setValue(
-            self.output_area.verticalScrollBar().maximum()
-        )
+        scrollbar = self.output_area.verticalScrollBar()
+        if scrollbar:
+            scrollbar.setValue(scrollbar.maximum())
 
     def _insert_text(
         self,
@@ -282,20 +291,49 @@ class TerminalWidget(QWidget):
         fmt.setFontItalic(italic)
         cursor.insertText(text, fmt)
 
+    def _maybe_truncate_output(self):
+        if self._output_block_count <= self.MAX_OUTPUT_BLOCKS:
+            return
+
+        doc = self.output_area.document()
+        if doc.lineCount() < self.MAX_LINES_BEFORE_TRUNCATION:
+            return
+
+        lines_to_remove = doc.lineCount() // 3
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        cursor.movePosition(
+            QTextCursor.MoveOperation.Down,
+            QTextCursor.MoveMode.KeepAnchor,
+            lines_to_remove,
+        )
+        cursor.removeSelectedText()
+
+        new_cursor = self.output_area.textCursor()
+        new_cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self._insert_text(
+            new_cursor,
+            f"[*] Output truncated (kept last ~{doc.lineCount()} lines)\n\n",
+            "#888",
+            italic=True,
+        )
+
+        self._output_block_count = self.MAX_OUTPUT_BLOCKS // 2
+
     def clear_output(self):
-        """Clear all output"""
         self.output_area.clear()
+        self._output_block_count = 0
 
     def set_input_enabled(self, enabled: bool):
-        """Enable/disable input while commands are running"""
         self.input_line.setEnabled(enabled)
+        self._is_executing = not enabled
         if enabled:
             self.input_line.setFocus()
             self.input_line.setPlaceholderText(
                 "Enter ADB command (e.g., adb shell pm list packages)"
             )
         else:
-            self.input_line.setPlaceholderText("Executing command...")
+            self.input_line.setPlaceholderText("Executing... (Ctrl+C to cancel)")
 
     def update_device_count(self, count: int):
         """Update the device count indicator in the toolbar"""
