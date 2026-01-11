@@ -32,6 +32,11 @@ from ui.app_list_tab import AppListTab
 from ui.tool_icon_factory import get_tile_tool_icon
 from ui.terminal_widget import TerminalWidget
 from ui.terminal_manager import TerminalManager
+from ui.components.selected_devices_bar import SelectedDevicesBar
+from ui.components.tool_section import (
+    QuickActionsSection,
+    CollapsibleToolSection,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -89,7 +94,7 @@ class ToolsPanelController:
         tab_widget.addTab(widget, PanelText.TAB_DEVICE_OVERVIEW)
 
     # ------------------------------------------------------------------
-    # ADB Tools Tab - Reorganized by category
+    # ADB Tools Tab - UIUX Redesign 2026-01
     # ------------------------------------------------------------------
     def _create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
         tab = QWidget()
@@ -103,25 +108,130 @@ class ToolsPanelController:
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(8, 8, 8, 12)
-        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(12, 12, 12, 16)
+        content_layout.setSpacing(16)
         scroll_area.setWidget(content_widget)
 
-        # Monitoring Section (single device operations)
-        self._create_monitoring_section(content_layout)
+        self._create_selected_devices_bar(content_layout)
+        self._create_quick_actions_section(content_layout)
+        self._create_diagnostic_section(content_layout)
+        self._create_device_operations_section(content_layout)
 
-        # Capture Section (batch operations)
-        self._create_capture_section(content_layout)
-
-        # Control Section (batch operations)
-        self._create_control_section(content_layout)
-
-        # Utility Section
-        self._create_utility_section(content_layout)
+        self._create_recording_status_labels(content_layout)
 
         content_layout.addStretch(1)
 
         tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
+
+    def _create_selected_devices_bar(self, parent_layout: QVBoxLayout) -> None:
+        self._selected_devices_bar = SelectedDevicesBar()
+        parent_layout.addWidget(self._selected_devices_bar)
+        self.window.selected_devices_bar = self._selected_devices_bar  # type: ignore[attr-defined]
+
+    def _create_quick_actions_section(self, parent_layout: QVBoxLayout) -> None:
+        self._quick_actions = QuickActionsSection(PanelConfig.QUICK_ACTIONS)
+        self._quick_actions.action_triggered.connect(self._handle_tool_action)
+        parent_layout.addWidget(self._quick_actions)
+
+    def _create_diagnostic_section(self, parent_layout: QVBoxLayout) -> None:
+        self._diagnostic_section = CollapsibleToolSection(
+            PanelText.SECTION_DIAGNOSTIC,
+            "",
+            PanelConfig.DIAGNOSTIC_ACTIONS,
+            collapsed=False,
+        )
+        self._diagnostic_section.action_triggered.connect(self._handle_tool_action)
+        parent_layout.addWidget(self._diagnostic_section)
+
+    def _create_device_operations_section(self, parent_layout: QVBoxLayout) -> None:
+        self._device_ops_section = CollapsibleToolSection(
+            PanelText.SECTION_DEVICE_OPERATIONS,
+            "",
+            PanelConfig.DEVICE_OPERATIONS,
+            collapsed=False,
+        )
+        self._device_ops_section.action_triggered.connect(self._handle_tool_action)
+        parent_layout.addWidget(self._device_ops_section)
+
+    def _create_recording_status_labels(self, parent_layout: QVBoxLayout) -> None:
+        self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
+        StyleManager.apply_label_style(
+            self.window.recording_status_label, LabelStyle.STATUS
+        )
+        parent_layout.addWidget(self.window.recording_status_label)
+
+        self.window.recording_timer_label = QLabel("")
+        StyleManager.apply_status_style(
+            self.window.recording_timer_label, "recording_active"
+        )
+        parent_layout.addWidget(self.window.recording_timer_label)
+
+    def _handle_tool_action(self, action_key: str) -> None:
+        dangerous_actions = {"reboot_device"}
+
+        if action_key in dangerous_actions:
+            if not self._confirm_dangerous_action(action_key):
+                return
+
+        action_handlers = {
+            "show_logcat": lambda: self.window.show_logcat(),
+            "take_screenshot": lambda: self.window.take_screenshot(),
+            "generate_android_bug_report": lambda: self.window.generate_android_bug_report(),
+            "install_apk": lambda: self.window.install_apk(),
+            "launch_ui_inspector": lambda: self.window.launch_ui_inspector(),
+            "monitor_bluetooth": lambda: self.window.monitor_bluetooth(),
+            "launch_scrcpy": lambda: self.window.launch_scrcpy(),
+            "start_screen_record": lambda: self.window.start_screen_record(),
+            "reboot_device": lambda: self.window.reboot_device(),
+            "enable_bluetooth": lambda: self.window.enable_bluetooth(),
+            "disable_bluetooth": lambda: self.window.disable_bluetooth(),
+            "copy_active_device_overview": lambda: self.window.copy_active_device_overview(),
+            "stop_screen_record": lambda: self.window.stop_screen_record(),
+        }
+
+        handler = action_handlers.get(action_key)
+        if handler:
+            handler()
+
+    def _confirm_dangerous_action(self, action_key: str) -> bool:
+        from PyQt6.QtWidgets import QMessageBox
+
+        messages = {
+            "reboot_device": (
+                PanelText.CONFIRM_REBOOT_TITLE,
+                PanelText.CONFIRM_REBOOT_MESSAGE,
+            ),
+        }
+
+        title, message = messages.get(
+            action_key,
+            (PanelText.CONFIRM_DEFAULT_TITLE, PanelText.CONFIRM_DEFAULT_MESSAGE),
+        )
+
+        serials = self.window.device_selection_manager.get_selected_serials()
+        if len(serials) > 1:
+            message += PanelText.CONFIRM_REBOOT_MULTI.format(count=len(serials))
+
+        reply = QMessageBox.question(
+            self.window,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def update_selected_devices(self, devices) -> None:
+        if hasattr(self, "_selected_devices_bar"):
+            self._selected_devices_bar.update_devices(devices)
+
+    def set_tool_loading(self, action_key: str, loading: bool) -> None:
+        if hasattr(self, "_quick_actions"):
+            self._quick_actions.set_button_loading(action_key, loading)
+        if hasattr(self, "_diagnostic_section"):
+            self._diagnostic_section.set_button_loading(action_key, loading)
+        if hasattr(self, "_device_ops_section"):
+            self._device_ops_section.set_button_loading(action_key, loading)
 
     def _create_category_header(self, text: str, hint: str = "") -> QWidget:
         """Create a styled category header with optional hint text."""

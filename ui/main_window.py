@@ -16,15 +16,18 @@ from utils.qt_plugin_loader import configure_qt_plugin_path
 configure_qt_plugin_path()
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QMessageBox,
     QProgressDialog,
 )
-from PyQt6.QtCore import (Qt, QTimer, QPoint, QRect, pyqtSignal)
-from PyQt6.QtGui import (QTextCursor, QAction, QIcon, QGuiApplication)
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, pyqtSignal
+from PyQt6.QtGui import QTextCursor, QAction, QIcon, QGuiApplication
 
 from utils import adb_models
 from utils import adb_tools
@@ -34,19 +37,32 @@ from utils import json_utils
 # Import configuration and constants
 from config.config_manager import AppConfig, ConfigManager, LogcatSettings, UISettings
 from config.constants import (
-    UIConstants, PathConstants, ADBConstants,
-    LoggingConstants, ApplicationConstants, PanelText
+    UIConstants,
+    PathConstants,
+    ADBConstants,
+    LoggingConstants,
+    ApplicationConstants,
+    PanelText,
 )
 
 # Import new modular components
-from ui.error_handler import ErrorHandler, ErrorCode, global_error_handler, setup_exception_hook
+from ui.error_handler import (
+    ErrorHandler,
+    ErrorCode,
+    global_error_handler,
+    setup_exception_hook,
+)
 from ui.command_executor import CommandExecutor, ensure_devices_selected
 from ui.device_manager import DeviceManager
 from ui.panels_manager import PanelsManager
 from ui.device_search_manager import DeviceSearchManager
 from ui.ui_factory import UIFactory
 from ui.device_operations_manager import DeviceOperationsManager
-from ui.file_operations_manager import FileOperationsManager, CommandHistoryManager, UIHierarchyManager
+from ui.file_operations_manager import (
+    FileOperationsManager,
+    CommandHistoryManager,
+    UIHierarchyManager,
+)
 from ui.device_file_browser_manager import DeviceFileBrowserManager
 from ui.device_file_preview_window import DeviceFilePreviewWindow
 from ui.command_execution_manager import CommandExecutionManager
@@ -92,14 +108,15 @@ from ui.button_progress_overlay import ButtonProgressOverlay
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
 from utils.recording_utils import RecordingManager
 from utils.ui_inspector_utils import check_ui_inspector_prerequisites
+
 # File generation utilities are now handled by FileOperationsManager
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 from utils.icon_resolver import iter_icon_paths
 from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
 
-logger = common.get_logger('lazy_blacktea')
+logger = common.get_logger("lazy_blacktea")
 
-os.environ.setdefault('QT_DELAY_BEFORE_TIP', '300')
+os.environ.setdefault("QT_DELAY_BEFORE_TIP", "300")
 
 
 # Logcat classes moved to ui.logcat_viewer
@@ -113,11 +130,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     DEVICE_FILE_BROWSER_DEFAULT_PATH = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
 
     # Define custom signals for thread-safe UI updates
-    recording_stopped_signal = pyqtSignal(str, str, str, str, str)  # device_name, device_serial, duration, filename, output_path
+    recording_stopped_signal = pyqtSignal(
+        str, str, str, str, str
+    )  # device_name, device_serial, duration, filename, output_path
     recording_state_cleared_signal = pyqtSignal(str)  # device_serial
     recording_progress_signal = pyqtSignal(object)  # RecordingProgressEvent payload
-    screenshot_completed_signal = pyqtSignal(str, int, list)  # output_path, device_count, device_models
-    file_generation_completed_signal = pyqtSignal(str, str, int, str)  # operation_name, output_path, device_count, icon
+    screenshot_completed_signal = pyqtSignal(
+        str, int, list
+    )  # output_path, device_count, device_models
+    file_generation_completed_signal = pyqtSignal(
+        str, str, int, str
+    )  # operation_name, output_path, device_count, icon
     console_output_signal = pyqtSignal(str)  # message
 
     def __init__(self):
@@ -127,10 +150,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.config_manager = ConfigManager()
         self.theme_manager = ThemeManager()
         self.theme_actions: Dict[str, QAction] = {}
-        self._current_theme = 'light'
+        self._current_theme = "light"
         initial_config = self.config_manager.load_config()
         self._initial_ui_settings: UISettings = initial_config.ui
-        self._initial_single_selection = getattr(self._initial_ui_settings, 'single_selection', False)
+        self._initial_single_selection = getattr(
+            self._initial_ui_settings, "single_selection", False
+        )
         self._current_theme = self.theme_manager.set_theme(initial_config.ui.theme)
         self.error_handler = ErrorHandler(self)
         self.command_executor = CommandExecutor(self)
@@ -168,10 +193,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_manager.unauthorized_devices_detected.connect(
             self._on_unauthorized_devices_detected
         )
-        self.device_file_browser_manager.directory_listing_ready.connect(self.device_file_controller.on_directory_listing)
-        self.device_file_browser_manager.download_completed.connect(self.device_file_controller.on_download_completed)
-        self.device_file_browser_manager.preview_ready.connect(self.device_file_controller.on_preview_ready)
-        self.device_file_browser_manager.operation_failed.connect(self.device_file_controller.on_operation_failed)
+        self.device_file_browser_manager.directory_listing_ready.connect(
+            self.device_file_controller.on_directory_listing
+        )
+        self.device_file_browser_manager.download_completed.connect(
+            self.device_file_controller.on_download_completed
+        )
+        self.device_file_browser_manager.preview_ready.connect(
+            self.device_file_controller.on_preview_ready
+        )
+        self.device_file_browser_manager.operation_failed.connect(
+            self.device_file_controller.on_operation_failed
+        )
 
         # Setup global error handler and exception hook
         global_error_handler.parent = self
@@ -192,7 +225,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_file_status_label = None
         self.device_file_browser_device_label = None
         self.device_file_browser_current_serial: Optional[str] = None
-        self.device_file_browser_current_path: str = self.DEVICE_FILE_BROWSER_DEFAULT_PATH
+        self.device_file_browser_current_path: str = (
+            self.DEVICE_FILE_BROWSER_DEFAULT_PATH
+        )
         self.device_file_preview_window: Optional[DeviceFilePreviewWindow] = None
         self.selection_summary_label = None
         self.device_overview_widget = None
@@ -256,12 +291,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.diagnostics_manager = DiagnosticsManager(self)
         self.logcat_facade = LogcatFacade(self)
 
-
         self.flag_actions = {}
 
         # Multi-device operation state management
         self.device_recordings: Dict[str, Dict] = {}  # Track recordings per device
-        self.device_operations: Dict[str, str] = {}  # Track ongoing operations per device
+        self.device_operations: Dict[
+            str, str
+        ] = {}  # Track ongoing operations per device
         self.recording_timer = QTimer()
         self.recording_timer.timeout.connect(self.update_recording_status)
         self.recording_timer.start(500)  # Update every second
@@ -271,24 +307,44 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.recording_state_cleared_signal.connect(self._on_recording_state_cleared)
         self.recording_progress_signal.connect(self._on_recording_progress_event)
         self.screenshot_completed_signal.connect(self._on_screenshot_completed)
-        self.file_generation_completed_signal.connect(self._on_file_generation_completed)
+        self.file_generation_completed_signal.connect(
+            self._on_file_generation_completed
+        )
         self.console_output_signal.connect(self._on_console_output)
         self.finalize_operation_requested.connect(self._finalize_operation)
 
         # Connect device operations manager signals
-        self.device_operations_manager.recording_stopped_signal.connect(self._on_recording_stopped)
-        self.device_operations_manager.recording_state_cleared_signal.connect(self._on_recording_state_cleared)
-        self.device_operations_manager.screenshot_completed_signal.connect(self._on_screenshot_completed)
-        self.device_operations_manager.operation_completed_signal.connect(self._on_device_operation_completed)
+        self.device_operations_manager.recording_stopped_signal.connect(
+            self._on_recording_stopped
+        )
+        self.device_operations_manager.recording_state_cleared_signal.connect(
+            self._on_recording_state_cleared
+        )
+        self.device_operations_manager.screenshot_completed_signal.connect(
+            self._on_screenshot_completed
+        )
+        self.device_operations_manager.operation_completed_signal.connect(
+            self._on_device_operation_completed
+        )
 
         # Connect file operations manager signals
-        self.file_operations_manager.file_generation_completed_signal.connect(self._on_file_generation_completed)
-        self.file_operations_manager.file_generation_progress_signal.connect(self._on_file_generation_progress)
+        self.file_operations_manager.file_generation_completed_signal.connect(
+            self._on_file_generation_completed
+        )
+        self.file_operations_manager.file_generation_progress_signal.connect(
+            self._on_file_generation_progress
+        )
 
         # Connect panels_manager signals to device operations manager
-        self.panels_manager.screenshot_requested.connect(self.device_operations_manager.take_screenshot)
-        self.panels_manager.recording_start_requested.connect(self.device_operations_manager.start_screen_record)
-        self.panels_manager.recording_stop_requested.connect(self.device_operations_manager.stop_screen_record)
+        self.panels_manager.screenshot_requested.connect(
+            self.device_operations_manager.take_screenshot
+        )
+        self.panels_manager.recording_start_requested.connect(
+            self.device_operations_manager.start_screen_record
+        )
+        self.panels_manager.recording_stop_requested.connect(
+            self.device_operations_manager.stop_screen_record
+        )
 
         self.user_scale = 1.0
 
@@ -300,17 +356,21 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if not adb_tools.is_adb_installed():
             QMessageBox.critical(
                 self,
-                'ADB Not Found',
-                'ADB is not installed or not in your system\'s PATH. '
-                'Please install ADB to use lazy blacktea.'
+                "ADB Not Found",
+                "ADB is not installed or not in your system's PATH. "
+                "Please install ADB to use lazy blacktea.",
             )
             sys.exit(1)
 
         # Log scrcpy availability (don't show popup on startup)
         if not self.scrcpy_available:
-            logger.debug('scrcpy is not available - device mirroring feature will be disabled')
+            logger.debug(
+                "scrcpy is not available - device mirroring feature will be disabled"
+            )
         else:
-            logger.info(f'scrcpy is available (version {getattr(self, "scrcpy_major_version", "unknown")})')
+            logger.info(
+                f"scrcpy is available (version {getattr(self, 'scrcpy_major_version', 'unknown')})"
+            )
 
         self.init_ui()
         self.apply_theme(self._current_theme, persist=False, initial=True)
@@ -333,7 +393,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if screen is not None:
             available_rect = QRect(screen.availableGeometry())
         else:
-            available_rect = QRect(0, 0, UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
+            available_rect = QRect(
+                0, 0, UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT
+            )
 
         default_width = UIConstants.WINDOW_WIDTH
         default_height = UIConstants.WINDOW_HEIGHT
@@ -351,25 +413,40 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         width = max(UIConstants.WINDOW_MIN_WIDTH, default_width)
         height = max(UIConstants.WINDOW_MIN_HEIGHT, default_height)
 
-        width = min(width, available_rect.width()) if available_rect.width() > 0 else width
-        height = min(height, available_rect.height()) if available_rect.height() > 0 else height
+        width = (
+            min(width, available_rect.width()) if available_rect.width() > 0 else width
+        )
+        height = (
+            min(height, available_rect.height())
+            if available_rect.height() > 0
+            else height
+        )
 
         max_x = available_rect.left() + max(0, available_rect.width() - width)
         max_y = available_rect.top() + max(0, available_rect.height() - height)
 
-        x = max(available_rect.left(), min(default_x, max_x)) if available_rect.width() > 0 else default_x
-        y = max(available_rect.top(), min(default_y, max_y)) if available_rect.height() > 0 else default_y
+        x = (
+            max(available_rect.left(), min(default_x, max_x))
+            if available_rect.width() > 0
+            else default_x
+        )
+        y = (
+            max(available_rect.top(), min(default_y, max_y))
+            if available_rect.height() > 0
+            else default_y
+        )
 
         self.setGeometry(x, y, width, height)
 
     def init_ui(self):
         """Initialize the user interface."""
-        logger.info('[INIT] init_ui method started')
-        self.setWindowTitle(f'🍵 {ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}')
+        logger.info("[INIT] init_ui method started")
+        self.setWindowTitle(
+            f"🍵 {ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}"
+        )
 
         self.setMinimumSize(UIConstants.WINDOW_MIN_WIDTH, UIConstants.WINDOW_MIN_HEIGHT)
-        self._apply_window_geometry(getattr(self, '_initial_ui_settings', None))
-
+        self._apply_window_geometry(getattr(self, "_initial_ui_settings", None))
 
         # Set application icon
         self.set_app_icon()
@@ -378,7 +455,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Create central widget
         central_widget = QWidget()
-        central_widget.setObjectName('mainCentralWidget')
+        central_widget.setObjectName("mainCentralWidget")
         self.setCentralWidget(central_widget)
 
         # Create main layout container
@@ -398,22 +475,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Create device list panel
         # Create device panel using panels_manager
         device_components = self.panels_manager.create_device_panel(main_splitter, self)
-        self.title_label = device_components['title_label']
-        self.device_table = device_components['device_table']
-        self.no_devices_label = device_components['no_devices_label']
-        self.device_panel_stack = device_components['device_panel_stack']
-        self.selection_summary_label = device_components['selection_summary_label']
+        self.title_label = device_components["title_label"]
+        self.device_table = device_components["device_table"]
+        self.no_devices_label = device_components["no_devices_label"]
+        self.device_panel_stack = device_components["device_panel_stack"]
+        self.selection_summary_label = device_components["selection_summary_label"]
         # New selection mode + hint references
-        self.selection_hint_label = device_components.get('selection_hint_label')
-        self.selection_mode_checkbox = device_components.get('selection_mode_checkbox')
+        self.selection_hint_label = device_components.get("selection_hint_label")
+        self.selection_mode_checkbox = device_components.get("selection_mode_checkbox")
         # Control buttons references for selection mode dependent state
-        self.select_all_btn = device_components.get('select_all_btn')
-        self.select_none_btn = device_components.get('select_none_btn')
+        self.select_all_btn = device_components.get("select_all_btn")
+        self.select_none_btn = device_components.get("select_none_btn")
         # New components for modern UI
-        self.device_list = device_components.get('device_list')
-        self.filter_bar = device_components.get('filter_bar')
-        self.subtitle_label = device_components.get('subtitle_label')
-        self.single_mode_action = device_components.get('single_mode_action')
+        self.device_list = device_components.get("device_list")
+        self.filter_bar = device_components.get("filter_bar")
+        self.subtitle_label = device_components.get("subtitle_label")
+        self.single_mode_action = device_components.get("single_mode_action")
 
         # Attach new device list to controller (if available)
         if self.device_list is not None:
@@ -458,7 +535,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Apply persisted selection mode after UI is ready
         try:
             # Ensure manager state
-            self.device_selection_manager.set_single_selection(self._initial_single_selection)
+            self.device_selection_manager.set_single_selection(
+                self._initial_single_selection
+            )
             # Sync checkbox without emitting signals
             if self.selection_mode_checkbox is not None:
                 prev = self.selection_mode_checkbox.blockSignals(True)
@@ -471,14 +550,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 self.single_mode_action.blockSignals(prev)
             # Update dependent UI and status label
             self._sync_selection_mode_dependent_ui()
-            self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
+            self.status_bar_manager.update_selection_mode(
+                self.device_selection_manager.is_single_selection()
+            )
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning('Failed to apply initial selection mode: %s', exc)
+            logger.warning("Failed to apply initial selection mode: %s", exc)
 
     # ------------------------------------------------------------------
     # Tools panel button registration & progress overlays
     # ------------------------------------------------------------------
-    def register_tool_action(self, action_key: str, handler: Callable[[], None], button, progress_bar=None) -> None:
+    def register_tool_action(
+        self, action_key: str, handler: Callable[[], None], button, progress_bar=None
+    ) -> None:
         """Register a tools panel button for centralized action handling."""
         self.tool_action_handlers[action_key] = handler
         self.tool_buttons[action_key] = button
@@ -488,8 +571,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         else:
             self.tool_progress_bars.pop(action_key, None)
 
-        if action_key in {'bug_report', 'install_apk'}:
-            self._tool_cancel_hooks[action_key] = lambda key=action_key: self._invoke_cancel_for_action(key)
+        if action_key in {"bug_report", "install_apk"}:
+            self._tool_cancel_hooks[action_key] = (
+                lambda key=action_key: self._invoke_cancel_for_action(key)
+            )
 
     def handle_tool_action(self, action_key: str) -> None:
         """Dispatch tool button clicks with support for cancellation."""
@@ -502,13 +587,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             # Ignore double clicks when the operation is busy and not cancellable.
             return
 
-        if action_key == 'bug_report' and self.file_operations_manager.is_bug_report_in_progress():
+        if (
+            action_key == "bug_report"
+            and self.file_operations_manager.is_bug_report_in_progress()
+        ):
             cancel = self._tool_cancel_hooks.get(action_key)
             if cancel:
                 cancel()
             return
 
-        if action_key == 'install_apk' and self.app_management_manager.apk_manager.is_installation_in_progress():
+        if (
+            action_key == "install_apk"
+            and self.app_management_manager.apk_manager.is_installation_in_progress()
+        ):
             cancel = self._tool_cancel_hooks.get(action_key)
             if cancel:
                 cancel()
@@ -519,13 +610,15 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             handler()
 
     def _invoke_cancel_for_action(self, action_key: str) -> None:
-        if action_key == 'bug_report':
+        if action_key == "bug_report":
             self.file_operations_manager.cancel_bug_report_generation()
-        elif action_key == 'install_apk':
+        elif action_key == "install_apk":
             self.app_management_manager.cancel_apk_installation()
 
-    def _ensure_operation_overlay(self, action_key: str) -> Optional[ButtonProgressOverlay]:
-        if action_key not in {'bug_report', 'install_apk'}:
+    def _ensure_operation_overlay(
+        self, action_key: str
+    ) -> Optional[ButtonProgressOverlay]:
+        if action_key not in {"bug_report", "install_apk"}:
             return None
         overlay = self._operation_overlays.get(action_key)
         if overlay is not None:
@@ -544,31 +637,33 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if overlay is None or state is None:
             return
 
-        mode = getattr(state, 'mode', 'idle') or 'idle'
-        message = getattr(state, 'message', '')
-        current = getattr(state, 'current', 0) or 0
-        total = getattr(state, 'total', 0) or 0
+        mode = getattr(state, "mode", "idle") or "idle"
+        message = getattr(state, "message", "")
+        current = getattr(state, "current", 0) or 0
+        total = getattr(state, "total", 0) or 0
 
-        if mode == 'idle':
+        if mode == "idle":
             overlay.reset()
-        elif mode == 'busy':
+        elif mode == "busy":
             overlay.set_busy(message)
-        elif mode == 'progress':
+        elif mode == "progress":
             overlay.set_progress(current, max(1, total), message)
-        elif mode == 'cancelling':
+        elif mode == "cancelling":
             overlay.set_cancelling(message)
-        elif mode in {'completed', 'cancelled'}:
+        elif mode in {"completed", "cancelled"}:
             overlay.finish(message or None)
-        elif mode == 'failed':
+        elif mode == "failed":
             overlay.fail(message or None)
 
     def on_bug_report_progress_reset(self) -> None:
         state = self.file_operations_manager.get_bug_report_progress_state()
-        self._apply_progress_state_to_overlay('bug_report', state)
+        self._apply_progress_state_to_overlay("bug_report", state)
 
     def on_apk_install_progress_reset(self) -> None:
-        state = self.app_management_manager.apk_manager.get_installation_progress_state()
-        self._apply_progress_state_to_overlay('install_apk', state)
+        state = (
+            self.app_management_manager.apk_manager.get_installation_progress_state()
+        )
+        self._apply_progress_state_to_overlay("install_apk", state)
 
     # ------------------------------------------------------------------
     # Device selection mode
@@ -585,29 +680,35 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.device_list_controller.update_selection_count()
             # Update UI controls and status indicator
             self._sync_selection_mode_dependent_ui()
-            self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
+            self.status_bar_manager.update_selection_mode(
+                self.device_selection_manager.is_single_selection()
+            )
             # Persist setting
             try:
-                self.config_manager.update_ui_settings(single_selection=self.device_selection_manager.is_single_selection())
+                self.config_manager.update_ui_settings(
+                    single_selection=self.device_selection_manager.is_single_selection()
+                )
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning('Failed to persist selection mode: %s', exc)
-            logger.info('Selection mode changed: %s', 'single' if enabled else 'multi')
+                logger.warning("Failed to persist selection mode: %s", exc)
+            logger.info("Selection mode changed: %s", "single" if enabled else "multi")
         except Exception as exc:  # pragma: no cover - safety
-            logger.error('Failed to toggle selection mode: %s', exc)
+            logger.error("Failed to toggle selection mode: %s", exc)
 
     def _sync_selection_mode_dependent_ui(self) -> None:
         """Update widgets (buttons, tips, labels) based on selection mode state."""
         single = self.device_selection_manager.is_single_selection()
         # Panel buttons
-        if getattr(self, 'select_all_btn', None) is not None:
+        if getattr(self, "select_all_btn", None) is not None:
             try:
                 # Update label and tooltip instead of disabling in single mode
                 if single:
-                    self.select_all_btn.setText('Select Last Visible')
-                    self.select_all_btn.setToolTip('Select the last visible device (single-select mode)')
+                    self.select_all_btn.setText("Select Last Visible")
+                    self.select_all_btn.setToolTip(
+                        "Select the last visible device (single-select mode)"
+                    )
                 else:
-                    self.select_all_btn.setText('Select All')
-                    self.select_all_btn.setToolTip('Select all devices')
+                    self.select_all_btn.setText("Select All")
+                    self.select_all_btn.setToolTip("Select all devices")
             except Exception:  # pragma: no cover - compatibility
                 pass
 
@@ -634,18 +735,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             return
 
         # As a fallback for Linux environments, attempt to load a theme icon
-        if platform.system().lower() == 'linux':
-            theme_icon = QIcon.fromTheme('lazyblacktea')
+        if platform.system().lower() == "linux":
+            theme_icon = QIcon.fromTheme("lazyblacktea")
             if theme_icon.isNull():
-                theme_icon = QIcon.fromTheme('applications-utilities')
+                theme_icon = QIcon.fromTheme("applications-utilities")
             if not theme_icon.isNull():
                 self.setWindowIcon(theme_icon)
                 if app is not None:
                     app.setWindowIcon(theme_icon)
-                logger.info('Using theme icon fallback for Linux desktop environment')
+                logger.info("Using theme icon fallback for Linux desktop environment")
                 return
 
-        logger.warning('No suitable app icon found')
+        logger.warning("No suitable app icon found")
 
     def _setup_async_device_signals(self):
         """設置異步設備管理器的信號連接（通過DeviceManager）"""
@@ -653,32 +754,35 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # No direct AsyncDeviceManager signals needed in main window
         pass
 
-
-
     def update_recording_status(self):
         """Update recording status display using new recording manager."""
-        if not hasattr(self, 'recording_status_label'):
+        if not hasattr(self, "recording_status_label"):
             return
 
         update_recording_status_view(self)
 
     def show_recording_warning(self, serial):
         """Show warning when recording approaches 3-minute ADB limit."""
-        device_model = 'Unknown'
+        device_model = "Unknown"
         if serial in self.device_dict:
             device_model = self.device_dict[serial].device_model
 
         self.show_warning(
-            'Recording Time Warning',
-            f'Recording on {device_model} ({serial}) is approaching the 3-minute ADB limit.\n\n'
-            'The recording will automatically stop soon. You can start a new recording afterwards.'
+            "Recording Time Warning",
+            f"Recording on {device_model} ({serial}) is approaching the 3-minute ADB limit.\n\n"
+            "The recording will automatically stop soon. You can start a new recording afterwards.",
         )
 
     def create_console_panel(self, parent_layout):
         """Create the console output panel."""
         self.console_manager.create_console_panel(parent_layout)
         self.set_console_panel_visibility(self.show_console_panel, persist=False)
-        QTimer.singleShot(0, lambda: self.set_console_panel_visibility(self.show_console_panel, persist=False))
+        QTimer.singleShot(
+            0,
+            lambda: self.set_console_panel_visibility(
+                self.show_console_panel, persist=False
+            ),
+        )
 
     def register_console_panel_action(self, action: QAction) -> None:
         """Register the menu action controlling console visibility."""
@@ -703,9 +807,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         if persist:
             try:
-                self.config_manager.update_ui_settings(show_console_panel=self.show_console_panel)
+                self.config_manager.update_ui_settings(
+                    show_console_panel=self.show_console_panel
+                )
             except Exception as exc:  # pragma: no cover - defensive logging
-                logger.warning('Failed to persist console visibility: %s', exc)
+                logger.warning("Failed to persist console visibility: %s", exc)
 
     def _sync_console_panel_action(self) -> None:
         """Ensure the console toggle action matches current visibility state."""
@@ -716,12 +822,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.console_panel_action.setChecked(self.show_console_panel)
         self.console_panel_action.blockSignals(previous)
 
-
     def create_status_bar(self):
         """Create the status bar."""
         self.status_bar_manager.create_status_bar()
         # Ensure initial selection mode indicator is shown
-        self.status_bar_manager.update_selection_mode(self.device_selection_manager.is_single_selection())
+        self.status_bar_manager.update_selection_mode(
+            self.device_selection_manager.is_single_selection()
+        )
 
     def get_checked_devices(self) -> List[adb_models.DeviceInfo]:
         """Get list of checked devices."""
@@ -732,17 +839,24 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             if serial in self.device_dict
         ]
 
-    def require_single_device_selection(self, action_label: str) -> Optional[adb_models.DeviceInfo]:
+    def require_single_device_selection(
+        self, action_label: str
+    ) -> Optional[adb_models.DeviceInfo]:
         """Validate that exactly one device is selected for a single-target action."""
-        valid, serials, message = self.device_selection_manager.require_single_device(action_label)
+        valid, serials, message = self.device_selection_manager.require_single_device(
+            action_label
+        )
         if not valid:
-            self.show_warning('Device Selection', message)
+            self.show_warning("Device Selection", message)
             return None
 
         serial = serials[0]
         device = self.device_dict.get(serial)
         if device is None:
-            self.show_error('Device Selection', f'The selected device ({serial}) is no longer available.')
+            self.show_error(
+                "Device Selection",
+                f"The selected device ({serial}) is no longer available.",
+            )
             return None
         return device
 
@@ -770,8 +884,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         self.config_manager.set_scrcpy_settings(updated_settings)
         self.show_info(
-            'scrcpy Settings Updated',
-            'scrcpy will use your new preferences the next time you launch mirroring.'
+            "scrcpy Settings Updated",
+            "scrcpy will use your new preferences the next time you launch mirroring.",
         )
 
     def open_apk_install_settings_dialog(self) -> None:
@@ -786,8 +900,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         self.config_manager.set_apk_install_settings(updated_settings)
         self.show_info(
-            'APK Install Settings Updated',
-            'New adb install flags will be applied to future installs.'
+            "APK Install Settings Updated",
+            "New adb install flags will be applied to future installs.",
         )
 
     def open_capture_settings_dialog(self) -> None:
@@ -806,7 +920,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.config_manager.set_screen_record_settings(new_rec)
             changed = True
         if changed:
-            self.show_info('Capture Settings Updated', 'New settings will apply to future actions.')
+            self.show_info(
+                "Capture Settings Updated", "New settings will apply to future actions."
+            )
 
     def open_output_settings_dialog(self) -> None:
         """Display the Output Settings dialog for configuring global output path."""
@@ -817,21 +933,28 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         new_path = dialog.get_output_path()
         if new_path is not None:
             self.config_manager.update_ui_settings(default_output_path=new_path)
-            self.show_info('Output Settings Updated', f'Output path set to: {new_path or "(default)"}')
+            self.show_info(
+                "Output Settings Updated",
+                f"Output path set to: {new_path or '(default)'}",
+            )
 
     # Operation logging helpers moved to OperationLoggingMixin
 
     def _format_device_label(self, serial: str) -> str:
-        device = self.device_dict.get(serial) if hasattr(self, 'device_dict') else None
-        name = getattr(device, 'device_model', serial)
+        device = self.device_dict.get(serial) if hasattr(self, "device_dict") else None
+        name = getattr(device, "device_model", serial)
         short_serial = f"{serial[:8]}..." if len(serial) > 8 else serial
         return f"{name} ({short_serial})"
 
-    def _show_recording_operation_warning(self, title: str, body_intro: str, serials: list[str]) -> None:
+    def _show_recording_operation_warning(
+        self, title: str, body_intro: str, serials: list[str]
+    ) -> None:
         if serials:
-            devices_text = '\n'.join(f"• {self._format_device_label(serial)}" for serial in serials)
+            devices_text = "\n".join(
+                f"• {self._format_device_label(serial)}" for serial in serials
+            )
         else:
-            devices_text = '• Unknown device(s)'
+            devices_text = "• Unknown device(s)"
         message = f"{body_intro}\n\nActive devices:\n{devices_text}"
         self.error_handler.show_warning(title, message)
 
@@ -859,11 +982,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def handle_ui_scale_selection(self, scale: float):
         """Apply user-selected UI scale and persist the preference."""
         self.set_ui_scale(scale)
-        if hasattr(self, 'config_manager') and self.config_manager is not None:
+        if hasattr(self, "config_manager") and self.config_manager is not None:
             try:
                 self.config_manager.update_ui_settings(ui_scale=self.user_scale)
             except Exception as exc:
-                logger.error('Failed to persist UI scale preference: %s', exc)
+                logger.error("Failed to persist UI scale preference: %s", exc)
 
     def set_ui_scale(self, scale: float):
         """Set UI scale factor."""
@@ -880,38 +1003,42 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             app.setFont(app_font)
 
         self._update_ui_scale_actions(self.user_scale)
-        logger.debug(f'UI scale set to {self.user_scale}')
+        logger.debug(f"UI scale set to {self.user_scale}")
 
     def set_refresh_interval(self, interval: int):
         """Set device refresh interval."""
         interval = max(5, interval)
         self.refresh_interval = interval
-        if hasattr(self, 'device_manager'):
+        if hasattr(self, "device_manager"):
             self.device_manager.set_refresh_interval(interval)
-            logger.info(f'Refresh interval set to {interval} seconds and applied to DeviceManager')
+            logger.info(
+                f"Refresh interval set to {interval} seconds and applied to DeviceManager"
+            )
         else:
-            logger.warning(f'Refresh interval set to {interval} seconds but DeviceManager not yet available')
+            logger.warning(
+                f"Refresh interval set to {interval} seconds but DeviceManager not yet available"
+            )
         self._update_refresh_interval_actions(interval)
 
     def set_auto_refresh_enabled(self, enabled: bool):
         """Enable or disable automatic device refresh."""
         self.auto_refresh_enabled = enabled
-        if hasattr(self, 'device_manager'):
+        if hasattr(self, "device_manager"):
             self.device_manager.set_auto_refresh_enabled(enabled)
         self._update_auto_refresh_action(enabled)
-        message = '🔁 Auto refresh enabled' if enabled else '⏸️ Auto refresh paused'
+        message = "🔁 Auto refresh enabled" if enabled else "⏸️ Auto refresh paused"
         self.status_bar_manager.show_message(message, 4000)
 
     def _update_refresh_interval_actions(self, interval: int):
         """Sync refresh interval menu state with the current value."""
-        for value, action in getattr(self, 'refresh_interval_actions', {}).items():
+        for value, action in getattr(self, "refresh_interval_actions", {}).items():
             block = action.blockSignals(True)
             action.setChecked(value == interval)
             action.blockSignals(block)
 
     def _update_auto_refresh_action(self, enabled: bool):
         """Sync auto refresh menu action state."""
-        action = getattr(self, 'auto_refresh_action', None)
+        action = getattr(self, "auto_refresh_action", None)
         if action is None:
             return
         block = action.blockSignals(True)
@@ -921,7 +1048,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         self.device_list_controller.update_device_list(device_dict)
 
-    def _update_device_list_optimized(self, device_dict: Dict[str, adb_models.DeviceInfo]):
+    def _update_device_list_optimized(
+        self, device_dict: Dict[str, adb_models.DeviceInfo]
+    ):
         self.device_list_controller._update_device_list_optimized(device_dict)
 
     def filter_and_sort_devices(self):
@@ -945,50 +1074,64 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if active:
             self.device_selection_manager.set_active_serial(active)
         self.device_list_controller.update_selection_count()
+        self._update_selected_devices_bar()
+
+    def _update_selected_devices_bar(self) -> None:
+        if not hasattr(self, "selected_devices_bar"):
+            return
+        serials = self.device_selection_manager.get_selected_serials()
+        devices = [self._device_dict.get(s) for s in serials if s in self._device_dict]
+        devices = [d for d in devices if d is not None]
+        self.selected_devices_bar.update_devices(devices)
 
     def refresh_device_list(self):
         """Manually refresh device list with progressive discovery."""
-        operation = 'Refresh Device List'
+        operation = "Refresh Device List"
         self._log_operation_start(operation)
         try:
-            logger.info('🔄 Manual device refresh requested (using DeviceManager)')
+            logger.info("🔄 Manual device refresh requested (using DeviceManager)")
 
             # Use DeviceManager for unified device management
             self.device_manager.force_refresh()
 
             # Update status to show loading
-            self.status_bar_manager.show_message('🔄 Discovering devices...', 5000)
-            self._log_operation_complete(operation, 'Async refresh scheduled')
+            self.status_bar_manager.show_message("🔄 Discovering devices...", 5000)
+            self._log_operation_complete(operation, "Async refresh scheduled")
 
         except Exception as e:
-            logger.error(f'Error starting device refresh: {e}')
+            logger.error(f"Error starting device refresh: {e}")
             self._log_operation_failure(operation, str(e))
-            self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'Failed to start refresh: {e}')
+            self.error_handler.handle_error(
+                ErrorCode.DEVICE_NOT_FOUND, f"Failed to start refresh: {e}"
+            )
 
             # Fallback to original synchronous method if needed
             try:
-                logger.info('Falling back to synchronous device refresh')
+                logger.info("Falling back to synchronous device refresh")
                 devices = adb_tools.get_devices_list()
                 device_dict = {device.device_serial_num: device for device in devices}
                 self.update_device_list(device_dict)
-                logger.info('Device list refreshed (fallback mode)')
-                self._log_operation_complete(operation, 'Fallback succeeded')
+                logger.info("Device list refreshed (fallback mode)")
+                self._log_operation_complete(operation, "Fallback succeeded")
             except Exception as fallback_error:
-                logger.error(f'Fallback refresh also failed: {fallback_error}')
-                self.error_handler.handle_error(ErrorCode.DEVICE_NOT_FOUND, f'All refresh methods failed: {fallback_error}')
+                logger.error(f"Fallback refresh also failed: {fallback_error}")
+                self.error_handler.handle_error(
+                    ErrorCode.DEVICE_NOT_FOUND,
+                    f"All refresh methods failed: {fallback_error}",
+                )
                 self._log_operation_failure(operation, str(fallback_error))
 
     def select_all_devices(self):
         """Select all connected devices."""
         self._execute_with_operation_logging(
-            'Select All Devices',
+            "Select All Devices",
             self.device_list_controller.select_all_devices,
         )
 
     def select_no_devices(self):
         """Deselect all devices."""
         self._execute_with_operation_logging(
-            'Deselect All Devices',
+            "Deselect All Devices",
             self.device_list_controller.select_no_devices,
         )
 
@@ -1000,7 +1143,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """
         if self.device_selection_manager.is_single_selection():
             self._execute_with_operation_logging(
-                'Select Last Visible Device',
+                "Select Last Visible Device",
                 self.device_list_controller.select_last_visible_device,
             )
         else:
@@ -1009,37 +1152,39 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     # Device Groups functionality
     def save_group(self):
         self._execute_with_operation_logging(
-            'Save Device Group',
+            "Save Device Group",
             self.device_groups_facade.save_group,
         )
 
     def delete_group(self):
         self._execute_with_operation_logging(
-            'Delete Device Group',
+            "Delete Device Group",
             self.device_groups_facade.delete_group,
         )
 
     def select_devices_in_group(self):
         self._execute_with_operation_logging(
-            'Select Devices In Group',
+            "Select Devices In Group",
             self.device_groups_facade.select_devices_in_group,
         )
 
     def select_devices_in_group_by_name(self, group_name: str):
         self._execute_with_operation_logging(
-            f'Select Group: {group_name}',
-            lambda: self.device_groups_facade.select_devices_in_group_by_name(group_name),
+            f"Select Group: {group_name}",
+            lambda: self.device_groups_facade.select_devices_in_group_by_name(
+                group_name
+            ),
         )
 
     def update_groups_listbox(self):
         self._execute_with_operation_logging(
-            'Update Group List',
+            "Update Group List",
             self.device_groups_facade.update_groups_listbox,
         )
 
     def on_group_select(self):
         self._execute_with_operation_logging(
-            'Handle Group Selection',
+            "Handle Group Selection",
             self.device_groups_facade.on_group_select,
         )
 
@@ -1050,7 +1195,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def copy_selected_device_info(self):
         self._execute_with_operation_logging(
-            'Copy Selected Device Info',
+            "Copy Selected Device Info",
             self.device_actions_facade.copy_selected_device_info,
         )
 
@@ -1061,14 +1206,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def copy_console_text(self):
         """Copy selected console text to clipboard."""
         self._execute_with_operation_logging(
-            'Copy Console Text',
+            "Copy Console Text",
             self.console_manager.copy_console_text,
         )
 
     def clear_console(self):
         """Clear the console output."""
         self._execute_with_operation_logging(
-            'Clear Console',
+            "Clear Console",
             self.console_manager.clear_console,
         )
 
@@ -1082,7 +1227,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def update_device_overview(self) -> None:
         """Synchronise the overview tab with the active selection."""
-        widget = getattr(self, 'device_overview_widget', None)
+        widget = getattr(self, "device_overview_widget", None)
         if widget is None:
             return
 
@@ -1103,92 +1248,108 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 include_status=True,
             )
         except Exception as exc:  # pragma: no cover - defensive safeguard
-            logger.warning('Failed to build overview details for %s: %s', active_serial, exc)
-            detail_text = 'Details unavailable.'
+            logger.warning(
+                "Failed to build overview details for %s: %s", active_serial, exc
+            )
+            detail_text = "Details unavailable."
 
         widget.set_overview(device, active_serial, detail_text)
 
     def refresh_active_device_overview(self) -> None:
         """Trigger a detail refresh for the active device and update the overview."""
-        widget = getattr(self, 'device_overview_widget', None)
+        widget = getattr(self, "device_overview_widget", None)
         if widget is None:
             return
 
         active_serial = self.device_selection_manager.get_active_serial()
         if not active_serial:
-            self.show_warning('Device Selection', 'Select a device before refreshing the overview.')
+            self.show_warning(
+                "Device Selection", "Select a device before refreshing the overview."
+            )
             return
 
         device = self.device_dict.get(active_serial)
         if device is None:
-            self.show_error('Device Selection', f'Device {active_serial} is no longer available.')
+            self.show_error(
+                "Device Selection", f"Device {active_serial} is no longer available."
+            )
             widget.set_overview(None, None, None)
             return
 
         try:
             self._refresh_device_detail_and_get_text(active_serial)
         except Exception as exc:  # pragma: no cover - defensive safeguard
-            logger.error('Failed to refresh overview for %s: %s', active_serial, exc)
-            self.show_error('Refresh Failed', str(exc))
+            logger.error("Failed to refresh overview for %s: %s", active_serial, exc)
+            self.show_error("Refresh Failed", str(exc))
             return
 
         self.update_device_overview()
 
     def copy_active_device_overview(self) -> None:
         """Copy the current overview details to the clipboard."""
-        widget = getattr(self, 'device_overview_widget', None)
+        widget = getattr(self, "device_overview_widget", None)
         if widget is None:
             return
 
         detail_text = widget.get_current_detail_text()
         if not detail_text.strip():
-            self.show_warning('Copy Failed', 'No device details available to copy.')
+            self.show_warning("Copy Failed", "No device details available to copy.")
             return
 
         active_serial = widget.get_active_serial()
-        device_model = widget.get_active_model() or 'Unknown Device'
-        self._copy_device_detail_text(active_serial or 'Unknown Serial', device_model, detail_text)
+        device_model = widget.get_active_model() or "Unknown Device"
+        self._copy_device_detail_text(
+            active_serial or "Unknown Serial", device_model, detail_text
+        )
 
     def show_device_context_menu(self, position, device_serial, checkbox_widget):
         """Delegate context menu handling to the device actions controller."""
-        self.device_actions_facade.show_context_menu(position, device_serial, checkbox_widget)
+        self.device_actions_facade.show_context_menu(
+            position, device_serial, checkbox_widget
+        )
 
     def select_only_device(self, target_serial):
         """Expose device selection through the controller."""
         self._execute_with_operation_logging(
-            f'Select Only Device {target_serial}',
+            f"Select Only Device {target_serial}",
             lambda: self.device_actions_facade.select_only_device(target_serial),
         )
 
     def deselect_device(self, target_serial):
         """Expose deselection through the controller."""
         self._execute_with_operation_logging(
-            f'Deselect Device {target_serial}',
+            f"Deselect Device {target_serial}",
             lambda: self.device_actions_facade.deselect_device(target_serial),
         )
 
     def launch_ui_inspector_for_device(self, device_serial):
         self._execute_with_operation_logging(
-            f'Launch UI Inspector ({device_serial})',
-            lambda: self.device_actions_facade.launch_ui_inspector_for_device(device_serial),
+            f"Launch UI Inspector ({device_serial})",
+            lambda: self.device_actions_facade.launch_ui_inspector_for_device(
+                device_serial
+            ),
         )
 
     def reboot_single_device(self, device_serial):
         self._execute_with_operation_logging(
-            f'Reboot Device ({device_serial})',
+            f"Reboot Device ({device_serial})",
             lambda: self.device_actions_facade.reboot_single_device(device_serial),
         )
 
     def take_screenshot_single_device(self, device_serial):
         self._execute_with_operation_logging(
-            f'Take Screenshot ({device_serial})',
-            lambda: self.device_actions_facade.take_screenshot_single_device(device_serial),
+            f"Take Screenshot ({device_serial})",
+            lambda: self.device_actions_facade.take_screenshot_single_device(
+                device_serial
+            ),
         )
 
     def launch_scrcpy_single_device(self, device_serial):
         self._execute_with_operation_logging(
-            f'Launch scrcpy ({device_serial})',
-            lambda: self.device_actions_facade.launch_scrcpy_single_device(device_serial),
+            f"Launch scrcpy ({device_serial})",
+            lambda: self.device_actions_facade.launch_scrcpy_single_device(
+                device_serial
+            ),
         )
 
     def filter_and_sort_devices(self):
@@ -1208,74 +1369,85 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def show_device_details(self, device_serial: str) -> None:
         device = self.device_dict.get(device_serial)
         if device is None:
-            self.show_error('Device Not Available', f'Device {device_serial} is no longer connected.')
+            self.show_error(
+                "Device Not Available",
+                f"Device {device_serial} is no longer connected.",
+            )
             return
 
-        detail_text = self.device_list_controller.get_device_detail_text(device, device_serial)
+        detail_text = self.device_list_controller.get_device_detail_text(
+            device, device_serial
+        )
         dialog = DeviceDetailDialog(
             self,
             device,
             detail_text,
             lambda: self._refresh_device_detail_and_get_text(device_serial),
-            lambda text: self._copy_device_detail_text(device_serial, device.device_model, text),
+            lambda text: self._copy_device_detail_text(
+                device_serial, device.device_model, text
+            ),
         )
         dialog.exec()
 
     def copy_single_device_info(self, device_serial):
         self.device_actions_facade.copy_single_device_info(device_serial)
 
-    def _copy_device_detail_text(self, device_serial: str, device_model: str, detail_text: str) -> None:
+    def _copy_device_detail_text(
+        self, device_serial: str, device_model: str, detail_text: str
+    ) -> None:
         try:
             clipboard = QGuiApplication.clipboard()
             clipboard.setText(detail_text)
-            self.show_info('📋 Copied!', f'Device details copied to clipboard for:\n{device_model}')
-            logger.info('Copied device details for %s', device_serial)
+            self.show_info(
+                "📋 Copied!", f"Device details copied to clipboard for:\n{device_model}"
+            )
+            logger.info("Copied device details for %s", device_serial)
         except Exception as exc:  # pragma: no cover - defensive UI path
-            logger.error('Failed to copy device details for %s: %s', device_serial, exc)
-            self.show_error('Error', f'Could not copy device details:\n{exc}')
+            logger.error("Failed to copy device details for %s: %s", device_serial, exc)
+            self.show_error("Error", f"Could not copy device details:\n{exc}")
 
     def _refresh_device_detail_and_get_text(self, device_serial: str) -> str:
         device = self.device_dict.get(device_serial)
         if not device:
-            raise RuntimeError(f'Device {device_serial} is no longer connected')
+            raise RuntimeError(f"Device {device_serial} is no longer connected")
 
         detail_info = adb_tools.get_device_detailed_info(device_serial)
 
-        wifi_status = detail_info.get('wifi_status')
+        wifi_status = detail_info.get("wifi_status")
         if wifi_status is not None:
             try:
                 device.wifi_is_on = bool(int(wifi_status))
             except (ValueError, TypeError):
                 device.wifi_is_on = bool(wifi_status)
 
-        bt_status = detail_info.get('bluetooth_status')
+        bt_status = detail_info.get("bluetooth_status")
         if bt_status is not None:
             try:
                 device.bt_is_on = bool(int(bt_status))
             except (ValueError, TypeError):
                 device.bt_is_on = bool(bt_status)
 
-        android_ver = detail_info.get('android_version')
-        if android_ver and android_ver != 'Unknown':
+        android_ver = detail_info.get("android_version")
+        if android_ver and android_ver != "Unknown":
             device.android_ver = android_ver
 
-        android_api = detail_info.get('android_api_level')
-        if android_api and android_api != 'Unknown':
+        android_api = detail_info.get("android_api_level")
+        if android_api and android_api != "Unknown":
             device.android_api_level = android_api
 
-        gms_version = detail_info.get('gms_version')
-        if gms_version and gms_version != 'Unknown':
+        gms_version = detail_info.get("gms_version")
+        if gms_version and gms_version != "Unknown":
             device.gms_version = gms_version
 
-        build_fp = detail_info.get('build_fingerprint')
-        if build_fp and build_fp != 'Unknown':
+        build_fp = detail_info.get("build_fingerprint")
+        if build_fp and build_fp != "Unknown":
             device.build_fingerprint = build_fp
 
-        audio_state = detail_info.get('audio_state')
+        audio_state = detail_info.get("audio_state")
         if audio_state:
             device.audio_state = audio_state
 
-        bt_manager_state = detail_info.get('bluetooth_manager_state')
+        bt_manager_state = detail_info.get("bluetooth_manager_state")
         if bt_manager_state:
             device.bluetooth_manager_state = bt_manager_state
 
@@ -1284,7 +1456,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         try:
             additional_info = adb_tools.get_additional_device_info(device_serial)
         finally:
-            battery_cache = getattr(self, 'battery_info_manager', None)
+            battery_cache = getattr(self, "battery_info_manager", None)
             if battery_cache is not None and additional_info:
                 battery_cache.update_cache(device_serial, additional_info)
 
@@ -1292,9 +1464,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_manager.device_dict[device_serial] = device
         self.device_manager.update_device_list(self.device_dict)
 
-        detail_text = self.device_list_controller.get_device_detail_text(device, device_serial)
+        detail_text = self.device_list_controller.get_device_detail_text(
+            device, device_serial
+        )
 
-        widget = getattr(self, 'device_overview_widget', None)
+        widget = getattr(self, "device_overview_widget", None)
         if widget is not None and widget.get_active_serial() == device_serial:
             condensed_text = self.device_list_controller.get_device_detail_text(
                 device,
@@ -1310,11 +1484,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def browse_output_path(self):
         """Browse for unified output directory used by screenshots/recordings."""
-        if hasattr(self, 'output_path_manager'):
+        if hasattr(self, "output_path_manager"):
             self.output_path_manager.browse_primary_output_path()
             return
 
-        directory = self.file_dialog_manager.select_directory(self, 'Select Output Directory')
+        directory = self.file_dialog_manager.select_directory(
+            self, "Select Output Directory"
+        )
         if directory:
             normalized_path = common.make_gen_dir_path(directory)
             self.output_path_edit.setText(normalized_path)
@@ -1324,21 +1500,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def browse_file_generation_output_path(self):
         """Browse and select file generation output directory."""
-        if hasattr(self, 'output_path_manager'):
+        if hasattr(self, "output_path_manager"):
             path = self.output_path_manager.browse_file_generation_output_path()
             if path:
-                logger.info(f'Selected file generation output directory: {path}')
+                logger.info(f"Selected file generation output directory: {path}")
             return
 
-        directory = self.file_dialog_manager.select_directory(self, 'Select File Generation Output Directory')
+        directory = self.file_dialog_manager.select_directory(
+            self, "Select File Generation Output Directory"
+        )
         if directory:
             normalized_path = common.make_gen_dir_path(directory)
             self.file_gen_output_path_edit.setText(normalized_path)
-            logger.info(f'Selected file generation output directory: {normalized_path}')
+            logger.info(f"Selected file generation output directory: {normalized_path}")
 
     def _ensure_output_path_initialized(self) -> str:
         """Make sure we have a usable primary output path."""
-        if hasattr(self, 'output_path_manager'):
+        if hasattr(self, "output_path_manager"):
             return self.output_path_manager.ensure_primary_output_path()
 
         path = self.output_path_edit.text().strip()
@@ -1360,37 +1538,43 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def get_primary_output_path(self) -> str:
         """Return the current effective output path used for screenshots/recordings."""
-        if hasattr(self, 'output_path_manager'):
+        if hasattr(self, "output_path_manager"):
             return self.output_path_manager.get_primary_output_path()
         return self._ensure_output_path_initialized()
 
-
     def run_in_thread(self, func, *args):
         """Run function in a separate thread with enhanced error handling."""
+
         def wrapper():
             try:
-                logger.info(f'Starting background operation: {func.__name__}')
+                logger.info(f"Starting background operation: {func.__name__}")
                 result = func(*args)
-                logger.info(f'Background operation completed: {func.__name__}')
+                logger.info(f"Background operation completed: {func.__name__}")
                 return result
             except FileNotFoundError as e:
-                error_msg = f'File not found: {str(e)}'
-                logger.error(f'{func.__name__}: {error_msg}')
-                QTimer.singleShot(0, lambda: self.show_error('File Error', error_msg))
+                error_msg = f"File not found: {str(e)}"
+                logger.error(f"{func.__name__}: {error_msg}")
+                QTimer.singleShot(0, lambda: self.show_error("File Error", error_msg))
             except PermissionError as e:
-                error_msg = f'Permission denied: {str(e)}'
-                logger.error(f'{func.__name__}: {error_msg}')
-                QTimer.singleShot(0, lambda: self.show_error('Permission Error', error_msg))
+                error_msg = f"Permission denied: {str(e)}"
+                logger.error(f"{func.__name__}: {error_msg}")
+                QTimer.singleShot(
+                    0, lambda: self.show_error("Permission Error", error_msg)
+                )
             except ConnectionError as e:
-                error_msg = f'Device connection error: {str(e)}'
-                logger.error(f'{func.__name__}: {error_msg}')
-                QTimer.singleShot(0, lambda: self.show_error('Connection Error', error_msg))
+                error_msg = f"Device connection error: {str(e)}"
+                logger.error(f"{func.__name__}: {error_msg}")
+                QTimer.singleShot(
+                    0, lambda: self.show_error("Connection Error", error_msg)
+                )
             except Exception as e:
-                error_msg = f'Operation failed: {str(e)}'
-                logger.error(f'Error in {func.__name__}: {e}', exc_info=True)
-                QTimer.singleShot(0, lambda: self.show_error('Error', error_msg))
+                error_msg = f"Operation failed: {str(e)}"
+                logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
+                QTimer.singleShot(0, lambda: self.show_error("Error", error_msg))
 
-        thread = threading.Thread(target=wrapper, daemon=True, name=f'BG-{func.__name__}')
+        thread = threading.Thread(
+            target=wrapper, daemon=True, name=f"BG-{func.__name__}"
+        )
         thread.start()
 
     def _register_background_handle(self, handle: TaskHandle) -> None:
@@ -1412,20 +1596,20 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         description: str,
         *args,
         show_progress: bool = True,
-        refresh_mode: str = 'full',
+        refresh_mode: str = "full",
         **kwargs,
     ):
         """Run ADB tool on selected devices with enhanced progress feedback and operation tracking."""
         devices = self.get_checked_devices()
         if not devices:
-            self.show_error('Error', 'No devices selected.')
+            self.show_error("Error", "No devices selected.")
             return
 
         serials = [d.device_serial_num for d in devices]
         device_count = len(devices)
         device_models = [d.device_model for d in devices]
 
-        logger.info(f'Running {description} on {device_count} device(s): {serials}')
+        logger.info(f"Running {description} on {device_count} device(s): {serials}")
 
         # Set operation status for all devices
         for serial in serials:
@@ -1433,13 +1617,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_list_controller.update_device_list(self.device_dict)
 
         if show_progress:
-            device_list = ', '.join(device_models[:3])
+            device_list = ", ".join(device_models[:3])
             if len(device_models) > 3:
-                device_list += f'... (and {len(device_models)-3} more)'
+                device_list += f"... (and {len(device_models) - 3} more)"
 
             self.show_info(
-                f'{description.title()} In Progress',
-                f'Running {description} on {device_count} device(s):\n{device_list}\n\nPlease wait...'
+                f"{description.title()} In Progress",
+                f"Running {description} on {device_count} device(s):\n{device_list}\n\nPlease wait...",
             )
 
         def wrapper():
@@ -1447,17 +1631,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 tool_func(serials, *args, **kwargs)
                 if show_progress:
                     # Success notification on main thread
-                    QTimer.singleShot(0, lambda: self.show_info(
-                        f'{description.title()} Complete',
-                        f'Successfully completed {description} on {device_count} device(s)'
-                    ))
+                    QTimer.singleShot(
+                        0,
+                        lambda: self.show_info(
+                            f"{description.title()} Complete",
+                            f"Successfully completed {description} on {device_count} device(s)",
+                        ),
+                    )
             except Exception as e:
                 if show_progress:
                     # Error notification on main thread
-                    QTimer.singleShot(0, lambda: self.show_error(
-                        f'{description.title()} Failed',
-                        f'Failed to complete {description}:\n{str(e)}'
-                    ))
+                    QTimer.singleShot(
+                        0,
+                        lambda: self.show_error(
+                            f"{description.title()} Failed",
+                            f"Failed to complete {description}:\n{str(e)}",
+                        ),
+                    )
                 raise e  # Re-raise to be handled by run_in_thread
             finally:
                 self.finalize_operation_requested.emit(list(serials), refresh_mode)
@@ -1473,11 +1663,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Finalize long-running ADB operations with appropriate UI updates."""
         self._clear_device_operations(serials)
 
-        if refresh_mode == 'full':
+        if refresh_mode == "full":
             self.device_manager.force_refresh()
             return
 
-        if refresh_mode == 'connectivity':
+        if refresh_mode == "connectivity":
             updated = self._refresh_connectivity_info(serials)
             self.battery_info_manager.refresh_serials(serials)
             if updated:
@@ -1504,7 +1694,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 self.device_dict[serial].bt_is_on = bt_on
                 updated = True
             except Exception as exc:  # pragma: no cover - defensive logging
-                logger.debug('Failed to refresh connectivity for %s: %s', serial, exc)
+                logger.debug("Failed to refresh connectivity for %s: %s", serial, exc)
         if updated:
             self.device_list_controller.update_device_list(self.device_dict)
         return updated
@@ -1513,19 +1703,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def adb_start_server(self):
         """Start ADB server."""
         self.run_in_thread(adb_tools.start_adb_server)
-        logger.info('Starting ADB server...')
+        logger.info("Starting ADB server...")
 
     def adb_kill_server(self):
         """Kill ADB server."""
         self.run_in_thread(adb_tools.kill_adb_server)
-        logger.info('Killing ADB server...')
+        logger.info("Killing ADB server...")
 
     # ADB Tools methods
     @ensure_devices_selected
     def reboot_device(self):
         """Reboot selected devices."""
-        self._run_adb_tool_on_selected_devices(adb_tools.start_reboot, 'reboot')
-
+        self._run_adb_tool_on_selected_devices(adb_tools.start_reboot, "reboot")
 
     @ensure_devices_selected
     def install_apk(self):
@@ -1541,39 +1730,50 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         for index, device in enumerate(devices, 1):
             try:
                 # Update progress
-                progress_msg = f'Installing {apk_name} on device {index}/{total_devices}\n\n' \
-                             f'📱 Current: {device.device_model} ({device.device_serial_num})\n' \
-                             f'✅ Success: {successful_installs}\n' \
-                             f'❌ Failed: {failed_installs}'
+                progress_msg = (
+                    f"Installing {apk_name} on device {index}/{total_devices}\n\n"
+                    f"📱 Current: {device.device_model} ({device.device_serial_num})\n"
+                    f"✅ Success: {successful_installs}\n"
+                    f"❌ Failed: {failed_installs}"
+                )
 
                 # Show progress update (using QTimer to ensure thread safety)
-                QTimer.singleShot(0, lambda msg=progress_msg:
-                    self.error_handler.show_info('📦 APK Installation Progress', msg))
+                QTimer.singleShot(
+                    0,
+                    lambda msg=progress_msg: self.error_handler.show_info(
+                        "📦 APK Installation Progress", msg
+                    ),
+                )
 
                 # Install on current device
                 result = adb_tools.install_the_apk([device.device_serial_num], apk_file)
 
-                if result and any('Success' in str(r) for r in result):
+                if result and any("Success" in str(r) for r in result):
                     successful_installs += 1
-                    logger.info(f'APK installed successfully on {device.device_model}')
+                    logger.info(f"APK installed successfully on {device.device_model}")
                 else:
                     failed_installs += 1
-                    logger.warning(f'APK installation failed on {device.device_model}: {result}')
+                    logger.warning(
+                        f"APK installation failed on {device.device_model}: {result}"
+                    )
 
             except Exception as e:
                 failed_installs += 1
-                logger.error(f'APK installation error on {device.device_model}: {e}')
+                logger.error(f"APK installation error on {device.device_model}: {e}")
 
         # Final result
-        final_msg = f'APK Installation Complete!\n\n' \
-                   f'📄 APK: {apk_name}\n' \
-                   f'📱 Total Devices: {total_devices}\n' \
-                   f'✅ Successful: {successful_installs}\n' \
-                   f'❌ Failed: {failed_installs}'
+        final_msg = (
+            f"APK Installation Complete!\n\n"
+            f"📄 APK: {apk_name}\n"
+            f"📱 Total Devices: {total_devices}\n"
+            f"✅ Successful: {successful_installs}\n"
+            f"❌ Failed: {failed_installs}"
+        )
 
-        QTimer.singleShot(0, lambda:
-            self.error_handler.show_info('📦 Installation Complete', final_msg))
-
+        QTimer.singleShot(
+            0,
+            lambda: self.error_handler.show_info("📦 Installation Complete", final_msg),
+        )
 
     @ensure_devices_selected
     def take_screenshot(self):
@@ -1583,8 +1783,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Validate output path using utils
         validated_path = validate_screenshot_path(output_path)
         if not validated_path:
-            self.error_handler.handle_error(ErrorCode.FILE_NOT_FOUND,
-                                           'Please select a valid output directory first.')
+            self.error_handler.handle_error(
+                ErrorCode.FILE_NOT_FOUND,
+                "Please select a valid output directory first.",
+            )
             return
 
         devices = self.get_checked_devices()
@@ -1593,7 +1795,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Set devices as in operation (Screenshot)
         for device in devices:
-            self.device_manager.set_device_operation_status(device.device_serial_num, 'Screenshot')
+            self.device_manager.set_device_operation_status(
+                device.device_serial_num, "Screenshot"
+            )
         self.device_manager.force_refresh()
 
         # Update UI state
@@ -1603,21 +1807,36 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Use new screenshot utils with callback
         def screenshot_callback(output_path, device_count, device_models):
-            logger.info(f'🔧 [CALLBACK RECEIVED] Screenshot callback called with output_path={output_path}, device_count={device_count}, device_models={device_models}')
+            logger.info(
+                f"🔧 [CALLBACK RECEIVED] Screenshot callback called with output_path={output_path}, device_count={device_count}, device_models={device_models}"
+            )
             # Use signal emission to safely execute in main thread instead of QTimer
-            logger.info(f'🔧 [CALLBACK RECEIVED] About to emit screenshot_completed_signal')
+            logger.info(
+                f"🔧 [CALLBACK RECEIVED] About to emit screenshot_completed_signal"
+            )
             try:
                 # Only use the signal to avoid duplicate notifications
-                self.screenshot_completed_signal.emit(output_path, device_count, device_models)
-                logger.info(f'🔧 [CALLBACK RECEIVED] screenshot_completed_signal emitted successfully')
+                self.screenshot_completed_signal.emit(
+                    output_path, device_count, device_models
+                )
+                logger.info(
+                    f"🔧 [CALLBACK RECEIVED] screenshot_completed_signal emitted successfully"
+                )
                 # Clean up device operation status
                 for device in devices:
-                    self.device_manager.clear_device_operation_status(device.device_serial_num)
+                    self.device_manager.clear_device_operation_status(
+                        device.device_serial_num
+                    )
                 self.device_manager.force_refresh()
             except Exception as signal_error:
-                logger.error(f'🔧 [CALLBACK RECEIVED] Signal emission failed: {signal_error}')
+                logger.error(
+                    f"🔧 [CALLBACK RECEIVED] Signal emission failed: {signal_error}"
+                )
                 import traceback
-                logger.error(f'🔧 [CALLBACK RECEIVED] Traceback: {traceback.format_exc()}')
+
+                logger.error(
+                    f"🔧 [CALLBACK RECEIVED] Traceback: {traceback.format_exc()}"
+                )
 
         take_screenshots_batch(devices, validated_path, screenshot_callback)
 
@@ -1648,7 +1867,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         devices: List[adb_models.DeviceInfo],
         output_path: str,
     ) -> None:
-        self.recording_controller._on_start_screen_record_task_completed(payload, devices, output_path)
+        self.recording_controller._on_start_screen_record_task_completed(
+            payload, devices, output_path
+        )
 
     def _on_start_screen_record_task_failed(self, exc: Exception) -> None:
         self.recording_controller._on_start_screen_record_task_failed(exc)
@@ -1662,120 +1883,168 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         *,
         task_handle: Optional[TaskHandle] = None,
     ) -> Dict[str, Any]:
-        return self.recording_controller._stop_screen_record_task(serials, task_handle=task_handle)
+        return self.recording_controller._stop_screen_record_task(
+            serials, task_handle=task_handle
+        )
 
     def _on_stop_screen_record_task_completed(
         self,
         payload: Dict[str, Any],
         requested_serials: Optional[Iterable[str]],
     ) -> None:
-        self.recording_controller._on_stop_screen_record_task_completed(payload, requested_serials)
+        self.recording_controller._on_stop_screen_record_task_completed(
+            payload, requested_serials
+        )
 
     def _on_stop_screen_record_task_failed(self, exc: Exception) -> None:
         self.recording_controller._on_stop_screen_record_task_failed(exc)
 
-    def _on_recording_stopped(self, device_name, device_serial, duration, filename, output_path):
-        self.recording_controller.handle_recording_stopped(device_name, device_serial, duration, filename, output_path)
+    def _on_recording_stopped(
+        self, device_name, device_serial, duration, filename, output_path
+    ):
+        self.recording_controller.handle_recording_stopped(
+            device_name, device_serial, duration, filename, output_path
+        )
 
     def _on_recording_state_cleared(self, device_serial):
         self.recording_controller.handle_recording_state_cleared(device_serial)
 
-    def _on_recording_progress_event(self, event_payload: RecordingProgressEvent | Dict[str, Any]):
+    def _on_recording_progress_event(
+        self, event_payload: RecordingProgressEvent | Dict[str, Any]
+    ):
         self.recording_controller.handle_progress_event(event_payload)
 
-    def _on_device_operation_completed(self, operation, device_serial, success, message):
+    def _on_device_operation_completed(
+        self, operation, device_serial, success, message
+    ):
         """Handle device operation completed signal."""
         status_icon = "✅" if success else "❌"
-        self.write_to_console(f"{status_icon} {operation} on device {device_serial}: {message}")
+        self.write_to_console(
+            f"{status_icon} {operation} on device {device_serial}: {message}"
+        )
 
         if not success:
             # Show error for failed operations
-            self.show_error(f"{operation.capitalize()} Failed", f"Device {device_serial}: {message}")
+            self.show_error(
+                f"{operation.capitalize()} Failed", f"Device {device_serial}: {message}"
+            )
 
     def _on_screenshot_completed(self, output_path, device_count, device_models):
         """Handle screenshot completed signal in main thread."""
-        logger.info(f'📷 [SIGNAL] _on_screenshot_completed executing in main thread')
+        logger.info(f"📷 [SIGNAL] _on_screenshot_completed executing in main thread")
 
-        self.completion_dialog_manager.show_screenshot_summary(output_path, device_models)
+        self.completion_dialog_manager.show_screenshot_summary(
+            output_path, device_models
+        )
         self._show_screenshot_quick_actions(output_path, device_models)
 
         self._update_screenshot_button_state(False)
 
-        logger.info(f'📷 [SIGNAL] _on_screenshot_completed notification shown')
+        logger.info(f"📷 [SIGNAL] _on_screenshot_completed notification shown")
         return
 
-    def _show_screenshot_quick_actions(self, output_path: str, device_models: List[str]) -> None:
+    def _show_screenshot_quick_actions(
+        self, output_path: str, device_models: List[str]
+    ) -> None:
         """Show a lightweight follow-up prompt after screenshots complete."""
         if not output_path:
-            logger.debug('Screenshot quick actions skipped: empty output path')
+            logger.debug("Screenshot quick actions skipped: empty output path")
             return
 
-        device_summary = '\n'.join(f'• {model}' for model in device_models) if device_models else 'No device name metadata captured.'
-        message = (
-            f'Screenshots saved to:\n{output_path}\n\n'
-            f'{device_summary}'
+        device_summary = (
+            "\n".join(f"• {model}" for model in device_models)
+            if device_models
+            else "No device name metadata captured."
+        )
+        message = f"Screenshots saved to:\n{output_path}\n\n{device_summary}"
+
+        try:
+            self.show_info("Screenshots Ready", message)
+        except Exception as exc:  # pragma: no cover - UI fallback
+            logger.debug("Quick actions dialog failed: %s", exc)
+            self.write_to_console(f"📷 Screenshots available at {output_path}")
+
+    def _handle_screenshot_completion(
+        self, output_path, device_count, device_models, devices
+    ):
+        """Handle screenshot completion in main thread."""
+        logger.info(
+            f"📷 [MAIN THREAD] Screenshot completion handler executing with params: output_path={output_path}, device_count={device_count}, device_models={device_models}"
         )
 
-        try:
-            self.show_info('Screenshots Ready', message)
-        except Exception as exc:  # pragma: no cover - UI fallback
-            logger.debug('Quick actions dialog failed: %s', exc)
-            self.write_to_console(f'📷 Screenshots available at {output_path}')
-
-
-    def _handle_screenshot_completion(self, output_path, device_count, device_models, devices):
-        """Handle screenshot completion in main thread."""
-        logger.info(f'📷 [MAIN THREAD] Screenshot completion handler executing with params: output_path={output_path}, device_count={device_count}, device_models={device_models}')
-
         # Emit signal in main thread
-        logger.info(f'📷 [MAIN THREAD] About to emit screenshot_completed_signal')
+        logger.info(f"📷 [MAIN THREAD] About to emit screenshot_completed_signal")
         try:
-            self.screenshot_completed_signal.emit(output_path, device_count, device_models)
-            logger.info(f'📷 [MAIN THREAD] screenshot_completed_signal emitted successfully')
+            self.screenshot_completed_signal.emit(
+                output_path, device_count, device_models
+            )
+            logger.info(
+                f"📷 [MAIN THREAD] screenshot_completed_signal emitted successfully"
+            )
         except Exception as signal_error:
-            logger.error(f'📷 [MAIN THREAD] Signal emission failed: {signal_error}')
+            logger.error(f"📷 [MAIN THREAD] Signal emission failed: {signal_error}")
 
         # Clear operation status
         for device in devices:
-            self.device_manager.set_device_operation_status(device.device_serial_num, 'Idle')
+            self.device_manager.set_device_operation_status(
+                device.device_serial_num, "Idle"
+            )
 
         # Refresh UI
-        logger.info(f'📷 [MAIN THREAD] About to refresh device list')
+        logger.info(f"📷 [MAIN THREAD] About to refresh device list")
         self.device_manager.force_refresh()
-        logger.info(f'📷 [MAIN THREAD] About to reset screenshot button state')
+        logger.info(f"📷 [MAIN THREAD] About to reset screenshot button state")
         self._update_screenshot_button_state(False)
-        logger.info(f'📷 [MAIN THREAD] Screenshot completion handler finished')
+        logger.info(f"📷 [MAIN THREAD] Screenshot completion handler finished")
 
     def _update_screenshot_button_state(self, in_progress: bool):
         """Update screenshot button state."""
-        logger.info(f'🔧 [BUTTON STATE] Updating screenshot button state, in_progress={in_progress}')
+        logger.info(
+            f"🔧 [BUTTON STATE] Updating screenshot button state, in_progress={in_progress}"
+        )
         if not self.screenshot_btn:
-            logger.warning(f'🔧 [BUTTON STATE] screenshot_btn is None, cannot update state')
+            logger.warning(
+                f"🔧 [BUTTON STATE] screenshot_btn is None, cannot update state"
+            )
             return
 
         if in_progress:
-            self.screenshot_btn.setText('📷 Taking Screenshots...')
+            self.screenshot_btn.setText("📷 Taking Screenshots...")
             self.screenshot_btn.setEnabled(False)
-            StyleManager.apply_status_style(self.screenshot_btn, 'screenshot_processing')
+            StyleManager.apply_status_style(
+                self.screenshot_btn, "screenshot_processing"
+            )
         else:
-            logger.info(f'🔧 [BUTTON STATE] Resetting screenshot button to default state')
-            self.screenshot_btn.setText('📷 Take Screenshot')
+            logger.info(
+                f"🔧 [BUTTON STATE] Resetting screenshot button to default state"
+            )
+            self.screenshot_btn.setText("📷 Take Screenshot")
             self.screenshot_btn.setEnabled(True)
             # Set proper default style
-            StyleManager.apply_status_style(self.screenshot_btn, 'screenshot_ready')
-            logger.info('📷 [BUTTON STATE] Screenshot button reset to default state successfully')
+            StyleManager.apply_status_style(self.screenshot_btn, "screenshot_ready")
+            logger.info(
+                "📷 [BUTTON STATE] Screenshot button reset to default state successfully"
+            )
 
-    def _on_file_generation_completed(self, operation_name, summary_text, success_metric, icon):
+    def _on_file_generation_completed(
+        self, operation_name, summary_text, success_metric, icon
+    ):
         """Handle file generation completed signal in main thread."""
-        logger.info(f'{icon} [SIGNAL] _on_file_generation_completed executing in main thread')
+        logger.info(
+            f"{icon} [SIGNAL] _on_file_generation_completed executing in main thread"
+        )
 
         state = self.file_operations_manager.get_bug_report_progress_state()
-        self._apply_progress_state_to_overlay('bug_report', state)
+        self._apply_progress_state_to_overlay("bug_report", state)
 
         self._reset_file_generation_progress()
 
-        output_path = getattr(self.file_operations_manager, 'last_generation_output_path', '')
-        summary_content = summary_text or getattr(self.file_operations_manager, 'last_generation_summary', '')
+        output_path = getattr(
+            self.file_operations_manager, "last_generation_output_path", ""
+        )
+        summary_content = summary_text or getattr(
+            self.file_operations_manager, "last_generation_summary", ""
+        )
 
         self.completion_dialog_manager.show_file_generation_summary(
             operation_name=operation_name,
@@ -1785,17 +2054,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             icon=icon,
         )
 
-        logger.info(f'{icon} [SIGNAL] _on_file_generation_completed dialog displayed')
+        logger.info(f"{icon} [SIGNAL] _on_file_generation_completed dialog displayed")
 
         self._reset_file_generation_progress()
 
     def _on_file_generation_progress(self, current: int, total: int, message: str):
         """Update status bar progress for bug report generation."""
-        logger.info(f'🐛 [PROGRESS] Bug report {current}/{total}: {message}')
+        logger.info(f"🐛 [PROGRESS] Bug report {current}/{total}: {message}")
 
-        self.status_bar_manager.update_progress(current=current, total=total, message=message)
+        self.status_bar_manager.update_progress(
+            current=current, total=total, message=message
+        )
         state = self.file_operations_manager.get_bug_report_progress_state()
-        self._apply_progress_state_to_overlay('bug_report', state)
+        self._apply_progress_state_to_overlay("bug_report", state)
 
         if total and current >= total:
             QTimer.singleShot(1500, self._reset_file_generation_progress)
@@ -1807,76 +2078,85 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def _on_console_output(self, message):
         """Handle console output signal in main thread."""
         try:
-            if hasattr(self, 'console_text') and self.console_text:
+            if hasattr(self, "console_text") and self.console_text:
                 cursor = self.console_text.textCursor()
                 cursor.movePosition(QTextCursor.MoveOperation.End)
-                cursor.insertText(f'{message}\n')
+                cursor.insertText(f"{message}\n")
                 self.console_text.setTextCursor(cursor)
                 # Ensure scroll to bottom
                 self.console_text.ensureCursorVisible()
         except Exception as e:
-            logger.error(f'Error in _on_console_output: {e}')
+            logger.error(f"Error in _on_console_output: {e}")
 
-    def _handle_installation_completed(self, successful_installs: int, failed_installs: int, apk_name: str):
+    def _handle_installation_completed(
+        self, successful_installs: int, failed_installs: int, apk_name: str
+    ):
         """處理APK安裝完成信號"""
         try:
             state = self.app_management_manager.apk_manager.get_installation_progress_state()
-            self._apply_progress_state_to_overlay('install_apk', state)
+            self._apply_progress_state_to_overlay("install_apk", state)
 
             total_devices = successful_installs + failed_installs
 
             if successful_installs > 0 and failed_installs == 0:
                 # 全部成功
                 self.show_info(
-                    '✅ APK Installation Successful',
-                    f'Successfully installed {apk_name} on all {successful_installs} device(s)!'
+                    "✅ APK Installation Successful",
+                    f"Successfully installed {apk_name} on all {successful_installs} device(s)!",
                 )
             elif successful_installs > 0 and failed_installs > 0:
                 # 部分成功
                 self.show_warning(
-                    '⚠️ APK Installation Partially Successful',
-                    f'APK: {apk_name}\n\n'
-                    f'✅ Successful: {successful_installs}\n'
-                    f'❌ Failed: {failed_installs}\n'
-                    f'📊 Total: {total_devices}'
+                    "⚠️ APK Installation Partially Successful",
+                    f"APK: {apk_name}\n\n"
+                    f"✅ Successful: {successful_installs}\n"
+                    f"❌ Failed: {failed_installs}\n"
+                    f"📊 Total: {total_devices}",
                 )
             else:
                 # 全部失敗
                 self.show_error(
-                    '❌ APK Installation Failed',
-                    f'Failed to install {apk_name} on all {total_devices} device(s).'
+                    "❌ APK Installation Failed",
+                    f"Failed to install {apk_name} on all {total_devices} device(s).",
                 )
 
-            logger.info(f'APK installation completed: {successful_installs} successful, {failed_installs} failed')
+            logger.info(
+                f"APK installation completed: {successful_installs} successful, {failed_installs} failed"
+            )
 
         except Exception as e:
-            logger.error(f'Error in _handle_installation_completed: {e}')
-            self.show_error('Installation Error', f'Error processing installation results: {str(e)}')
+            logger.error(f"Error in _handle_installation_completed: {e}")
+            self.show_error(
+                "Installation Error", f"Error processing installation results: {str(e)}"
+            )
 
     def _handle_installation_progress(self, message: str, current: int, total: int):
         """處理APK安裝進度信號（可選，用於額外的進度處理）"""
         try:
             state = self.app_management_manager.apk_manager.get_installation_progress_state()
-            self._apply_progress_state_to_overlay('install_apk', state)
+            self._apply_progress_state_to_overlay("install_apk", state)
         except Exception as exc:
-            logger.error(f'Error in _handle_installation_progress: {exc}')
+            logger.error(f"Error in _handle_installation_progress: {exc}")
 
     def _handle_installation_error(self, error_message: str):
         """處理APK安裝錯誤信號"""
         try:
             state = self.app_management_manager.apk_manager.get_installation_progress_state()
-            self._apply_progress_state_to_overlay('install_apk', state)
-            self.show_error('APK Installation Error', error_message)
-            logger.error(f'APK installation error: {error_message}')
+            self._apply_progress_state_to_overlay("install_apk", state)
+            self.show_error("APK Installation Error", error_message)
+            logger.error(f"APK installation error: {error_message}")
         except Exception as e:
-            logger.error(f'Error in _handle_installation_error: {e}')
+            logger.error(f"Error in _handle_installation_error: {e}")
 
     def _clear_device_recording(self, serial):
         """Clear recording state for a specific device."""
         if serial in self.device_recordings:
-            self.device_recordings[serial]['active'] = False
+            self.device_recordings[serial]["active"] = False
             # Also remove from device operations if it exists
-            if serial in self.device_operations and self.device_operations[serial] == 'Recording':
+            if (
+                serial in self.device_operations
+                and self.device_operations[serial] == "Recording"
+            ):
                 del self.device_operations[serial]
             # Force refresh device list to update display
             self.device_manager.force_refresh()
@@ -1891,6 +2171,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     @ensure_devices_selected
     def enable_bluetooth(self):
         """Enable Bluetooth on selected devices."""
+
         def bluetooth_wrapper(serials):
             adb_tools.switch_bluetooth_enable(serials, True)
             # Trigger device list refresh to update status
@@ -1899,20 +2180,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Disable progress dialog, only show completion notification
         self._run_adb_tool_on_selected_devices(
             bluetooth_wrapper,
-            'enable Bluetooth',
+            "enable Bluetooth",
             show_progress=False,
-            refresh_mode='connectivity',
+            refresh_mode="connectivity",
         )
 
         # Show completion notification immediately
         devices = self.get_checked_devices()
         device_count = len(devices)
-        self.show_info('🔵 Enable Bluetooth Complete',
-                      f'✅ Successfully enabled Bluetooth on {device_count} device(s)')
+        self.show_info(
+            "🔵 Enable Bluetooth Complete",
+            f"✅ Successfully enabled Bluetooth on {device_count} device(s)",
+        )
 
     @ensure_devices_selected
     def disable_bluetooth(self):
         """Disable Bluetooth on selected devices."""
+
         def bluetooth_wrapper(serials):
             adb_tools.switch_bluetooth_enable(serials, False)
             # Trigger device list refresh to update status
@@ -1921,16 +2205,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Disable progress dialog, only show completion notification
         self._run_adb_tool_on_selected_devices(
             bluetooth_wrapper,
-            'disable Bluetooth',
+            "disable Bluetooth",
             show_progress=False,
-            refresh_mode='connectivity',
+            refresh_mode="connectivity",
         )
 
         # Show completion notification immediately
         devices = self.get_checked_devices()
         device_count = len(devices)
-        self.show_info('🔴 Disable Bluetooth Complete',
-                      f'✅ Successfully disabled Bluetooth on {device_count} device(s)')
+        self.show_info(
+            "🔴 Disable Bluetooth Complete",
+            f"✅ Successfully disabled Bluetooth on {device_count} device(s)",
+        )
 
     @ensure_devices_selected
     def clear_logcat(self):
@@ -1956,7 +2242,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """
         devices = self.get_checked_devices()
         if not devices:
-            self.show_warning('Bluetooth Monitor', 'Please select at least one device.')
+            self.show_warning("Bluetooth Monitor", "Please select at least one device.")
             return
 
         for device in devices:
@@ -1966,13 +2252,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Open or focus the Bluetooth monitor window for a given device."""
         device = self.device_dict.get(device_serial)
         if device is None:
-            self.show_error('Bluetooth Monitor', f'Device {device_serial} is no longer available.')
+            self.show_error(
+                "Bluetooth Monitor", f"Device {device_serial} is no longer available."
+            )
             return
 
         existing = self.bluetooth_windows.get(device_serial)
         if existing is None or not existing.isVisible():
             window = BluetoothMonitorWindow(device_serial, device, parent=self)
-            window.destroyed.connect(lambda _obj=None, serial=device_serial: self.bluetooth_windows.pop(serial, None))
+            window.destroyed.connect(
+                lambda _obj=None, serial=device_serial: self.bluetooth_windows.pop(
+                    serial, None
+                )
+            )
             self.bluetooth_windows[device_serial] = window
             existing = window
 
@@ -1995,7 +2287,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Run all commands simultaneously using commands facade."""
         self.commands_facade.run_batch_commands()
 
-
     def execute_single_command(self, command):
         """Execute a single command using commands facade."""
         self.commands_facade.execute_single_command(command)
@@ -2003,7 +2294,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def log_command_results(self, command, serials, results):
         """Log command results to console with proper formatting."""
         if not results:
-            self.write_to_console(f'❌ No results for command: {command}')
+            self.write_to_console(f"❌ No results for command: {command}")
             return
 
         # Convert results to list if it's not already
@@ -2012,22 +2303,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         for serial, result in zip(serials, results_list):
             # Get device name for better display
             device_name = serial
-            if hasattr(self, 'device_dict') and serial in self.device_dict:
+            if hasattr(self, "device_dict") and serial in self.device_dict:
                 device = self.device_dict[serial]
                 device_name = f"{device.device_model} ({serial[:8]}...)"
 
-            self.write_to_console(f'📱 [{device_name}] {command}')
+            self.write_to_console(f"📱 [{device_name}] {command}")
 
             if result and len(result) > 0:
-                self.write_to_console(f'📋 Output ({len(result)} lines):')
+                self.write_to_console(f"📋 Output ({len(result)} lines):")
                 for line in result:
                     if line and line.strip():
-                        self.write_to_console(f'  {line.strip()}')
-                self.write_to_console(f'✅ [{device_name}] Completed')
+                        self.write_to_console(f"  {line.strip()}")
+                self.write_to_console(f"✅ [{device_name}] Completed")
             else:
-                self.write_to_console(f'❌ [{device_name}] No output')
+                self.write_to_console(f"❌ [{device_name}] No output")
 
-        self.write_to_console('─' * 40)
+        self.write_to_console("─" * 40)
 
     def write_to_console(self, message):
         """Write message to console widget and shell output panel."""
@@ -2035,11 +2326,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             # Use signal for thread-safe console output
             self.console_output_signal.emit(message)
         except Exception as e:
-            logger.error(f'Error emitting console signal: {e}')
+            logger.error(f"Error emitting console signal: {e}")
 
         # Also write to shell output panel if available
         try:
-            if hasattr(self, 'shell_output_text') and self.shell_output_text is not None:
+            if (
+                hasattr(self, "shell_output_text")
+                and self.shell_output_text is not None
+            ):
                 self.shell_output_text.append(message)
         except Exception:
             pass
@@ -2049,12 +2343,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         try:
             cursor = self.console_text.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertText(f'{message}\n')
+            cursor.insertText(f"{message}\n")
             self.console_text.setTextCursor(cursor)
             self.console_text.ensureCursorVisible()
         except Exception as e:
-            logger.error(f'Error in _write_to_console_safe: {e}')
-
+            logger.error(f"Error in _write_to_console_safe: {e}")
 
     def get_valid_commands(self):
         """Extract valid commands using commands facade."""
@@ -2083,6 +2376,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def show_scrcpy_installation_guide(self):
         """Show detailed installation guide for scrcpy with actionable buttons."""
         from ui.scrcpy_install_dialog import ScrcpyInstallDialog
+
         dialog = ScrcpyInstallDialog(self)
         dialog.scrcpy_detected.connect(self._on_scrcpy_redetected)
         dialog.exec()
@@ -2090,7 +2384,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def _on_scrcpy_redetected(self) -> None:
         """Handle successful scrcpy re-detection."""
         self.scrcpy_available = self.app_management_manager.scrcpy_available
-        logger.info(f"scrcpy re-detected: version {self.app_management_manager.scrcpy_major_version}.x")
+        logger.info(
+            f"scrcpy re-detected: version {self.app_management_manager.scrcpy_major_version}.x"
+        )
 
     def open_scrcpy_website(self):
         """Open scrcpy GitHub releases page in web browser."""
@@ -2100,8 +2396,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             logger.info(f"Opened scrcpy releases page: {url}")
         except Exception as e:
             logger.error(f"Failed to open web browser: {e}")
-            self.show_error("Browser Error", f"Could not open web browser.\n\nPlease manually visit:\n{url}")
-
+            self.show_error(
+                "Browser Error",
+                f"Could not open web browser.\n\nPlease manually visit:\n{url}",
+            )
 
     # File generation methods
     def _get_file_generation_output_path(self) -> str:
@@ -2123,9 +2421,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             return desktop
         return os.path.expanduser("~")
 
-
-
-
     def _set_device_file_status(self, message: str) -> None:
         self.device_files_facade.set_status(message)
 
@@ -2138,13 +2433,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def navigate_device_files_to_path(self) -> None:
         self.device_files_facade.navigate_to_path()
 
-    def on_device_file_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+    def on_device_file_item_double_clicked(
+        self, item: QTreeWidgetItem, column: int
+    ) -> None:
         self.device_files_facade.handle_item_double_clicked(item, column)
 
     def download_selected_device_files(self) -> None:
         self.device_files_facade.download_selected_files()
 
-    def preview_selected_device_file(self, item: Optional[QTreeWidgetItem] = None) -> None:
+    def preview_selected_device_file(
+        self, item: Optional[QTreeWidgetItem] = None
+    ) -> None:
         self.device_files_facade.preview_selected_file(item)
 
     def display_device_file_preview(self, local_path: str) -> None:
@@ -2185,28 +2484,35 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if not output_path:
             return
 
-        operation = 'Generate Android Bug Report'
+        operation = "Generate Android Bug Report"
 
         def handle_complete(summary: str | None = None) -> None:
-            self._log_operation_complete(operation, summary or '')
+            self._log_operation_complete(operation, summary or "")
             state = self.file_operations_manager.get_bug_report_progress_state()
-            self._apply_progress_state_to_overlay('bug_report', state)
+            self._apply_progress_state_to_overlay("bug_report", state)
 
         def handle_failure(message: str | None = None) -> None:
-            self._log_operation_failure(operation, message or 'Generation failed')
+            self._log_operation_failure(operation, message or "Generation failed")
             state = self.file_operations_manager.get_bug_report_progress_state()
-            self._apply_progress_state_to_overlay('bug_report', state)
+            self._apply_progress_state_to_overlay("bug_report", state)
 
-        active_serials = set(self.file_operations_manager.get_active_bug_report_devices())
+        active_serials = set(
+            self.file_operations_manager.get_active_bug_report_devices()
+        )
         current_serials = {device.device_serial_num for device in devices}
-        if self.file_operations_manager.is_bug_report_in_progress() and active_serials & current_serials:
-            overlapping = ', '.join(sorted(active_serials & current_serials)) or 'Unknown'
-            self.show_warning(
-                'Bug Report In Progress',
-                'Bug report generation is already running for the following devices.\n\n'
-                f'{overlapping}\n\nPlease wait for the existing run to finish or deselect these devices.'
+        if (
+            self.file_operations_manager.is_bug_report_in_progress()
+            and active_serials & current_serials
+        ):
+            overlapping = (
+                ", ".join(sorted(active_serials & current_serials)) or "Unknown"
             )
-            handle_failure('Devices already generating bug report')
+            self.show_warning(
+                "Bug Report In Progress",
+                "Bug report generation is already running for the following devices.\n\n"
+                f"{overlapping}\n\nPlease wait for the existing run to finish or deselect these devices.",
+            )
+            handle_failure("Devices already generating bug report")
             return
 
         self._log_operation_start(operation)
@@ -2223,36 +2529,41 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             return
 
         state = self.file_operations_manager.get_bug_report_progress_state()
-        self._apply_progress_state_to_overlay('bug_report', state)
+        self._apply_progress_state_to_overlay("bug_report", state)
 
     @ensure_devices_selected
     def generate_device_discovery_file(self):
         """Generate device discovery file using file operations manager."""
+
         def action():
             devices = self.get_checked_devices()
             output_path = self._get_adb_tools_output_path()
-            self.file_operations_manager.generate_device_discovery_file(devices, output_path)
+            self.file_operations_manager.generate_device_discovery_file(
+                devices, output_path
+            )
 
-        self._execute_with_operation_logging('Generate Device Discovery File', action)
+        self._execute_with_operation_logging("Generate Device Discovery File", action)
 
     @ensure_devices_selected
     def pull_device_dcim_with_folder(self):
         """Pull DCIM folder from devices using file operations manager."""
+
         def action():
             devices = self.get_checked_devices()
             output_path = self._get_adb_tools_output_path()
             self.file_operations_manager.pull_device_dcim_folder(devices, output_path)
 
-        self._execute_with_operation_logging('Pull Device DCIM Folder', action)
+        self._execute_with_operation_logging("Pull Device DCIM Folder", action)
 
     @ensure_devices_selected
     def dump_device_hsv(self):
         """Dump device UI hierarchy using UI hierarchy manager."""
+
         def action():
             output_path = self._get_adb_tools_output_path()
             self.ui_hierarchy_manager.export_hierarchy(output_path)
 
-        self._execute_with_operation_logging('Export Device UI Hierarchy', action)
+        self._execute_with_operation_logging("Export Device UI Hierarchy", action)
 
     def launch_ui_inspector(self):
         """Launch the interactive UI Inspector for each selected device.
@@ -2261,14 +2572,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """
         devices = self.get_checked_devices()
         if not devices:
-            self.show_warning('UI Inspector', 'Please select at least one device.')
+            self.show_warning("UI Inspector", "Please select at least one device.")
             return
 
         ready, issue_message = check_ui_inspector_prerequisites()
         if not ready:
-            sanitized = ' | '.join(issue_message.splitlines())
-            logger.warning('UI Inspector prerequisites failed: %s', sanitized)
-            self.show_error('UI Inspector Unavailable', issue_message)
+            sanitized = " | ".join(issue_message.splitlines())
+            logger.warning("UI Inspector prerequisites failed: %s", sanitized)
+            self.show_error("UI Inspector Unavailable", issue_message)
             return
 
         for device in devices:
@@ -2278,10 +2589,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Launch UI Inspector for a single device."""
         serial = device.device_serial_num
         model = device.device_model
-        operation = f'Launch UI Inspector ({serial})'
+        operation = f"Launch UI Inspector ({serial})"
         self._log_operation_start(operation, model)
 
-        logger.info(f'Launching UI Inspector for device: {model} ({serial})')
+        logger.info(f"Launching UI Inspector for device: {model} ({serial})")
 
         try:
             ui_inspector = UIInspectorDialog(self, serial, model)
@@ -2296,10 +2607,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            'About lazy blacktea',
-            'lazy blacktea - PyQt6 Version\n\n'
-            'A GUI application for simplifying Android ADB and automation tasks.\n\n'
-            'Converted from Tkinter to PyQt6 for enhanced user experience.'
+            "About lazy blacktea",
+            "lazy blacktea - PyQt6 Version\n\n"
+            "A GUI application for simplifying Android ADB and automation tasks.\n\n"
+            "Converted from Tkinter to PyQt6 for enhanced user experience.",
         )
 
     def load_config(self, config: Optional[AppConfig] = None):
@@ -2312,20 +2623,20 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
             # Load output path from old config format for compatibility
             old_config = json_utils.read_config_json()
-            if hasattr(self, 'output_path_manager'):
+            if hasattr(self, "output_path_manager"):
                 self.output_path_manager.apply_legacy_paths(
-                    old_config.get('output_path'),
-                    old_config.get('file_gen_output_path', ''),
+                    old_config.get("output_path"),
+                    old_config.get("file_gen_output_path", ""),
                 )
             else:
-                if old_config.get('output_path'):
-                    self.output_path_edit.setText(old_config['output_path'])
+                if old_config.get("output_path"):
+                    self.output_path_edit.setText(old_config["output_path"])
 
-                file_gen_path = old_config.get('file_gen_output_path', '').strip()
+                file_gen_path = old_config.get("file_gen_output_path", "").strip()
                 if file_gen_path:
                     self.file_gen_output_path_edit.setText(file_gen_path)
                 else:
-                    main_output_path = old_config.get('output_path', '')
+                    main_output_path = old_config.get("output_path", "")
                     if main_output_path:
                         self.file_gen_output_path_edit.setText(main_output_path)
 
@@ -2336,19 +2647,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.set_ui_scale(config.ui.ui_scale)
 
             # Apply console visibility preference
-            self.set_console_panel_visibility(config.ui.show_console_panel, persist=False)
+            self.set_console_panel_visibility(
+                config.ui.show_console_panel, persist=False
+            )
 
             # Load device groups from old config for compatibility
-            if old_config.get('device_groups'):
-                self.device_groups = old_config['device_groups']
+            if old_config.get("device_groups"):
+                self.device_groups = old_config["device_groups"]
 
             # Load command history from new config
-            if hasattr(self, 'command_history_manager'):
-                self.command_history_manager.set_history(config.command_history or [], persist=False)
+            if hasattr(self, "command_history_manager"):
+                self.command_history_manager.set_history(
+                    config.command_history or [], persist=False
+                )
 
-            logger.info('Configuration loaded successfully')
+            logger.info("Configuration loaded successfully")
         except Exception as e:
-            logger.warning(f'Could not load config: {e}')
+            logger.warning(f"Could not load config: {e}")
             self.error_handler.handle_error(ErrorCode.CONFIG_LOAD_FAILED, str(e))
 
     def register_theme_actions(self, actions: Dict[str, QAction]) -> None:
@@ -2358,15 +2673,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def _update_theme_actions(self) -> None:
         """Ensure theme menu reflects the currently active theme."""
-        current = getattr(self, '_current_theme', 'light')
-        for key, action in getattr(self, 'theme_actions', {}).items():
+        current = getattr(self, "_current_theme", "light")
+        for key, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(key == current)
 
     def handle_theme_selection(self, theme_key: str) -> None:
         """Handle menu-triggered theme selection."""
         self.apply_theme(theme_key, persist=True)
 
-    def apply_theme(self, theme_name: str, persist: bool = False, initial: bool = False) -> None:
+    def apply_theme(
+        self, theme_name: str, persist: bool = False, initial: bool = False
+    ) -> None:
         """Apply the requested theme and refresh themed widgets."""
         resolved = self.theme_manager.set_theme(theme_name)
         self._current_theme = resolved
@@ -2386,35 +2703,39 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             # Update the new config manager
             geometry = self.geometry()
             ui_payload = {
-                'window_width': geometry.width(),
-                'window_height': geometry.height(),
-                'window_x': geometry.x(),
-                'window_y': geometry.y(),
-                'show_console_panel': self.show_console_panel,
+                "window_width": geometry.width(),
+                "window_height": geometry.height(),
+                "window_x": geometry.x(),
+                "window_y": geometry.y(),
+                "show_console_panel": self.show_console_panel,
             }
-            if hasattr(self, 'user_scale'):
-                ui_payload['ui_scale'] = self.user_scale
+            if hasattr(self, "user_scale"):
+                ui_payload["ui_scale"] = self.user_scale
             self.config_manager.update_ui_settings(**ui_payload)
-            self.config_manager.update_device_settings(refresh_interval=self.refresh_interval)
+            self.config_manager.update_device_settings(
+                refresh_interval=self.refresh_interval
+            )
 
             # Save command history to new config
-            if hasattr(self, 'command_history_manager'):
+            if hasattr(self, "command_history_manager"):
                 config = self.config_manager.load_config()
-                config.command_history = list(self.command_history_manager.command_history)
+                config.command_history = list(
+                    self.command_history_manager.command_history
+                )
                 self.config_manager.save_config(config)
 
             # Also save to old config format for compatibility
             old_config = {
-                'output_path': self.output_path_edit.text(),
-                'file_gen_output_path': self.file_gen_output_path_edit.text(),
-                'refresh_interval': self.refresh_interval,
-                'ui_scale': self.user_scale,
-                'device_groups': self.device_groups
+                "output_path": self.output_path_edit.text(),
+                "file_gen_output_path": self.file_gen_output_path_edit.text(),
+                "refresh_interval": self.refresh_interval,
+                "ui_scale": self.user_scale,
+                "device_groups": self.device_groups,
             }
             json_utils.save_config_json(old_config)
-            logger.info('Configuration saved successfully')
+            logger.info("Configuration saved successfully")
         except Exception as e:
-            logger.error(f'Could not save config: {e}')
+            logger.error(f"Could not save config: {e}")
             self.error_handler.handle_error(ErrorCode.CONFIG_INVALID, str(e))
 
     def persist_logcat_settings(self, settings: Dict[str, int]) -> None:
@@ -2426,12 +2747,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.logcat_settings = LogcatSettings()
 
         update_payload: Dict[str, int] = {}
-        for field in ['max_lines', 'history_multiplier', 'update_interval_ms', 'max_lines_per_update', 'max_buffer_size']:
+        for field in [
+            "max_lines",
+            "history_multiplier",
+            "update_interval_ms",
+            "max_lines_per_update",
+            "max_buffer_size",
+        ]:
             if field in settings:
                 try:
                     value = int(settings[field])
                 except (TypeError, ValueError):
-                    logger.debug('Ignoring invalid logcat setting for %s: %s', field, settings[field])
+                    logger.debug(
+                        "Ignoring invalid logcat setting for %s: %s",
+                        field,
+                        settings[field],
+                    )
                     continue
                 setattr(self.logcat_settings, field, value)
                 update_payload[field] = value
@@ -2441,9 +2772,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         try:
             self.config_manager.update_logcat_settings(**update_payload)
-            logger.info('Logcat performance settings persisted: %s', update_payload)
+            logger.info("Logcat performance settings persisted: %s", update_payload)
         except Exception as exc:
-            logger.error('Failed to persist logcat settings: %s', exc)
+            logger.error("Failed to persist logcat settings: %s", exc)
 
     def closeEvent(self, event):
         """Handle window close event with immediate response."""
@@ -2457,9 +2788,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         closing_dialog = None
         try:
             from config.constants import ApplicationConstants as _AC
-            if getattr(_AC, 'SHOW_CLOSING_INDICATOR', True):
-                closing_dialog = QProgressDialog('Closing Lazy Blacktea...','', 0, 0, self)
-                closing_dialog.setWindowTitle('Closing')
+
+            if getattr(_AC, "SHOW_CLOSING_INDICATOR", True):
+                closing_dialog = QProgressDialog(
+                    "Closing Lazy Blacktea...", "", 0, 0, self
+                )
+                closing_dialog.setWindowTitle("Closing")
                 closing_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
                 closing_dialog.setMinimumDuration(0)
                 closing_dialog.setAutoClose(False)
@@ -2473,14 +2807,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.save_config()
 
         # Clean up timers to prevent memory leaks
-        if hasattr(self, 'recording_timer'):
+        if hasattr(self, "recording_timer"):
             self.recording_timer.stop()
-        if hasattr(self, 'battery_info_manager'):
+        if hasattr(self, "battery_info_manager"):
             self.battery_info_manager.stop()
 
         # Cancel background task handles to avoid late UI callbacks
         try:
-            for handle in list(getattr(self, '_background_task_handles', [])):
+            for handle in list(getattr(self, "_background_task_handles", [])):
                 try:
                     handle.cancel()
                 except Exception:
@@ -2489,21 +2823,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             pass
 
         # Clean up new modular components
-        if hasattr(self, 'device_manager'):
+        if hasattr(self, "device_manager"):
             self.device_manager.cleanup()
 
-        if hasattr(self, 'recording_manager'):
+        if hasattr(self, "recording_manager"):
             # Stop any active recordings
             self.recording_manager.stop_recording()
 
-        if hasattr(self, 'device_file_controller'):
+        if hasattr(self, "device_file_controller"):
             self.device_file_controller.shutdown()
 
         # Attempt to shutdown task dispatcher (bounded wait)
         try:
-            if hasattr(self, '_task_dispatcher') and self._task_dispatcher is not None:
+            if hasattr(self, "_task_dispatcher") and self._task_dispatcher is not None:
                 from config.constants import ApplicationConstants as _AC
-                timeout_ms = int(getattr(_AC, 'SHUTDOWN_TIMEOUT_MS', 700) or 0)
+
+                timeout_ms = int(getattr(_AC, "SHUTDOWN_TIMEOUT_MS", 700) or 0)
                 if timeout_ms > 0:
                     self._task_dispatcher.shutdown(timeout_ms=timeout_ms)
         except Exception:
@@ -2517,7 +2852,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         except Exception:
             pass
 
-        logger.info('Application shutdown complete')
+        logger.info("Application shutdown complete")
         event.accept()
 
     def _on_device_found_from_manager(self, serial: str, device_info):
@@ -2530,7 +2865,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def _on_device_lost_from_manager(self, serial: str):
         """處理從DeviceManager發來的設備丟失事件"""
-        logger.info(f'Device lost from manager: {serial}')
+        logger.info(f"Device lost from manager: {serial}")
         # 從設備字典中移除
         if serial in self.device_dict:
             del self.device_dict[serial]
@@ -2550,19 +2885,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         device_count = len(unauthorized_serials)
         if device_count == 1:
             serial = unauthorized_serials[0]
-            short_serial = serial[:8] + '...' if len(serial) > 8 else serial
+            short_serial = serial[:8] + "..." if len(serial) > 8 else serial
             message = (
-                f'Device {short_serial} is unauthorized.\n\n'
-                'Please check the device screen and allow USB debugging authorization.'
+                f"Device {short_serial} is unauthorized.\n\n"
+                "Please check the device screen and allow USB debugging authorization."
             )
         else:
-            devices_text = '\n'.join(
+            devices_text = "\n".join(
                 f"• {s[:8]}..." if len(s) > 8 else f"• {s}"
                 for s in unauthorized_serials
             )
             message = (
-                f'{device_count} devices are unauthorized:\n{devices_text}\n\n'
-                'Please check each device screen and allow USB debugging authorization.'
+                f"{device_count} devices are unauthorized:\n{devices_text}\n\n"
+                "Please check each device screen and allow USB debugging authorization."
             )
 
-        self.show_warning('Unauthorized Device', message)
+        self.show_warning("Unauthorized Device", message)
