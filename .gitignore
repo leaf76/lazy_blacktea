@@ -134,11 +134,8 @@ logs/
 temp/
 .claude/
 
-# Claude Code configuration
-CLAUDE.md
-
-# Codex configuration
-AGENTS.md
+# Claude Code session data (not the docs)
+.claude/
 
 # User configuration files (contain personal paths and settings)
 .lazy_blacktea_config.json
