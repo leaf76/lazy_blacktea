@@ -345,6 +345,7 @@ class PanelText:
 
     SECTION_QUICK_ACTIONS = "⚡ Quick Actions"
     SECTION_DIAGNOSTIC = "🔍 Diagnostic"
+    SECTION_RECORDING = "🎥 Recording"
     SECTION_DEVICE_OPERATIONS = "⚙️ Device Operations"
 
     SELECTED_DEVICES_HEADER = "📱 Selected: {count} device(s)"
@@ -384,7 +385,13 @@ class PanelConfig:
         ("UI Inspector", "launch_ui_inspector", "inspector", "🔍"),
         ("BT Monitor", "monitor_bluetooth", "bt_monitor", "📶"),
         ("scrcpy", "launch_scrcpy", "scrcpy", "📱"),
+    ]
+
+    # Recording Actions - Collapsible section
+    # Screen recording controls
+    RECORDING_ACTIONS = [
         ("Start Record", "start_screen_record", "record_start", "⏺️"),
+        ("Stop Record", "stop_screen_record", "record_stop", "⏹️"),
     ]
 
     # Device Operations - Collapsible section
@@ -393,8 +400,7 @@ class PanelConfig:
         ("Reboot", "reboot_device", "reboot", "🔄"),
         ("BT On", "enable_bluetooth", "bt_on", "🔵"),
         ("BT Off", "disable_bluetooth", "bt_off", "⚪"),
-        ("Copy Info", "copy_active_device_overview", "copy_info", "📋"),
-        ("Stop Record", "stop_screen_record", "record_stop", "⏹️"),
+        ("Copy Info", "copy_selected_device_info", "copy_info", "📋"),
     ]
 
     # =====================================================================

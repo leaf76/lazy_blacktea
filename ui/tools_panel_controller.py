@@ -37,6 +37,7 @@ from ui.components.tool_section import (
     QuickActionsSection,
     CollapsibleToolSection,
 )
+from ui.components.device_operation_status_panel import DeviceOperationStatusPanel
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -100,11 +101,12 @@ class ToolsPanelController:
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        layout.addWidget(scroll_area)
+        layout.addWidget(scroll_area, 1)
 
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
@@ -115,11 +117,14 @@ class ToolsPanelController:
         self._create_selected_devices_bar(content_layout)
         self._create_quick_actions_section(content_layout)
         self._create_diagnostic_section(content_layout)
+        self._create_recording_section(content_layout)
         self._create_device_operations_section(content_layout)
 
         self._create_recording_status_labels(content_layout)
 
         content_layout.addStretch(1)
+
+        self._create_operation_status_panel(layout)
 
         tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
 
@@ -142,6 +147,16 @@ class ToolsPanelController:
         )
         self._diagnostic_section.action_triggered.connect(self._handle_tool_action)
         parent_layout.addWidget(self._diagnostic_section)
+
+    def _create_recording_section(self, parent_layout: QVBoxLayout) -> None:
+        self._recording_section = CollapsibleToolSection(
+            PanelText.SECTION_RECORDING,
+            "",
+            PanelConfig.RECORDING_ACTIONS,
+            collapsed=False,
+        )
+        self._recording_section.action_triggered.connect(self._handle_tool_action)
+        parent_layout.addWidget(self._recording_section)
 
     def _create_device_operations_section(self, parent_layout: QVBoxLayout) -> None:
         self._device_ops_section = CollapsibleToolSection(
@@ -166,6 +181,25 @@ class ToolsPanelController:
         )
         parent_layout.addWidget(self.window.recording_timer_label)
 
+    def _create_operation_status_panel(self, parent_layout: QVBoxLayout) -> None:
+        self.window.operation_status_panel = DeviceOperationStatusPanel(self.window)
+        self.window.operation_status_panel.cancel_operation_requested.connect(
+            self.window.device_operation_status_manager.cancel_operation
+        )
+        self.window.operation_status_panel.clear_completed_requested.connect(
+            self.window.device_operation_status_manager.clear_completed
+        )
+        self.window.device_operation_status_manager.operation_added.connect(
+            self.window.operation_status_panel.add_operation
+        )
+        self.window.device_operation_status_manager.operation_updated.connect(
+            self.window.operation_status_panel.update_operation
+        )
+        self.window.device_operation_status_manager.operation_removed.connect(
+            self.window.operation_status_panel.remove_operation
+        )
+        parent_layout.addWidget(self.window.operation_status_panel)
+
     def _handle_tool_action(self, action_key: str) -> None:
         dangerous_actions = {"reboot_device"}
 
@@ -185,6 +219,7 @@ class ToolsPanelController:
             "reboot_device": lambda: self.window.reboot_device(),
             "enable_bluetooth": lambda: self.window.enable_bluetooth(),
             "disable_bluetooth": lambda: self.window.disable_bluetooth(),
+            "copy_selected_device_info": lambda: self.window.copy_selected_device_info(),
             "copy_active_device_overview": lambda: self.window.copy_active_device_overview(),
             "stop_screen_record": lambda: self.window.stop_screen_record(),
         }

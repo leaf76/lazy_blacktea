@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QToolButton,
@@ -21,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from utils import adb_models
 from ui.style_manager import StyleManager
+from ui.signal_payloads import DeviceOperationEvent, OperationStatus
 
 
 class DeviceDetailPanel(QFrame):
@@ -28,7 +30,7 @@ class DeviceDetailPanel(QFrame):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setObjectName('device_detail_panel')
+        self.setObjectName("device_detail_panel")
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Plain)
         self._setup_ui()
 
@@ -40,20 +42,20 @@ class DeviceDetailPanel(QFrame):
         layout.setColumnStretch(3, 1)
 
         # Row 0: API, GMS
-        self._api_label = self._create_detail_item(layout, 0, 0, 'API')
-        self._gms_label = self._create_detail_item(layout, 0, 2, 'GMS')
+        self._api_label = self._create_detail_item(layout, 0, 0, "API")
+        self._gms_label = self._create_detail_item(layout, 0, 2, "GMS")
 
         # Row 1: WiFi, BT
-        self._wifi_label = self._create_detail_item(layout, 1, 0, 'WiFi')
-        self._bt_label = self._create_detail_item(layout, 1, 2, 'BT')
+        self._wifi_label = self._create_detail_item(layout, 1, 0, "WiFi")
+        self._bt_label = self._create_detail_item(layout, 1, 2, "BT")
 
         # Row 2: Battery, Screen
-        self._battery_label = self._create_detail_item(layout, 2, 0, 'Battery')
-        self._screen_label = self._create_detail_item(layout, 2, 2, 'Screen')
+        self._battery_label = self._create_detail_item(layout, 2, 0, "Battery")
+        self._screen_label = self._create_detail_item(layout, 2, 2, "Screen")
 
         # Row 3: CPU, Build
-        self._cpu_label = self._create_detail_item(layout, 3, 0, 'CPU')
-        self._build_label = self._create_detail_item(layout, 3, 2, 'Build')
+        self._cpu_label = self._create_detail_item(layout, 3, 0, "CPU")
+        self._build_label = self._create_detail_item(layout, 3, 2, "Build")
 
     def _create_detail_item(
         self,
@@ -63,14 +65,14 @@ class DeviceDetailPanel(QFrame):
         label_text: str,
     ) -> QLabel:
         """Create a label pair (name: value) and add to layout."""
-        name_label = QLabel(f'{label_text}:')
-        name_label.setObjectName('detail_name_label')
+        name_label = QLabel(f"{label_text}:")
+        name_label.setObjectName("detail_name_label")
         font = name_label.font()
         font.setBold(True)
         name_label.setFont(font)
 
-        value_label = QLabel('--')
-        value_label.setObjectName('detail_value_label')
+        value_label = QLabel("--")
+        value_label.setObjectName("detail_value_label")
         value_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -89,38 +91,46 @@ class DeviceDetailPanel(QFrame):
         info = additional_info or {}
 
         # API and GMS
-        api = device.android_api_level or 'Unknown'
+        api = device.android_api_level or "Unknown"
         self._api_label.setText(str(api))
 
         gms = device.gms_version
-        if not gms or gms == 'N/A':
-            gms = 'N/A'
+        if not gms or gms == "N/A":
+            gms = "N/A"
         self._gms_label.setText(gms)
 
         # WiFi and BT
-        wifi_status = 'On' if device.wifi_is_on else ('Off' if device.wifi_is_on is False else 'Unknown')
+        wifi_status = (
+            "On"
+            if device.wifi_is_on
+            else ("Off" if device.wifi_is_on is False else "Unknown")
+        )
         self._wifi_label.setText(wifi_status)
 
-        bt_status = 'On' if device.bt_is_on else ('Off' if device.bt_is_on is False else 'Unknown')
+        bt_status = (
+            "On"
+            if device.bt_is_on
+            else ("Off" if device.bt_is_on is False else "Unknown")
+        )
         self._bt_label.setText(bt_status)
 
         # Battery and Screen
-        battery = info.get('battery_level', 'Unknown')
+        battery = info.get("battery_level", "Unknown")
         self._battery_label.setText(str(battery))
 
-        screen = info.get('screen_size', 'Unknown')
+        screen = info.get("screen_size", "Unknown")
         self._screen_label.setText(str(screen))
 
         # CPU and Build
-        cpu = info.get('cpu_arch', 'Unknown')
+        cpu = info.get("cpu_arch", "Unknown")
         self._cpu_label.setText(str(cpu))
 
-        build = device.build_fingerprint or 'Unknown'
+        build = device.build_fingerprint or "Unknown"
         # Truncate long build strings
         if len(build) > 40:
-            build = build[:37] + '...'
+            build = build[:37] + "..."
         self._build_label.setText(build)
-        self._build_label.setToolTip(device.build_fingerprint or '')
+        self._build_label.setToolTip(device.build_fingerprint or "")
 
 
 class DeviceRowWidget(QFrame):
@@ -142,12 +152,13 @@ class DeviceRowWidget(QFrame):
         self._is_active = False
         self._additional_info: Dict[str, str] = {}
 
-        self.setObjectName('device_row')
+        self.setObjectName("device_row")
         self.setFrameStyle(QFrame.Shape.NoFrame)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 
         self._setup_ui()
+        self.set_expanded(True)
 
     @property
     def serial(self) -> str:
@@ -168,20 +179,20 @@ class DeviceRowWidget(QFrame):
 
         # Main row container
         row_container = QWidget()
-        row_container.setObjectName('device_row_main')
+        row_container.setObjectName("device_row_main")
         row_layout = QHBoxLayout(row_container)
         row_layout.setContentsMargins(8, 6, 8, 6)
         row_layout.setSpacing(12)
 
         # Checkbox
         self._checkbox = QCheckBox()
-        self._checkbox.setToolTip('Select device for batch operations')
+        self._checkbox.setToolTip("Select device for batch operations")
         self._checkbox.stateChanged.connect(self._on_checkbox_changed)
         row_layout.addWidget(self._checkbox)
 
         # Model
-        self._model_label = QLabel(self._device.device_model or 'Unknown')
-        self._model_label.setObjectName('device_model_label')
+        self._model_label = QLabel(self._device.device_model or "Unknown")
+        self._model_label.setObjectName("device_model_label")
         font = self._model_label.font()
         font.setBold(True)
         self._model_label.setFont(font)
@@ -190,7 +201,7 @@ class DeviceRowWidget(QFrame):
 
         # Serial
         self._serial_label = QLabel(self._serial)
-        self._serial_label.setObjectName('device_serial_label')
+        self._serial_label.setObjectName("device_serial_label")
         self._serial_label.setMinimumWidth(120)
         self._serial_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
@@ -198,22 +209,26 @@ class DeviceRowWidget(QFrame):
         row_layout.addWidget(self._serial_label)
 
         # Android version
-        android_ver = self._device.android_ver or 'Unknown'
-        self._android_label = QLabel(f'Android {android_ver}')
-        self._android_label.setObjectName('device_android_label')
+        android_ver = self._device.android_ver or "Unknown"
+        self._android_label = QLabel(f"Android {android_ver}")
+        self._android_label.setObjectName("device_android_label")
         self._android_label.setMinimumWidth(90)
         row_layout.addWidget(self._android_label)
+
+        self._operation_status_widget = self._create_operation_status_widget()
+        row_layout.addWidget(self._operation_status_widget)
+        self._operation_status_widget.setVisible(False)
 
         # Stretch to push expand button to the right
         row_layout.addStretch()
 
         # Expand/collapse button
         self._expand_btn = QToolButton()
-        self._expand_btn.setObjectName('device_expand_btn')
-        self._expand_btn.setText('\u25b6')  # Right-pointing triangle
+        self._expand_btn.setObjectName("device_expand_btn")
+        self._expand_btn.setText("\u25b6")  # Right-pointing triangle
         self._expand_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._expand_btn.clicked.connect(self._toggle_expand)
-        self._expand_btn.setToolTip('Show device details')
+        self._expand_btn.setToolTip("Show device details")
         self._expand_btn.setStyleSheet(StyleManager.get_device_expand_btn_style())
         row_layout.addWidget(self._expand_btn)
 
@@ -227,7 +242,7 @@ class DeviceRowWidget(QFrame):
         # Bottom separator
         self._separator = QFrame()
         self._separator.setFrameShape(QFrame.Shape.HLine)
-        self._separator.setObjectName('device_row_separator')
+        self._separator.setObjectName("device_row_separator")
         main_layout.addWidget(self._separator)
 
     def _on_checkbox_changed(self, state: int) -> None:
@@ -239,12 +254,12 @@ class DeviceRowWidget(QFrame):
         self._detail_panel.setVisible(self._is_expanded)
 
         if self._is_expanded:
-            self._expand_btn.setText('\u25bc')  # Down-pointing triangle
-            self._expand_btn.setToolTip('Hide device details')
+            self._expand_btn.setText("\u25bc")  # Down-pointing triangle
+            self._expand_btn.setToolTip("Hide device details")
             self._detail_panel.update_details(self._device, self._additional_info)
         else:
-            self._expand_btn.setText('\u25b6')  # Right-pointing triangle
-            self._expand_btn.setToolTip('Show device details')
+            self._expand_btn.setText("\u25b6")  # Right-pointing triangle
+            self._expand_btn.setToolTip("Show device details")
 
         self.expand_toggled.emit(self._serial, self._is_expanded)
 
@@ -261,7 +276,7 @@ class DeviceRowWidget(QFrame):
     def set_active(self, active: bool) -> None:
         """Set whether this row is the active device."""
         self._is_active = active
-        self.setProperty('active', active)
+        self.setProperty("active", active)
         self.style().unpolish(self)
         self.style().polish(self)
 
@@ -279,9 +294,9 @@ class DeviceRowWidget(QFrame):
         self._device = device
         self._additional_info = additional_info or {}
 
-        self._model_label.setText(device.device_model or 'Unknown')
-        android_ver = device.android_ver or 'Unknown'
-        self._android_label.setText(f'Android {android_ver}')
+        self._model_label.setText(device.device_model or "Unknown")
+        android_ver = device.android_ver or "Unknown"
+        self._android_label.setText(f"Android {android_ver}")
 
         if self._is_expanded:
             self._detail_panel.update_details(device, self._additional_info)
@@ -291,6 +306,60 @@ class DeviceRowWidget(QFrame):
         self._additional_info = info
         if self._is_expanded:
             self._detail_panel.update_details(self._device, self._additional_info)
+
+    def _create_operation_status_widget(self) -> QWidget:
+        container = QWidget()
+        container.setObjectName("device_operation_status_inline")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(4)
+
+        self._op_status_icon = QLabel()
+        self._op_status_icon.setFixedSize(16, 16)
+        layout.addWidget(self._op_status_icon)
+
+        self._op_status_text = QLabel()
+        self._op_status_text.setObjectName("device_operation_status_text")
+        self._op_status_text.setMinimumWidth(80)
+        self._op_status_text.setMaximumWidth(150)
+        layout.addWidget(self._op_status_text)
+
+        self._op_progress = QProgressBar()
+        self._op_progress.setObjectName("device_operation_progress_inline")
+        self._op_progress.setFixedWidth(60)
+        self._op_progress.setFixedHeight(8)
+        self._op_progress.setTextVisible(False)
+        self._op_progress.setRange(0, 0)
+        layout.addWidget(self._op_progress)
+
+        return container
+
+    def update_operation_status(self, event: Optional[DeviceOperationEvent]) -> None:
+        if event is None:
+            self._operation_status_widget.setVisible(False)
+            return
+
+        self._operation_status_widget.setVisible(True)
+        self._op_status_icon.setText(event.status_icon)
+        self._op_status_text.setText(
+            event.operation_type.value.replace("_", " ").title()
+        )
+        self._op_status_text.setToolTip(event.message or "")
+
+        if event.status == OperationStatus.RUNNING:
+            if event.progress is not None and event.progress > 0:
+                self._op_progress.setRange(0, 100)
+                self._op_progress.setValue(int(event.progress * 100))
+            else:
+                self._op_progress.setRange(0, 0)
+            self._op_progress.setVisible(True)
+        elif event.status in (OperationStatus.COMPLETED, OperationStatus.FAILED):
+            self._op_progress.setVisible(False)
+        else:
+            self._op_progress.setVisible(False)
+
+    def clear_operation_status(self) -> None:
+        self._operation_status_widget.setVisible(False)
 
 
 class ExpandableDeviceList(QScrollArea):
@@ -315,11 +384,11 @@ class ExpandableDeviceList(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setObjectName('expandable_device_list')
+        self.setObjectName("expandable_device_list")
 
         # Container widget
         self._container = QWidget()
-        self._container.setObjectName('device_list_container')
+        self._container.setObjectName("device_list_container")
         self._layout = QVBoxLayout(self._container)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
@@ -378,7 +447,9 @@ class ExpandableDeviceList(QScrollArea):
         # Prune selection to only include existing rows
         self._selected_serials = [s for s in self._selected_serials if s in self._rows]
         if self._active_serial not in self._rows:
-            self._active_serial = self._selected_serials[-1] if self._selected_serials else None
+            self._active_serial = (
+                self._selected_serials[-1] if self._selected_serials else None
+            )
 
         # Sync selection state
         self._sync_selection_ui()
@@ -510,5 +581,23 @@ class ExpandableDeviceList(QScrollArea):
         self._active_serial = None
         self._expanded_serials.clear()
 
+    def update_device_operation_status(
+        self,
+        serial: str,
+        event: Optional[DeviceOperationEvent],
+    ) -> None:
+        row = self._rows.get(serial)
+        if row:
+            row.update_operation_status(event)
 
-__all__ = ['ExpandableDeviceList', 'DeviceRowWidget', 'DeviceDetailPanel']
+    def clear_device_operation_status(self, serial: str) -> None:
+        row = self._rows.get(serial)
+        if row:
+            row.clear_operation_status()
+
+    def clear_all_operation_statuses(self) -> None:
+        for row in self._rows.values():
+            row.clear_operation_status()
+
+
+__all__ = ["ExpandableDeviceList", "DeviceRowWidget", "DeviceDetailPanel"]
