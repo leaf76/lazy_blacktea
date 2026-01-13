@@ -28,6 +28,8 @@ class ScrcpyManager(QObject):
     # 信號定義
     scrcpy_launch_signal = pyqtSignal(str, str)  # device_serial, device_model
     scrcpy_error_signal = pyqtSignal(str)  # error_message
+    operation_started_signal = pyqtSignal(object)  # DeviceOperationEvent
+    operation_finished_signal = pyqtSignal(object)  # DeviceOperationEvent
 
     def __init__(self, parent_window):
         super().__init__()
@@ -236,8 +238,7 @@ class ScrcpyManager(QObject):
             device_name=device_model or serial,
             message="Launching scrcpy...",
         )
-        if hasattr(self.parent_window, "_on_operation_started"):
-            self.parent_window._on_operation_started(event)
+        self.operation_started_signal.emit(event)
 
         self.parent_window.show_info(
             "scrcpy",
@@ -262,37 +263,24 @@ class ScrcpyManager(QObject):
                 else:  # Unix/Linux/macOS
                     subprocess.Popen(cmd_args)
 
-                QTimer.singleShot(
-                    0, lambda: self.scrcpy_launch_signal.emit(serial, device_model)
-                )
-
                 completed_event = event.with_status(
                     OperationStatus.COMPLETED,
                     message="scrcpy launched",
                 )
-                if hasattr(self.parent_window, "_on_operation_finished"):
-                    QTimer.singleShot(
-                        0,
-                        lambda: self.parent_window._on_operation_finished(
-                            completed_event
-                        ),
-                    )
+                self.scrcpy_launch_signal.emit(serial, device_model)
+                self.operation_finished_signal.emit(completed_event)
 
             except Exception as e:
                 error_msg = f"Failed to launch scrcpy: {str(e)}"
                 if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.error(error_msg)
-                QTimer.singleShot(0, lambda: self.scrcpy_error_signal.emit(error_msg))
 
                 failed_event = event.with_status(
                     OperationStatus.FAILED,
                     error_message=str(e),
                 )
-                if hasattr(self.parent_window, "_on_operation_finished"):
-                    QTimer.singleShot(
-                        0,
-                        lambda: self.parent_window._on_operation_finished(failed_event),
-                    )
+                self.scrcpy_error_signal.emit(error_msg)
+                self.operation_finished_signal.emit(failed_event)
 
         threading.Thread(target=scrcpy_wrapper, daemon=True).start()
 
@@ -724,6 +712,18 @@ class AppManagementManager(QObject):
         if hasattr(self.parent_window, "_handle_scrcpy_error"):
             self.scrcpy_manager.scrcpy_error_signal.connect(
                 self.parent_window._handle_scrcpy_error
+            )
+
+        if hasattr(self.parent_window, "_on_operation_started"):
+            self.scrcpy_manager.operation_started_signal.connect(
+                self.parent_window._on_operation_started,
+                Qt.ConnectionType.QueuedConnection,
+            )
+
+        if hasattr(self.parent_window, "_on_operation_finished"):
+            self.scrcpy_manager.operation_finished_signal.connect(
+                self.parent_window._on_operation_finished,
+                Qt.ConnectionType.QueuedConnection,
             )
 
         # APK安裝信號 (使用 QueuedConnection 確保跨線程安全)
