@@ -147,11 +147,6 @@ class ToolsPanelController:
         parent_layout.addWidget(self._diagnostic_section)
 
     def _create_recording_section_with_status(self, parent_layout: QVBoxLayout) -> None:
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(4)
-
         self._recording_section = CollapsibleToolSection(
             PanelText.SECTION_RECORDING,
             "",
@@ -159,21 +154,22 @@ class ToolsPanelController:
             collapsed=False,
         )
         self._recording_section.action_triggered.connect(self._handle_tool_action)
-        container_layout.addWidget(self._recording_section)
 
         self.window.recording_status_label = QLabel(PanelText.LABEL_NO_RECORDING)
         StyleManager.apply_label_style(
             self.window.recording_status_label, LabelStyle.STATUS
         )
-        container_layout.addWidget(self.window.recording_status_label)
+        self._recording_section.add_widget_to_content(
+            self.window.recording_status_label
+        )
 
         self.window.recording_timer_label = QLabel("")
         StyleManager.apply_status_style(
             self.window.recording_timer_label, "recording_active"
         )
-        container_layout.addWidget(self.window.recording_timer_label)
+        self._recording_section.add_widget_to_content(self.window.recording_timer_label)
 
-        parent_layout.addWidget(container)
+        parent_layout.addWidget(self._recording_section)
 
     def _create_device_operations_section(self, parent_layout: QVBoxLayout) -> None:
         self._device_ops_section = CollapsibleToolSection(

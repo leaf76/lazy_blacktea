@@ -258,5 +258,9 @@ class CollapsibleToolSection(QWidget):
         if action_key in self._buttons:
             self._buttons[action_key].set_loading(loading)
 
+    def add_widget_to_content(self, widget: QWidget) -> None:
+        """Add a widget below the buttons in the collapsible panel content."""
+        self._panel.content_layout().addWidget(widget)
+
 
 __all__ = ["ToolButton", "QuickActionsSection", "CollapsibleToolSection"]
