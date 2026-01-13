@@ -267,6 +267,8 @@ class RecordingController(QObject):
             )
             return
 
+        from ui.signal_payloads import OperationStatus
+
         for device in devices:
             serial = device.device_serial_num
             if not self._recording_manager.is_recording(serial):
@@ -284,6 +286,18 @@ class RecordingController(QObject):
             self.window.write_to_console(
                 f"🎬 Recording started for {device.device_model} ({serial[:8]}...)"
             )
+
+            op_id = (
+                self.window.device_operation_status_manager._find_recording_operation(
+                    serial
+                )
+            )
+            if op_id:
+                self.window.device_operation_status_manager.update_operation(
+                    op_id,
+                    status=OperationStatus.RUNNING,
+                    message="Recording in progress...",
+                )
 
         self.window.update_recording_status()
 
