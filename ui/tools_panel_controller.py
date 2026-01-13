@@ -198,6 +198,12 @@ class ToolsPanelController:
         self.window.device_operation_status_manager.operation_removed.connect(
             self.window.operation_status_panel.remove_operation
         )
+        self.window.device_operation_status_manager.operation_added.connect(
+            lambda event: self.window.operation_status_panel.show()
+            if self.window.operation_status_panel.isHidden()
+            else None
+        )
+        self.window.operation_status_panel.hide()
         parent_layout.addWidget(self.window.operation_status_panel)
 
     def _handle_tool_action(self, action_key: str) -> None:

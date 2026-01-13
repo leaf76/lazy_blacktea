@@ -32,7 +32,9 @@ _THEME_PRESETS: Dict[str, Dict[str, str]] = {
         "neutral": "#757575",
         "neutral_hover": "#616161",
         "success": "#2E7D32",
+        "success_background": "rgba(46, 125, 50, 0.1)",
         "error": "#C62828",
+        "error_background": "rgba(198, 40, 40, 0.1)",
         "info": "#1976D2",
         "text_primary": "#212121",
         "text_secondary": "#424242",
@@ -90,7 +92,9 @@ _THEME_PRESETS: Dict[str, Dict[str, str]] = {
         "neutral": "#9E9E9E",
         "neutral_hover": "#BDBDBD",
         "success": "#81C784",
+        "success_background": "rgba(129, 199, 132, 0.15)",
         "error": "#E57373",
+        "error_background": "rgba(229, 115, 115, 0.15)",
         "info": "#64B5F6",
         "text_primary": "#EAEAEA",
         "text_secondary": "#C8C8C8",
@@ -835,6 +839,111 @@ class StyleManager:
                 ),
             ),
         ),
+        "operation_status_panel": (
+            (
+                "QFrame#operation_status_panel",
+                (
+                    ("background-color", "{panel_background}"),
+                    ("border-top", "1px solid {border}"),
+                    ("padding", "0px"),
+                ),
+            ),
+            (
+                "QFrame#operation_status_panel_header",
+                (
+                    ("background-color", "{tile_bg}"),
+                    ("padding", "4px 8px"),
+                ),
+            ),
+            (
+                "QFrame#operation_item_widget",
+                (
+                    ("background-color", "{background}"),
+                    ("border-bottom", "1px solid {border}"),
+                    ("padding", "6px 8px"),
+                ),
+            ),
+            (
+                "QFrame#operation_item_widget[status='running']",
+                (("background-color", "{tile_bg}"),),
+            ),
+            (
+                "QFrame#operation_item_widget[status='completed']",
+                (("background-color", "{success_background}"),),
+            ),
+            (
+                "QFrame#operation_item_widget[status='failed']",
+                (("background-color", "{error_background}"),),
+            ),
+            (
+                "QLabel#operation_type_label",
+                (
+                    ("font-weight", "bold"),
+                    ("color", "{text_primary}"),
+                ),
+            ),
+            (
+                "QLabel#operation_device_label",
+                (
+                    ("color", "{text_secondary}"),
+                    ("font-size", "11px"),
+                ),
+            ),
+            (
+                "QLabel#operation_status_label",
+                (
+                    ("color", "{text_hint}"),
+                    ("font-size", "11px"),
+                ),
+            ),
+            (
+                "QProgressBar#operation_progress_bar",
+                (
+                    ("border", "none"),
+                    ("background-color", "{border}"),
+                    ("height", "4px"),
+                    ("border-radius", "2px"),
+                ),
+            ),
+            (
+                "QProgressBar#operation_progress_bar::chunk",
+                (
+                    ("background-color", "{primary}"),
+                    ("border-radius", "2px"),
+                ),
+            ),
+        ),
+        "operation_status_inline": (
+            (
+                "QWidget#device_operation_status_inline",
+                (
+                    ("background-color", "transparent"),
+                    ("padding", "0px"),
+                ),
+            ),
+            (
+                "QLabel#device_operation_status_text",
+                (
+                    ("color", "{text_secondary}"),
+                    ("font-size", "11px"),
+                ),
+            ),
+            (
+                "QProgressBar#device_operation_progress_inline",
+                (
+                    ("border", "none"),
+                    ("background-color", "{border}"),
+                    ("border-radius", "4px"),
+                ),
+            ),
+            (
+                "QProgressBar#device_operation_progress_inline::chunk",
+                (
+                    ("background-color", "{primary}"),
+                    ("border-radius", "4px"),
+                ),
+            ),
+        ),
         "icon_button": (
             (
                 "QToolButton",
@@ -1314,6 +1423,14 @@ class StyleManager:
     def get_device_expand_btn_style(cls) -> str:
         """Get device expand button style."""
         return cls._get_static_style("device_expand_btn")
+
+    @classmethod
+    def get_operation_status_panel_style(cls) -> str:
+        return cls._get_static_style("operation_status_panel")
+
+    @classmethod
+    def get_operation_status_inline_style(cls) -> str:
+        return cls._get_static_style("operation_status_inline")
 
     @classmethod
     def get_icon_button_style(cls) -> str:

@@ -92,7 +92,12 @@ from ui.bluetooth_monitor_window import BluetoothMonitorWindow
 from ui.constants import DEVICE_FILE_IS_DIR_ROLE, DEVICE_FILE_PATH_ROLE
 from ui.device_file_controller import DeviceFileController
 from ui.recording_controller import RecordingController
-from ui.signal_payloads import RecordingProgressEvent
+from ui.signal_payloads import (
+    RecordingProgressEvent,
+    DeviceOperationEvent,
+    OperationType,
+    OperationStatus,
+)
 from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
 from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
 from ui.capture_settings_dialog import CaptureSettingsDialog
@@ -103,6 +108,7 @@ from ui.commands_facade import CommandsFacade
 from ui.device_actions_facade import DeviceActionsFacade
 from ui.logcat_facade import LogcatFacade
 from ui.button_progress_overlay import ButtonProgressOverlay
+from ui.device_operation_status_manager import DeviceOperationStatusManager
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -255,6 +261,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Initialize device operations manager
         self.device_operations_manager = DeviceOperationsManager(parent_window=self)
+        self.device_operation_status_manager = DeviceOperationStatusManager(self)
 
         # Initialize application management manager
         self.app_management_manager = AppManagementManager(self)
@@ -325,6 +332,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         )
         self.device_operations_manager.operation_completed_signal.connect(
             self._on_device_operation_completed
+        )
+        self.device_operations_manager.operation_started_signal.connect(
+            self._on_operation_started
+        )
+        self.device_operations_manager.operation_finished_signal.connect(
+            self._on_operation_finished
         )
 
         # Connect file operations manager signals
@@ -772,6 +785,26 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             f"Recording on {device_model} ({serial}) is approaching the 3-minute ADB limit.\n\n"
             "The recording will automatically stop soon. You can start a new recording afterwards.",
         )
+
+    def _on_operation_started(self, event) -> None:
+        self.device_operation_status_manager.add_operation(event)
+        self._update_device_list_operation_status(event.device_serial, event)
+
+    def _on_operation_finished(self, event) -> None:
+        self.device_operation_status_manager.update_operation(
+            event.operation_id,
+            status=event.status,
+            message=event.message,
+            error_message=event.error_message,
+        )
+        if event.is_terminal:
+            self._update_device_list_operation_status(event.device_serial, None)
+        else:
+            self._update_device_list_operation_status(event.device_serial, event)
+
+    def _update_device_list_operation_status(self, serial: str, event) -> None:
+        if self.device_list is not None:
+            self.device_list.update_device_operation_status(serial, event)
 
     def create_console_panel(self, parent_layout):
         """Create the console output panel."""
@@ -1714,7 +1747,41 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     @ensure_devices_selected
     def reboot_device(self):
         """Reboot selected devices."""
-        self._run_adb_tool_on_selected_devices(adb_tools.start_reboot, "reboot")
+        devices = self.get_checked_devices()
+
+        operation_events = {}
+        for device in devices:
+            event = DeviceOperationEvent.create(
+                device_serial=device.device_serial_num,
+                operation_type=OperationType.REBOOT,
+                device_name=device.device_model or device.device_serial_num,
+                message="Rebooting...",
+            )
+            operation_events[device.device_serial_num] = event
+            self._on_operation_started(event)
+
+        def reboot_wrapper(serials):
+            try:
+                adb_tools.start_reboot(serials)
+
+                for serial in serials:
+                    event = operation_events[serial]
+                    completed_event = event.with_status(
+                        OperationStatus.COMPLETED, message="Reboot initiated"
+                    )
+                    self._on_operation_finished(completed_event)
+            except Exception as e:
+                for serial in serials:
+                    event = operation_events[serial]
+                    failed_event = event.with_status(
+                        OperationStatus.FAILED, error_message=str(e)
+                    )
+                    self._on_operation_finished(failed_event)
+                raise
+
+        self._run_adb_tool_on_selected_devices(
+            reboot_wrapper, "reboot", show_progress=False, refresh_mode="full"
+        )
 
     @ensure_devices_selected
     def install_apk(self):
@@ -1727,9 +1794,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         successful_installs = 0
         failed_installs = 0
 
+        operation_events = {}
+        for device in devices:
+            event = DeviceOperationEvent.create(
+                device_serial=device.device_serial_num,
+                operation_type=OperationType.INSTALL_APK,
+                device_name=device.device_model or device.device_serial_num,
+                message=f"Installing {apk_name}...",
+            )
+            operation_events[device.device_serial_num] = event
+            self._on_operation_started(event)
+
         for index, device in enumerate(devices, 1):
             try:
-                # Update progress
                 progress_msg = (
                     f"Installing {apk_name} on device {index}/{total_devices}\n\n"
                     f"📱 Current: {device.device_model} ({device.device_serial_num})\n"
@@ -1737,7 +1814,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                     f"❌ Failed: {failed_installs}"
                 )
 
-                # Show progress update (using QTimer to ensure thread safety)
                 QTimer.singleShot(
                     0,
                     lambda msg=progress_msg: self.error_handler.show_info(
@@ -1745,23 +1821,35 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                     ),
                 )
 
-                # Install on current device
                 result = adb_tools.install_the_apk([device.device_serial_num], apk_file)
 
+                event = operation_events[device.device_serial_num]
                 if result and any("Success" in str(r) for r in result):
                     successful_installs += 1
                     logger.info(f"APK installed successfully on {device.device_model}")
+                    completed_event = event.with_status(
+                        OperationStatus.COMPLETED, message=f"{apk_name} installed"
+                    )
+                    self._on_operation_finished(completed_event)
                 else:
                     failed_installs += 1
                     logger.warning(
                         f"APK installation failed on {device.device_model}: {result}"
                     )
+                    failed_event = event.with_status(
+                        OperationStatus.FAILED, error_message=str(result)
+                    )
+                    self._on_operation_finished(failed_event)
 
             except Exception as e:
                 failed_installs += 1
                 logger.error(f"APK installation error on {device.device_model}: {e}")
+                event = operation_events[device.device_serial_num]
+                failed_event = event.with_status(
+                    OperationStatus.FAILED, error_message=str(e)
+                )
+                self._on_operation_finished(failed_event)
 
-        # Final result
         final_msg = (
             f"APK Installation Complete!\n\n"
             f"📄 APK: {apk_name}\n"
@@ -1779,8 +1867,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def take_screenshot(self):
         """Take screenshot of selected devices using new utils module."""
         output_path = self.output_path_edit.text().strip()
+        if not output_path:
+            output_path = self._get_global_output_path()
 
-        # Validate output path using utils
         validated_path = validate_screenshot_path(output_path)
         if not validated_path:
             self.error_handler.handle_error(
@@ -1793,7 +1882,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         device_count = len(devices)
         device_models = [d.device_model for d in devices]
 
-        # Set devices as in operation (Screenshot)
+        # Create operation events for each device
+        operation_events = {}
+        for device in devices:
+            event = DeviceOperationEvent.create(
+                device_serial=device.device_serial_num,
+                operation_type=OperationType.SCREENSHOT,
+                device_name=device.device_model or device.device_serial_num,
+                message="Taking screenshot...",
+            )
+            operation_events[device.device_serial_num] = event
+            self._on_operation_started(event)
+
+        # Set devices as in operation (Screenshot) - legacy status
         for device in devices:
             self.device_manager.set_device_operation_status(
                 device.device_serial_num, "Screenshot"
@@ -1815,6 +1916,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 f"🔧 [CALLBACK RECEIVED] About to emit screenshot_completed_signal"
             )
             try:
+                # Complete operation events for all devices
+                for device in devices:
+                    event = operation_events[device.device_serial_num]
+                    completed_event = event.with_status(
+                        OperationStatus.COMPLETED, message="Screenshot saved"
+                    )
+                    self._on_operation_finished(completed_event)
+
                 # Only use the signal to avoid duplicate notifications
                 self.screenshot_completed_signal.emit(
                     output_path, device_count, device_models
@@ -1837,6 +1946,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 logger.error(
                     f"🔧 [CALLBACK RECEIVED] Traceback: {traceback.format_exc()}"
                 )
+                # Mark operations as failed on error
+                for device in devices:
+                    event = operation_events[device.device_serial_num]
+                    failed_event = event.with_status(
+                        OperationStatus.FAILED, error_message=str(signal_error)
+                    )
+                    self._on_operation_finished(failed_event)
 
         take_screenshots_batch(devices, validated_path, screenshot_callback)
 
@@ -1933,9 +2049,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Handle screenshot completed signal in main thread."""
         logger.info(f"📷 [SIGNAL] _on_screenshot_completed executing in main thread")
 
-        self.completion_dialog_manager.show_screenshot_summary(
-            output_path, device_models
+        self.show_info(
+            "📷 Screenshot Complete",
+            f"Saved {device_count} screenshot(s) to:\n{output_path}",
         )
+
         self._show_screenshot_quick_actions(output_path, device_models)
 
         self._update_screenshot_button_state(False)
@@ -2002,26 +2120,24 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         logger.info(
             f"🔧 [BUTTON STATE] Updating screenshot button state, in_progress={in_progress}"
         )
-        if not self.screenshot_btn:
+        btn = getattr(self, "screenshot_btn", None)
+        if not btn:
             logger.warning(
                 f"🔧 [BUTTON STATE] screenshot_btn is None, cannot update state"
             )
             return
 
         if in_progress:
-            self.screenshot_btn.setText("📷 Taking Screenshots...")
-            self.screenshot_btn.setEnabled(False)
-            StyleManager.apply_status_style(
-                self.screenshot_btn, "screenshot_processing"
-            )
+            btn.setText("📷 Taking Screenshots...")
+            btn.setEnabled(False)
+            StyleManager.apply_status_style(btn, "screenshot_processing")
         else:
             logger.info(
                 f"🔧 [BUTTON STATE] Resetting screenshot button to default state"
             )
-            self.screenshot_btn.setText("📷 Take Screenshot")
-            self.screenshot_btn.setEnabled(True)
-            # Set proper default style
-            StyleManager.apply_status_style(self.screenshot_btn, "screenshot_ready")
+            btn.setText("📷 Take Screenshot")
+            btn.setEnabled(True)
+            StyleManager.apply_status_style(btn, "screenshot_ready")
             logger.info(
                 "📷 [BUTTON STATE] Screenshot button reset to default state successfully"
             )
@@ -2171,13 +2287,40 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     @ensure_devices_selected
     def enable_bluetooth(self):
         """Enable Bluetooth on selected devices."""
+        devices = self.get_checked_devices()
+
+        operation_events = {}
+        for device in devices:
+            event = DeviceOperationEvent.create(
+                device_serial=device.device_serial_num,
+                operation_type=OperationType.BLUETOOTH,
+                device_name=device.device_model or device.device_serial_num,
+                message="Enabling Bluetooth...",
+            )
+            operation_events[device.device_serial_num] = event
+            self._on_operation_started(event)
 
         def bluetooth_wrapper(serials):
-            adb_tools.switch_bluetooth_enable(serials, True)
-            # Trigger device list refresh to update status
-            QTimer.singleShot(1000, self.device_manager.force_refresh)
+            try:
+                adb_tools.switch_bluetooth_enable(serials, True)
 
-        # Disable progress dialog, only show completion notification
+                for serial in serials:
+                    event = operation_events[serial]
+                    completed_event = event.with_status(
+                        OperationStatus.COMPLETED, message="Bluetooth enabled"
+                    )
+                    self._on_operation_finished(completed_event)
+
+                QTimer.singleShot(1000, self.device_manager.force_refresh)
+            except Exception as e:
+                for serial in serials:
+                    event = operation_events[serial]
+                    failed_event = event.with_status(
+                        OperationStatus.FAILED, error_message=str(e)
+                    )
+                    self._on_operation_finished(failed_event)
+                raise
+
         self._run_adb_tool_on_selected_devices(
             bluetooth_wrapper,
             "enable Bluetooth",
@@ -2185,37 +2328,48 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             refresh_mode="connectivity",
         )
 
-        # Show completion notification immediately
-        devices = self.get_checked_devices()
-        device_count = len(devices)
-        self.show_info(
-            "🔵 Enable Bluetooth Complete",
-            f"✅ Successfully enabled Bluetooth on {device_count} device(s)",
-        )
-
     @ensure_devices_selected
     def disable_bluetooth(self):
         """Disable Bluetooth on selected devices."""
+        devices = self.get_checked_devices()
+
+        operation_events = {}
+        for device in devices:
+            event = DeviceOperationEvent.create(
+                device_serial=device.device_serial_num,
+                operation_type=OperationType.BLUETOOTH,
+                device_name=device.device_model or device.device_serial_num,
+                message="Disabling Bluetooth...",
+            )
+            operation_events[device.device_serial_num] = event
+            self._on_operation_started(event)
 
         def bluetooth_wrapper(serials):
-            adb_tools.switch_bluetooth_enable(serials, False)
-            # Trigger device list refresh to update status
-            QTimer.singleShot(1000, self.device_manager.force_refresh)
+            try:
+                adb_tools.switch_bluetooth_enable(serials, False)
 
-        # Disable progress dialog, only show completion notification
+                for serial in serials:
+                    event = operation_events[serial]
+                    completed_event = event.with_status(
+                        OperationStatus.COMPLETED, message="Bluetooth disabled"
+                    )
+                    self._on_operation_finished(completed_event)
+
+                QTimer.singleShot(1000, self.device_manager.force_refresh)
+            except Exception as e:
+                for serial in serials:
+                    event = operation_events[serial]
+                    failed_event = event.with_status(
+                        OperationStatus.FAILED, error_message=str(e)
+                    )
+                    self._on_operation_finished(failed_event)
+                raise
+
         self._run_adb_tool_on_selected_devices(
             bluetooth_wrapper,
             "disable Bluetooth",
             show_progress=False,
             refresh_mode="connectivity",
-        )
-
-        # Show completion notification immediately
-        devices = self.get_checked_devices()
-        device_count = len(devices)
-        self.show_info(
-            "🔴 Disable Bluetooth Complete",
-            f"✅ Successfully disabled Bluetooth on {device_count} device(s)",
         )
 
     @ensure_devices_selected
@@ -2228,7 +2382,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.logcat_facade._open_logcat_for_device(device)
 
     def show_logcat(self):
-        """Show logcat viewer for the single selected device."""
+        """Open Logcat viewer for each selected device."""
         self.logcat_facade.show_logcat_for_selected()
 
     def view_logcat_for_device(self, device_serial: str) -> None:
@@ -2415,11 +2569,15 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         path = self.config_manager.get_ui_settings().default_output_path
         if path and os.path.isdir(path):
             return path
-        # Fall back to Desktop or home directory
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        # Fall back to Downloads, then Desktop, then home directory
+        home = os.path.expanduser("~")
+        downloads = os.path.join(home, "Downloads")
+        if os.path.isdir(downloads):
+            return downloads
+        desktop = os.path.join(home, "Desktop")
         if os.path.isdir(desktop):
             return desktop
-        return os.path.expanduser("~")
+        return home
 
     def _set_device_file_status(self, message: str) -> None:
         self.device_files_facade.set_status(message)
@@ -2479,6 +2637,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     @ensure_devices_selected
     def generate_android_bug_report(self):
         """Generate Android bug report using file operations manager."""
+        from ui.signal_payloads import (
+            DeviceOperationEvent,
+            OperationType,
+            OperationStatus,
+        )
+
         devices = self.get_checked_devices()
         output_path = self._get_adb_tools_output_path()
         if not output_path:
@@ -2486,15 +2650,41 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         operation = "Generate Android Bug Report"
 
+        operation_ids: dict[str, str] = {}
+        for device in devices:
+            serial = device.device_serial_num
+            event = DeviceOperationEvent.create(
+                device_serial=serial,
+                operation_type=OperationType.BUG_REPORT,
+                device_name=device.device_model,
+                can_cancel=True,
+            )
+            event = event.with_status(OperationStatus.RUNNING)
+            cancel_cb = (
+                lambda: self.file_operations_manager.cancel_bug_report_generation()
+            )
+            self.device_operation_status_manager.add_operation(
+                event, cancel_callback=cancel_cb
+            )
+            operation_ids[serial] = event.operation_id
+
         def handle_complete(summary: str | None = None) -> None:
             self._log_operation_complete(operation, summary or "")
             state = self.file_operations_manager.get_bug_report_progress_state()
             self._apply_progress_state_to_overlay("bug_report", state)
+            for serial, op_id in operation_ids.items():
+                self.device_operation_status_manager.complete_operation(
+                    op_id, message="Done"
+                )
 
         def handle_failure(message: str | None = None) -> None:
             self._log_operation_failure(operation, message or "Generation failed")
             state = self.file_operations_manager.get_bug_report_progress_state()
             self._apply_progress_state_to_overlay("bug_report", state)
+            for serial, op_id in operation_ids.items():
+                self.device_operation_status_manager.fail_operation(
+                    op_id, error_message=message or "Generation failed"
+                )
 
         active_serials = set(
             self.file_operations_manager.get_active_bug_report_devices()
@@ -2512,7 +2702,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 "Bug report generation is already running for the following devices.\n\n"
                 f"{overlapping}\n\nPlease wait for the existing run to finish or deselect these devices.",
             )
-            handle_failure("Devices already generating bug report")
+            for serial, op_id in operation_ids.items():
+                self.device_operation_status_manager.fail_operation(
+                    op_id, error_message="Already in progress"
+                )
             return
 
         self._log_operation_start(operation)
@@ -2525,7 +2718,10 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         )
 
         if not started:
-            # Failure callback will be scheduled by file operations manager; no further action.
+            for serial, op_id in operation_ids.items():
+                self.device_operation_status_manager.fail_operation(
+                    op_id, error_message="Failed to start"
+                )
             return
 
         state = self.file_operations_manager.get_bug_report_progress_state()
