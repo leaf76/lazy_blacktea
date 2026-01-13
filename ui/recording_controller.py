@@ -355,6 +355,8 @@ class RecordingController(QObject):
             )
             return
 
+        from ui.signal_payloads import OperationStatus
+
         logger.info("Stopped recording on %s device(s): %s", len(stopped), stopped)
         for serial in stopped:
             device_info = (
@@ -366,6 +368,19 @@ class RecordingController(QObject):
             self.window.write_to_console(
                 f"🛑 Stop recording request completed for {device_name} ({serial[:8]}...)"
             )
+
+            op_id = (
+                self.window.device_operation_status_manager._find_recording_operation(
+                    serial
+                )
+            )
+            if op_id:
+                op = self.window.device_operation_status_manager.get_operation(op_id)
+                if op and op.status == OperationStatus.RUNNING:
+                    self.window.device_operation_status_manager.complete_operation(
+                        op_id,
+                        message="Recording stopped",
+                    )
 
     def _on_stop_screen_record_task_failed(self, exc: Exception) -> None:
         if isinstance(exc, RecordingOperationInProgressError):
