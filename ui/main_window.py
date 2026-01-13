@@ -239,6 +239,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_overview_widget = None
         self.ui_scale_actions: Dict[float, QAction] = {}
         self.logcat_settings: Optional[LogcatSettings] = None
+        self.logcat_windows: Dict[str, "LogcatWindow"] = {}
         self.bluetooth_windows: Dict[str, BluetoothMonitorWindow] = {}
 
         # Initialize device search manager
