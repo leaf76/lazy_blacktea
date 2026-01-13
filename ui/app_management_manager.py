@@ -37,21 +37,25 @@ class ScrcpyManager(QObject):
 
     def check_scrcpy_availability(self):
         """檢查scrcpy可用性和版本"""
-        is_available, version_output = adb_tools.check_tool_availability('scrcpy')
+        is_available, version_output = adb_tools.check_tool_availability("scrcpy")
 
         if is_available:
-            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                self.parent_window.logger.info(f'scrcpy is available: {version_output}')
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.info(f"scrcpy is available: {version_output}")
 
             # 解析版本號碼
             self.scrcpy_major_version = self._parse_scrcpy_version(version_output)
             self.scrcpy_available = True
 
-            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                self.parent_window.logger.info(f'Detected scrcpy major version: {self.scrcpy_major_version}')
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.info(
+                    f"Detected scrcpy major version: {self.scrcpy_major_version}"
+                )
         else:
-            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                self.parent_window.logger.warning('scrcpy is not available in system PATH')
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.warning(
+                    "scrcpy is not available in system PATH"
+                )
             self.scrcpy_available = False
 
         return self.scrcpy_available
@@ -59,14 +63,16 @@ class ScrcpyManager(QObject):
     def _parse_scrcpy_version(self, version_output: str) -> int:
         """解析scrcpy版本號碼"""
         try:
-            if 'scrcpy' in version_output:
-                version_line = version_output.split('\n')[0]
+            if "scrcpy" in version_output:
+                version_line = version_output.split("\n")[0]
                 version_str = version_line.split()[1]
-                major_version = int(version_str.split('.')[0])
+                major_version = int(version_str.split(".")[0])
                 return major_version
         except (IndexError, ValueError):
-            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                self.parent_window.logger.warning('Could not parse scrcpy version, assuming v2.x')
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.warning(
+                    "Could not parse scrcpy version, assuming v2.x"
+                )
 
         return 2  # 預設版本
 
@@ -88,7 +94,7 @@ class ScrcpyManager(QObject):
             # 恢復原始選擇
             self._restore_device_selections(original_selections)
         else:
-            self.parent_window.show_error('Error', f'Device {device_serial} not found.')
+            self.parent_window.show_error("Error", f"Device {device_serial} not found.")
 
     def launch_scrcpy_for_selected_devices(self) -> None:
         """Launch scrcpy for selected devices."""
@@ -98,7 +104,7 @@ class ScrcpyManager(QObject):
 
         devices = self.parent_window.get_checked_devices()
         if not devices:
-            self.parent_window.show_error('Error', 'No devices selected.')
+            self.parent_window.show_error("Error", "No devices selected.")
             return
 
         # Single device - launch directly
@@ -119,12 +125,18 @@ class ScrcpyManager(QObject):
     ) -> List[adb_models.DeviceInfo]:
         """Show dialog for selecting which devices to mirror."""
         from PyQt6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-            QCheckBox, QPushButton, QScrollArea, QWidget
+            QDialog,
+            QVBoxLayout,
+            QHBoxLayout,
+            QLabel,
+            QCheckBox,
+            QPushButton,
+            QScrollArea,
+            QWidget,
         )
 
         dialog = QDialog(self.parent_window)
-        dialog.setWindowTitle('Select Devices for Mirroring')
+        dialog.setWindowTitle("Select Devices for Mirroring")
         dialog.setMinimumWidth(400)
 
         layout = QVBoxLayout(dialog)
@@ -133,8 +145,8 @@ class ScrcpyManager(QObject):
 
         # Header
         header = QLabel(
-            f'{len(devices)} devices selected.\n'
-            'Choose which devices to open scrcpy windows for:'
+            f"{len(devices)} devices selected.\n"
+            "Choose which devices to open scrcpy windows for:"
         )
         header.setWordWrap(True)
         layout.addWidget(header)
@@ -150,7 +162,7 @@ class ScrcpyManager(QObject):
 
         checkboxes: List[tuple[QCheckBox, adb_models.DeviceInfo]] = []
         for device in devices:
-            cb = QCheckBox(f'{device.device_model} ({device.device_serial_num})')
+            cb = QCheckBox(f"{device.device_model} ({device.device_serial_num})")
             cb.setChecked(True)
             scroll_layout.addWidget(cb)
             checkboxes.append((cb, device))
@@ -161,25 +173,24 @@ class ScrcpyManager(QObject):
 
         # Select all / none buttons
         select_layout = QHBoxLayout()
+
         def set_all_checked(checked: bool) -> None:
             for cb, _ in checkboxes:
                 cb.setChecked(checked)
 
-        select_all_btn = QPushButton('Select All')
+        select_all_btn = QPushButton("Select All")
         select_all_btn.clicked.connect(lambda: set_all_checked(True))
         select_layout.addWidget(select_all_btn)
 
-        select_none_btn = QPushButton('Select None')
+        select_none_btn = QPushButton("Select None")
         select_none_btn.clicked.connect(lambda: set_all_checked(False))
         select_layout.addWidget(select_none_btn)
         select_layout.addStretch()
         layout.addLayout(select_layout)
 
         # Note about multiple windows
-        note = QLabel(
-            'Note: Each selected device will open a separate scrcpy window.'
-        )
-        note.setStyleSheet('color: #888; font-size: 11px;')
+        note = QLabel("Note: Each selected device will open a separate scrcpy window.")
+        note.setStyleSheet("color: #888; font-size: 11px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -187,11 +198,11 @@ class ScrcpyManager(QObject):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        cancel_btn = QPushButton('Cancel')
+        cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel_btn)
 
-        launch_btn = QPushButton('Launch scrcpy')
+        launch_btn = QPushButton("Launch scrcpy")
         launch_btn.setDefault(True)
         launch_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(launch_btn)
@@ -208,51 +219,96 @@ class ScrcpyManager(QObject):
         serial = device.device_serial_num
         device_model = device.device_model
 
-        if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-            self.parent_window.logger.info(f'Launching scrcpy for device: {device_model} ({serial})')
+        if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+            self.parent_window.logger.info(
+                f"Launching scrcpy for device: {device_model} ({serial})"
+            )
+
+        from ui.signal_payloads import (
+            DeviceOperationEvent,
+            OperationType,
+            OperationStatus,
+        )
+
+        event = DeviceOperationEvent.create(
+            device_serial=serial,
+            operation_type=OperationType.SCRCPY,
+            device_name=device_model or serial,
+            message="Launching scrcpy...",
+        )
+        if hasattr(self.parent_window, "_on_operation_started"):
+            self.parent_window._on_operation_started(event)
 
         self.parent_window.show_info(
-            'scrcpy',
-            f'Launching device mirroring for:\n{device_model} ({serial})\n\nscrcpy window will open shortly...'
+            "scrcpy",
+            f"Launching device mirroring for:\n{device_model} ({serial})\n\nscrcpy window will open shortly...",
         )
 
         def scrcpy_wrapper():
             try:
-                # 根據版本使用不同的參數
                 cmd_args = self._build_scrcpy_command(serial)
 
-                if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                    self.parent_window.logger.info(f'Executing scrcpy with args: {" ".join(cmd_args)}')
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                    self.parent_window.logger.info(
+                        f"Executing scrcpy with args: {' '.join(cmd_args)}"
+                    )
 
-                # 啟動scrcpy進程
                 import subprocess
-                if os.name == 'nt':  # Windows
-                    subprocess.Popen(cmd_args, creationflags=subprocess.CREATE_NEW_CONSOLE)
+
+                if os.name == "nt":  # Windows
+                    subprocess.Popen(
+                        cmd_args, creationflags=subprocess.CREATE_NEW_CONSOLE
+                    )
                 else:  # Unix/Linux/macOS
                     subprocess.Popen(cmd_args)
 
-                QTimer.singleShot(0, lambda: self.scrcpy_launch_signal.emit(serial, device_model))
+                QTimer.singleShot(
+                    0, lambda: self.scrcpy_launch_signal.emit(serial, device_model)
+                )
+
+                completed_event = event.with_status(
+                    OperationStatus.COMPLETED,
+                    message="scrcpy launched",
+                )
+                if hasattr(self.parent_window, "_on_operation_finished"):
+                    QTimer.singleShot(
+                        0,
+                        lambda: self.parent_window._on_operation_finished(
+                            completed_event
+                        ),
+                    )
 
             except Exception as e:
-                error_msg = f'Failed to launch scrcpy: {str(e)}'
-                if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                error_msg = f"Failed to launch scrcpy: {str(e)}"
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.error(error_msg)
                 QTimer.singleShot(0, lambda: self.scrcpy_error_signal.emit(error_msg))
 
-        # 在背景執行緒中啟動
+                failed_event = event.with_status(
+                    OperationStatus.FAILED,
+                    error_message=str(e),
+                )
+                if hasattr(self.parent_window, "_on_operation_finished"):
+                    QTimer.singleShot(
+                        0,
+                        lambda: self.parent_window._on_operation_finished(failed_event),
+                    )
+
         threading.Thread(target=scrcpy_wrapper, daemon=True).start()
 
     def _get_scrcpy_settings(self) -> ScrcpySettings:
         """Safely fetch scrcpy settings from the config manager."""
-        config_manager = getattr(self.parent_window, 'config_manager', None)
+        config_manager = getattr(self.parent_window, "config_manager", None)
         if not config_manager:
             return ScrcpySettings()
 
         try:
             settings = config_manager.get_scrcpy_settings()
         except Exception as exc:  # pragma: no cover - defensive
-            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-                self.parent_window.logger.warning(f'Failed to load scrcpy settings, using defaults: {exc}')
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.warning(
+                    f"Failed to load scrcpy settings, using defaults: {exc}"
+                )
             return ScrcpySettings()
 
         if isinstance(settings, ScrcpySettings):
@@ -268,62 +324,62 @@ class ScrcpyManager(QObject):
         """Construct the scrcpy command arguments using current settings."""
         settings = self._get_scrcpy_settings()
 
-        cmd_args: List[str] = ['scrcpy']
+        cmd_args: List[str] = ["scrcpy"]
 
         if settings.enable_audio_playback and self.scrcpy_major_version >= 3:
-            cmd_args.extend(['--audio-source=playback', '--audio-dup'])
+            cmd_args.extend(["--audio-source=playback", "--audio-dup"])
 
         if settings.stay_awake:
-            cmd_args.append('--stay-awake')
+            cmd_args.append("--stay-awake")
 
         if settings.turn_screen_off:
-            cmd_args.append('--turn-screen-off')
+            cmd_args.append("--turn-screen-off")
 
         if settings.disable_screensaver:
-            cmd_args.append('--disable-screensaver')
+            cmd_args.append("--disable-screensaver")
 
         bitrate = settings.bitrate.strip()
         if bitrate:
-            cmd_args.append(f'--bit-rate={bitrate}')
+            cmd_args.append(f"--bit-rate={bitrate}")
 
         if settings.max_size > 0:
-            cmd_args.append(f'--max-size={settings.max_size}')
+            cmd_args.append(f"--max-size={settings.max_size}")
 
         extra_args = settings.extra_args.strip()
         if extra_args:
             cmd_args.extend(token for token in shlex.split(extra_args) if token)
 
-        cmd_args.extend(['-s', serial])
+        cmd_args.extend(["-s", serial])
 
         return cmd_args
 
     def _backup_device_selections(self) -> Dict[str, bool]:
         """備份目前的設備選擇"""
         selections = {}
-        if hasattr(self.parent_window, 'check_devices'):
+        if hasattr(self.parent_window, "check_devices"):
             for serial, checkbox in self.parent_window.check_devices.items():
                 selections[serial] = checkbox.isChecked()
         return selections
 
     def _restore_device_selections(self, selections: Dict[str, bool]):
         """恢復設備選擇"""
-        if hasattr(self.parent_window, 'check_devices'):
+        if hasattr(self.parent_window, "check_devices"):
             for serial, checkbox in self.parent_window.check_devices.items():
                 if serial in selections:
                     checkbox.setChecked(selections[serial])
 
     def _select_only_device(self, device_serial: str):
         """只選擇指定的設備"""
-        if hasattr(self.parent_window, 'select_only_device'):
+        if hasattr(self.parent_window, "select_only_device"):
             self.parent_window.select_only_device(device_serial)
 
 
 @dataclass
 class InstallationProgressState:
-    mode: str = 'idle'
+    mode: str = "idle"
     current: int = 0
     total: int = 0
-    message: str = ''
+    message: str = ""
 
 
 class ApkInstallationManager(QObject):
@@ -331,7 +387,9 @@ class ApkInstallationManager(QObject):
 
     # 信號定義
     installation_progress_signal = pyqtSignal(str, int, int)  # message, current, total
-    installation_completed_signal = pyqtSignal(int, int, str)  # successful, failed, apk_name
+    installation_completed_signal = pyqtSignal(
+        int, int, str
+    )  # successful, failed, apk_name
     installation_error_signal = pyqtSignal(str)  # error_message
 
     def __init__(self, parent_window):
@@ -344,27 +402,26 @@ class ApkInstallationManager(QObject):
     def install_apk_dialog(self):
         """顯示APK選擇對話框並開始安裝"""
         apk_file, _ = QFileDialog.getOpenFileName(
-            self.parent_window,
-            'Select APK File',
-            '',
-            'APK Files (*.apk)'
+            self.parent_window, "Select APK File", "", "APK Files (*.apk)"
         )
 
         if apk_file:
             devices = self.parent_window.get_checked_devices()
             if not devices:
-                self.parent_window.show_error('Error', 'No devices selected.')
+                self.parent_window.show_error("Error", "No devices selected.")
                 return
 
             apk_name = os.path.basename(apk_file)
             # Use the signal-based installation method
             self.install_apk_to_devices(devices, apk_file, apk_name)
 
-    def install_apk_to_devices(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
+    def install_apk_to_devices(
+        self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str
+    ):
         """安裝APK到指定設備"""
         # 安裝前確認：顯示將執行的 adb 指令與裝置數
         if not devices:
-            self.parent_window.show_error('Error', 'No devices selected.')
+            self.parent_window.show_error("Error", "No devices selected.")
             return
 
         try:
@@ -379,9 +436,10 @@ class ApkInstallationManager(QObject):
                 f"Proceed?"
             )
             from PyQt6.QtWidgets import QMessageBox
+
             reply = QMessageBox.question(
                 self.parent_window,
-                'Confirm APK Install',
+                "Confirm APK Install",
                 message,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
@@ -394,11 +452,13 @@ class ApkInstallationManager(QObject):
 
         # 將預覽指令輸出到 Console，便於追蹤
         try:
-            if hasattr(self.parent_window, 'write_to_console'):
-                self.parent_window.write_to_console(f"🚀 Install command: {preview_cmd}")
+            if hasattr(self.parent_window, "write_to_console"):
+                self.parent_window.write_to_console(
+                    f"🚀 Install command: {preview_cmd}"
+                )
                 if len(devices) > 1:
                     self.parent_window.write_to_console(
-                        f"… and {len(devices)-1} more device(s) with respective serials"
+                        f"… and {len(devices) - 1} more device(s) with respective serials"
                     )
         except Exception:
             pass
@@ -407,34 +467,35 @@ class ApkInstallationManager(QObject):
         self._installation_in_progress = True
         self._apk_cancelled = False
 
-        preparing_message = (
-            f"🚀 Installing {apk_name}...\n"
-            f"Preparing installation..."
+        preparing_message = f"🚀 Installing {apk_name}...\nPreparing installation..."
+        self._update_progress(
+            preparing_message, current=0, total=total_devices, mode="busy"
         )
-        self._update_progress(preparing_message, current=0, total=total_devices, mode='busy')
         self.installation_progress_signal.emit(preparing_message, 0, total_devices)
 
         def install_with_progress():
             try:
                 self._install_apk_with_progress(devices, apk_file, apk_name)
             except Exception as e:
-                error_msg = f'APK installation failed: {str(e)}'
-                if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                error_msg = f"APK installation failed: {str(e)}"
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.error(error_msg)
                 self.installation_error_signal.emit(error_msg)
                 self._update_progress(
-                    f'❌ APK installation failed: {str(e)}',
+                    f"❌ APK installation failed: {str(e)}",
                     current=self._installation_progress_state.current,
                     total=self._installation_progress_state.total,
-                    mode='failed',
+                    mode="failed",
                 )
                 QTimer.singleShot(1500, self._ensure_installation_reset)
 
         # 在背景執行緒中運行
         threading.Thread(target=install_with_progress, daemon=True).start()
 
-        if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
-            self.parent_window.logger.info(f'Installing APK {apk_file} to {len(devices)} devices')
+        if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+            self.parent_window.logger.info(
+                f"Installing APK {apk_file} to {len(devices)} devices"
+            )
 
     def _update_progress(
         self,
@@ -445,7 +506,7 @@ class ApkInstallationManager(QObject):
         mode: Optional[str] = None,
     ) -> None:
         """更新按鈕進度狀態"""
-        inferred_mode = mode or ('progress' if total and total > 0 else 'busy')
+        inferred_mode = mode or ("progress" if total and total > 0 else "busy")
         safe_current = max(0, int(current))
         safe_total = max(0, int(total))
         self._installation_progress_state = InstallationProgressState(
@@ -456,12 +517,17 @@ class ApkInstallationManager(QObject):
         )
 
     def _ensure_installation_reset(self) -> None:
-        if self._installation_in_progress or self._installation_progress_state.mode != 'idle':
+        if (
+            self._installation_in_progress
+            or self._installation_progress_state.mode != "idle"
+        ):
             self._installation_in_progress = False
             self._apk_cancelled = False
             self._installation_progress_state = InstallationProgressState()
             try:
-                refresh_cb = getattr(self.parent_window, 'on_apk_install_progress_reset', None)
+                refresh_cb = getattr(
+                    self.parent_window, "on_apk_install_progress_reset", None
+                )
                 if callable(refresh_cb):
                     refresh_cb()
             except Exception:
@@ -473,7 +539,9 @@ class ApkInstallationManager(QObject):
     def get_installation_progress_state(self) -> InstallationProgressState:
         return self._installation_progress_state
 
-    def _install_apk_with_progress(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
+    def _install_apk_with_progress(
+        self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str
+    ):
         """帶進度的APK安裝"""
         total_devices = len(devices)
         successful_installs = 0
@@ -487,29 +555,35 @@ class ApkInstallationManager(QObject):
 
                 # 更新進度對話框
                 progress_msg = (
-                    f'🚀 Installing {apk_name}\n'
-                    f'Device {index}/{total_devices}\n\n'
-                    f'📱 {device.device_model}\n'
-                    f'🔧 {device.device_serial_num}\n\n'
-                    f'⏱️ Please wait...'
+                    f"🚀 Installing {apk_name}\n"
+                    f"Device {index}/{total_devices}\n\n"
+                    f"📱 {device.device_model}\n"
+                    f"🔧 {device.device_serial_num}\n\n"
+                    f"⏱️ Please wait..."
                 )
 
-                self._update_progress(progress_msg, index-1, total_devices)
+                self._update_progress(progress_msg, index - 1, total_devices)
 
                 # 也發送原有信號（保持向後兼容）
-                self.installation_progress_signal.emit(progress_msg, index-1, total_devices)
+                self.installation_progress_signal.emit(
+                    progress_msg, index - 1, total_devices
+                )
 
-                if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.info(
-                        f'Installing APK on device {index}/{total_devices}: '
-                        f'{device.device_model} ({device.device_serial_num})'
+                        f"Installing APK on device {index}/{total_devices}: "
+                        f"{device.device_model} ({device.device_serial_num})"
                     )
 
                 # 在 Console 顯示即將執行的指令
                 try:
-                    preview_cmd = adb_commands.cmd_adb_install(device.device_serial_num, apk_file)
-                    if hasattr(self.parent_window, 'write_to_console'):
-                        self.parent_window.write_to_console(f"🚀 Executing: {preview_cmd}")
+                    preview_cmd = adb_commands.cmd_adb_install(
+                        device.device_serial_num, apk_file
+                    )
+                    if hasattr(self.parent_window, "write_to_console"):
+                        self.parent_window.write_to_console(
+                            f"🚀 Executing: {preview_cmd}"
+                        )
                 except Exception:
                     pass
 
@@ -522,81 +596,101 @@ class ApkInstallationManager(QObject):
                     device_result = result[0]
                     if isinstance(device_result, list) and len(device_result) > 0:
                         # 檢查是否包含 'Success'
-                        success_found = any('Success' in str(line) for line in device_result)
+                        success_found = any(
+                            "Success" in str(line) for line in device_result
+                        )
                         if success_found:
                             successful_installs += 1
-                            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                            if (
+                                hasattr(self.parent_window, "logger")
+                                and self.parent_window.logger
+                            ):
                                 self.parent_window.logger.info(
-                                    f'✅ APK installation successful on {device.device_model}'
+                                    f"✅ APK installation successful on {device.device_model}"
                                 )
                         else:
                             failed_installs += 1
-                            error_msg = ' | '.join(str(line) for line in device_result)
-                            if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                            error_msg = " | ".join(str(line) for line in device_result)
+                            if (
+                                hasattr(self.parent_window, "logger")
+                                and self.parent_window.logger
+                            ):
                                 self.parent_window.logger.warning(
-                                    f'❌ APK installation failed on {device.device_model}: {error_msg}'
+                                    f"❌ APK installation failed on {device.device_model}: {error_msg}"
                                 )
                     else:
                         failed_installs += 1
-                        if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                        if (
+                            hasattr(self.parent_window, "logger")
+                            and self.parent_window.logger
+                        ):
                             self.parent_window.logger.warning(
-                                f'❌ APK installation failed on {device.device_model}: Invalid result format'
+                                f"❌ APK installation failed on {device.device_model}: Invalid result format"
                             )
                 else:
                     failed_installs += 1
-                    if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                    if (
+                        hasattr(self.parent_window, "logger")
+                        and self.parent_window.logger
+                    ):
                         self.parent_window.logger.warning(
-                            f'❌ APK installation failed on {device.device_model}: No result returned'
+                            f"❌ APK installation failed on {device.device_model}: No result returned"
                         )
 
             except Exception as device_error:
                 failed_installs += 1
-                if hasattr(self.parent_window, 'logger') and self.parent_window.logger:
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.error(
-                        f'Exception during APK installation on {device.device_model}: {device_error}'
+                        f"Exception during APK installation on {device.device_model}: {device_error}"
                     )
 
         # 顯示完成狀態
         if self._apk_cancelled:
-            cancel_msg = '⏹️ APK installation cancelled by user'
+            cancel_msg = "⏹️ APK installation cancelled by user"
             self._update_progress(
                 cancel_msg,
                 current=successful_installs,
                 total=total_devices,
-                mode='cancelled',
+                mode="cancelled",
             )
-            self.installation_progress_signal.emit(cancel_msg, successful_installs, total_devices)
+            self.installation_progress_signal.emit(
+                cancel_msg, successful_installs, total_devices
+            )
         else:
             completion_msg = (
-                f'✅ Installation Complete!\n\n'
-                f'📦 APK: {apk_name}\n'
-                f'✅ Successful: {successful_installs}\n'
-                f'❌ Failed: {failed_installs}\n'
-                f'📊 Total: {total_devices}'
+                f"✅ Installation Complete!\n\n"
+                f"📦 APK: {apk_name}\n"
+                f"✅ Successful: {successful_installs}\n"
+                f"❌ Failed: {failed_installs}\n"
+                f"📊 Total: {total_devices}"
             )
             self._update_progress(
                 completion_msg,
                 current=total_devices,
                 total=total_devices,
-                mode='completed',
+                mode="completed",
             )
-            self.installation_progress_signal.emit(completion_msg, total_devices, total_devices)
+            self.installation_progress_signal.emit(
+                completion_msg, total_devices, total_devices
+            )
         QTimer.singleShot(1500, self._ensure_installation_reset)
 
         # 發送完成信號
-        self.installation_completed_signal.emit(successful_installs, failed_installs, apk_name)
+        self.installation_completed_signal.emit(
+            successful_installs, failed_installs, apk_name
+        )
 
     def cancel_installation(self):
         """使用者取消安裝時的 UI 與狀態更新"""
         if not self._installation_in_progress:
             return
         self._apk_cancelled = True
-        cancel_msg = 'Cancelling APK installation...'
+        cancel_msg = "Cancelling APK installation..."
         self._update_progress(
             cancel_msg,
             current=self._installation_progress_state.current,
             total=self._installation_progress_state.total,
-            mode='cancelling',
+            mode="cancelling",
         )
         self.installation_progress_signal.emit(
             cancel_msg,
@@ -622,24 +716,34 @@ class AppManagementManager(QObject):
     def _connect_signals(self):
         """連接所有信號"""
         # scrcpy信號
-        if hasattr(self.parent_window, '_handle_scrcpy_launch'):
-            self.scrcpy_manager.scrcpy_launch_signal.connect(self.parent_window._handle_scrcpy_launch)
+        if hasattr(self.parent_window, "_handle_scrcpy_launch"):
+            self.scrcpy_manager.scrcpy_launch_signal.connect(
+                self.parent_window._handle_scrcpy_launch
+            )
 
-        if hasattr(self.parent_window, '_handle_scrcpy_error'):
-            self.scrcpy_manager.scrcpy_error_signal.connect(self.parent_window._handle_scrcpy_error)
+        if hasattr(self.parent_window, "_handle_scrcpy_error"):
+            self.scrcpy_manager.scrcpy_error_signal.connect(
+                self.parent_window._handle_scrcpy_error
+            )
 
         # APK安裝信號 (使用 QueuedConnection 確保跨線程安全)
-        if hasattr(self.parent_window, '_handle_installation_progress'):
+        if hasattr(self.parent_window, "_handle_installation_progress"):
             self.apk_manager.installation_progress_signal.connect(
-                self.parent_window._handle_installation_progress, Qt.ConnectionType.QueuedConnection)
+                self.parent_window._handle_installation_progress,
+                Qt.ConnectionType.QueuedConnection,
+            )
 
-        if hasattr(self.parent_window, '_handle_installation_completed'):
+        if hasattr(self.parent_window, "_handle_installation_completed"):
             self.apk_manager.installation_completed_signal.connect(
-                self.parent_window._handle_installation_completed, Qt.ConnectionType.QueuedConnection)
+                self.parent_window._handle_installation_completed,
+                Qt.ConnectionType.QueuedConnection,
+            )
 
-        if hasattr(self.parent_window, '_handle_installation_error'):
+        if hasattr(self.parent_window, "_handle_installation_error"):
             self.apk_manager.installation_error_signal.connect(
-                self.parent_window._handle_installation_error, Qt.ConnectionType.QueuedConnection)
+                self.parent_window._handle_installation_error,
+                Qt.ConnectionType.QueuedConnection,
+            )
 
     def initialize(self):
         """初始化應用程式管理器"""
@@ -664,7 +768,9 @@ class AppManagementManager(QObject):
         """顯示APK安裝對話框"""
         self.apk_manager.install_apk_dialog()
 
-    def install_apk_to_devices(self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str):
+    def install_apk_to_devices(
+        self, devices: List[adb_models.DeviceInfo], apk_file: str, apk_name: str
+    ):
         """安裝APK到設備"""
         self.apk_manager.install_apk_to_devices(devices, apk_file, apk_name)
 
