@@ -103,7 +103,7 @@ class RecordingController(QObject):
         for device in devices:
             event = DeviceOperationEvent.create(
                 device_serial=device.device_serial_num,
-                operation_type=OperationType.RECORDING_START,
+                operation_type=OperationType.RECORDING,
                 device_name=device.device_model or device.device_serial_num,
                 message="Starting recording...",
             )

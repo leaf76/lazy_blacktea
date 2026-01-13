@@ -36,8 +36,9 @@ class OperationType(str, Enum):
     BLUETOOTH = "bluetooth"
     SCRCPY = "scrcpy"
     UI_INSPECTOR = "ui_inspector"
-    RECORDING_START = "recording_start"
-    RECORDING_STOP = "recording_stop"
+    RECORDING = "recording"
+    RECORDING_START = "recording_start"  # Deprecated: use RECORDING
+    RECORDING_STOP = "recording_stop"  # Deprecated: use RECORDING
     BUG_REPORT = "bug_report"
     SHELL_COMMAND = "shell_command"
 
@@ -51,8 +52,9 @@ class OperationType(str, Enum):
             OperationType.BLUETOOTH: "Bluetooth",
             OperationType.SCRCPY: "scrcpy",
             OperationType.UI_INSPECTOR: "UI Inspector",
-            OperationType.RECORDING_START: "Start Recording",
-            OperationType.RECORDING_STOP: "Stop Recording",
+            OperationType.RECORDING: "Recording",
+            OperationType.RECORDING_START: "Recording",  # Deprecated: backward compat
+            OperationType.RECORDING_STOP: "Recording",  # Deprecated: backward compat
             OperationType.BUG_REPORT: "Bug Report",
             OperationType.SHELL_COMMAND: "Shell Command",
         }
@@ -68,8 +70,9 @@ class OperationType(str, Enum):
             OperationType.BLUETOOTH: "📶",
             OperationType.SCRCPY: "🖥️",
             OperationType.UI_INSPECTOR: "🔍",
-            OperationType.RECORDING_START: "🎬",
-            OperationType.RECORDING_STOP: "⏹️",
+            OperationType.RECORDING: "🎬",
+            OperationType.RECORDING_START: "🎬",  # Deprecated: backward compat
+            OperationType.RECORDING_STOP: "🎬",  # Deprecated: backward compat
             OperationType.BUG_REPORT: "🐛",
             OperationType.SHELL_COMMAND: "💻",
         }

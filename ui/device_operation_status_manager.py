@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from ui.signal_payloads import DeviceOperationEvent, OperationStatus
+from ui.signal_payloads import DeviceOperationEvent, OperationStatus, OperationType
 from utils.common import get_logger
 
 
@@ -41,7 +41,28 @@ class DeviceOperationStatusManager(QObject):
         event: DeviceOperationEvent,
         cancel_callback: Optional[Callable[[], bool]] = None,
     ) -> str:
-        """Register a new operation. Returns the operation_id."""
+        """Register a new operation. Returns the operation_id.
+
+        For RECORDING operations, reuses existing operation_id if found.
+        """
+        is_recording = event.operation_type in (
+            OperationType.RECORDING,
+            OperationType.RECORDING_START,
+            OperationType.RECORDING_STOP,
+        )
+
+        if is_recording:
+            existing_op_id = self._find_recording_operation(event.device_serial)
+            if existing_op_id:
+                self.update_operation(
+                    existing_op_id,
+                    status=event.status,
+                    message=event.message,
+                    progress=event.progress,
+                    error_message=event.error_message,
+                )
+                return existing_op_id
+
         op_id = event.operation_id
         self._operations[op_id] = event
         self._device_operations[event.device_serial].append(op_id)
@@ -192,6 +213,18 @@ class DeviceOperationStatusManager(QObject):
     def get_all_operations(self) -> List[DeviceOperationEvent]:
         """Get all tracked operations."""
         return list(self._operations.values())
+
+    def _find_recording_operation(self, device_serial: str) -> Optional[str]:
+        """Find existing recording operation ID for a device."""
+        ops = self.get_device_operations(device_serial)
+        for op in ops:
+            if op.operation_type in (
+                OperationType.RECORDING,
+                OperationType.RECORDING_START,
+                OperationType.RECORDING_STOP,
+            ):
+                return op.operation_id
+        return None
 
     def get_device_active_operation(
         self, device_serial: str
