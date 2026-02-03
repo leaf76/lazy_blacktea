@@ -361,6 +361,10 @@ class ScrcpyManager(QObject):
                 if serial in selections:
                     checkbox.setChecked(selections[serial])
 
+    def _select_device_for_mirroring(self, device_serial: str) -> None:
+        """Select exactly one device before launching scrcpy (compatibility shim)."""
+        self._select_only_device(device_serial)
+
     def _select_only_device(self, device_serial: str):
         """只選擇指定的設備"""
         if hasattr(self.parent_window, "select_only_device"):
@@ -560,14 +564,23 @@ class ApkInstallationManager(QObject):
         if hasattr(self.parent_window, "logger") and self.parent_window.logger:
             self.parent_window.logger.info(f"Running adb command ({label}): {args}")
 
-        proc = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-        )
+        if stream_output:
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+            )
+        else:
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+            )
         with self._process_lock:
             self._active_processes[serial] = proc
 
@@ -582,7 +595,10 @@ class ApkInstallationManager(QObject):
 
             if proc.stdout is None:
                 stdout, _ = proc.communicate()
-                combined = stdout or ""
+                if isinstance(stdout, bytes):
+                    combined = stdout.decode("utf-8", errors="replace")
+                else:
+                    combined = stdout or ""
                 output_chunks.append(combined)
                 return proc.returncode or 0, combined
 
@@ -592,8 +608,12 @@ class ApkInstallationManager(QObject):
                 if self._apk_cancelled:
                     raise RuntimeError("Installation cancelled")
 
-                chunk = proc.stdout.read(256)
-                if chunk:
+                raw = proc.stdout.read(256)
+                if raw:
+                    if isinstance(raw, bytes):
+                        chunk = raw.decode("utf-8", errors="replace")
+                    else:
+                        chunk = str(raw)
                     output_chunks.append(chunk)
                     buffer += chunk
                     if len(buffer) > 8192:
