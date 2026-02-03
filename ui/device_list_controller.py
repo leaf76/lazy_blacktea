@@ -252,6 +252,22 @@ class DeviceListController:
             try:
                 self.device_list.update_devices(filtered_devices)
                 self.device_list.set_selected_serials(selected_serials, active_serial)
+                battery_cache = getattr(self.window, "battery_info_manager", None)
+                if battery_cache is not None and hasattr(
+                    battery_cache, "get_cached_info"
+                ):
+                    for device in filtered_devices:
+                        serial = device.device_serial_num
+                        try:
+                            info = battery_cache.get_cached_info(serial)
+                        except Exception as exc:  # pragma: no cover - defensive
+                            logger.debug(
+                                "Failed to get cached additional info for %s: %s",
+                                serial,
+                                exc,
+                            )
+                            info = {}
+                        self.device_list.set_additional_info(serial, info)
             finally:
                 self._syncing_selection = False
 
