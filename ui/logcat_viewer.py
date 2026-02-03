@@ -37,6 +37,8 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QApplication,
     QMenu,
+    QPlainTextEdit,
+    QTextEdit,
 )
 from PyQt6.QtCore import (
     QObject,
@@ -59,6 +61,7 @@ from PyQt6.QtGui import (
     QShortcut,
     QPen,
     QColor,
+    QTextCursor,
 )
 from PyQt6.QtWidgets import QStyle
 
@@ -929,34 +932,51 @@ class LogcatWindow(QDialog):
             "filtered_count": filtered_count,
         }
 
+    def _rebuild_log_display_from_model(self) -> None:
+        """Rebuild the text display from the current model state."""
+        try:
+            if self._has_active_filters():
+                lines = [line.raw for line in self.filtered_model.to_list()]
+            else:
+                # Keep only the last max_lines for display.
+                capacity = max(1, int(self.max_lines))
+                lines = [line.raw for line in self.log_model.to_list()][-capacity:]
+            self.log_display.setPlainText("\n".join(lines))
+            self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to rebuild log display: %s", exc)
+
+    def _append_lines_to_log_display(self, lines: List[LogLine]) -> None:
+        """Append lines to the text display respecting max_lines."""
+        if not lines:
+            return
+        try:
+            for line in lines:
+                self.log_display.appendPlainText(line.raw)
+            self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to append lines to display: %s", exc)
+
     def _manage_buffer_size(self):
         """Manage raw log buffer size based on configured history."""
         history_limit = self.max_lines * self.history_multiplier
         before = self.log_model.rowCount()
         self.log_model.trim(history_limit)
         if self.log_model.rowCount() != before:
-            self.log_proxy.reset_limit_cache()
-            self.log_proxy.invalidateFilter()
+            pass
 
     def _handle_filters_changed(self):
         """Rebuild filtered view when filters are updated."""
-        # Ensure the raw view remains unfiltered.
-        self.log_proxy.set_saved_patterns([])
-        self.log_proxy.set_live_pattern(None)
-
         self._compiled_filter_patterns = self._compile_filter_patterns()
 
         if self._has_active_filters():
             self._rebuild_filtered_model()
-            if self.log_display.model() is not self.filtered_model:
-                self.log_display.setModel(self.filtered_model)
         else:
-            if self.log_display.model() is not self.log_proxy:
-                self.log_display.setModel(self.log_proxy)
             self.filtered_model.clear()
 
         self.limit_log_lines()
         self._update_status_counts()
+        self._rebuild_log_display_from_model()
         self._scroll_to_bottom()
 
     def _has_active_filters(self) -> bool:
@@ -1074,47 +1094,21 @@ class LogcatWindow(QDialog):
             self.filters_toggle_btn.setCheckable(True)
             self.filters_toggle_btn.setChecked(not self.filters_panel.is_collapsed())
 
-        self.log_display = QListView()
-        self.log_display.setModel(self.log_proxy)
+        self.log_display = QPlainTextEdit()
+        self.log_display.setReadOnly(True)
+        self.log_display.setUndoRedoEnabled(False)
+        self.log_display.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_display.setFont(QFont("Consolas", 10))
-        # Enable correct width calculation for long lines and allow horizontal scroll
-        self.log_display.setUniformItemSizes(False)
-        self.log_display.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        self.log_display.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.log_display.setVerticalScrollMode(
-            QAbstractItemView.ScrollMode.ScrollPerPixel
-        )
-        self.log_display.setHorizontalScrollMode(
-            QAbstractItemView.ScrollMode.ScrollPerPixel
-        )
-        self.log_display.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        self.log_display.setWordWrap(False)
-        try:
-            # Avoid eliding long log lines; show full width with horizontal scroll
-            from PyQt6.QtCore import Qt as _Qt
-
-            self.log_display.setTextElideMode(_Qt.TextElideMode.ElideNone)
-        except Exception:
-            pass
-        # Use custom delegate so the view knows the actual width per row
-        try:
-            self._log_delegate = _LogListItemDelegate(self.log_display)
-            self.log_display.setItemDelegate(self._log_delegate)
-        except Exception:
-            pass
         self.log_display.setStyleSheet(
             """
-            QListView {
+            QPlainTextEdit {
                 background-color: #1e1e1e;
                 color: #ffffff;
                 border: 1px solid #3e3e3e;
             }
             """
         )
+        self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
         self.log_display.verticalScrollBar().valueChanged.connect(
             self._on_log_view_scrolled
         )
@@ -1188,9 +1182,6 @@ class LogcatWindow(QDialog):
         """Enable context menu and keyboard shortcuts for copying logs."""
         self.log_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.log_display.customContextMenuRequested.connect(self._show_log_context_menu)
-        self.log_display.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
 
         copy_sequence = QKeySequence(QKeySequence.StandardKey.Copy)
         select_all_sequence = QKeySequence(QKeySequence.StandardKey.SelectAll)
@@ -1305,10 +1296,7 @@ class LogcatWindow(QDialog):
 
     def _build_log_context_menu(self) -> QMenu:
         """Create the context menu used by the log view."""
-        has_selection = bool(
-            self.log_display.selectionModel()
-            and self.log_display.selectionModel().hasSelection()
-        )
+        has_selection = bool(self.log_display.textCursor().hasSelection())
         self._copy_selected_action.setEnabled(has_selection)
 
         menu = QMenu(self)
@@ -1325,35 +1313,15 @@ class LogcatWindow(QDialog):
         menu.exec(global_position)
 
     def _collect_selected_lines(self) -> List[str]:
-        selection_model = self.log_display.selectionModel()
-        model = self.log_display.model()
-        if not selection_model or model is None:
+        selected = self.log_display.textCursor().selectedText()
+        if not selected:
             return []
-
-        rows = sorted(selection_model.selectedRows(), key=lambda idx: idx.row())
-        lines: List[str] = []
-        for index in rows:
-            if not index.isValid():
-                continue
-            text = model.data(index, Qt.ItemDataRole.DisplayRole)
-            if text is None:
-                continue
-            lines.append(str(text))
-        return lines
+        # Qt uses U+2029 paragraph separators for multi-line selections.
+        normalized = selected.replace("\u2029", "\n").replace("\u2028", "\n")
+        return [normalized]
 
     def _collect_all_visible_lines(self) -> List[str]:
-        model = self.log_display.model()
-        if model is None:
-            return []
-
-        lines: List[str] = []
-        for row in range(model.rowCount()):
-            index = model.index(row, 0)
-            text = model.data(index, Qt.ItemDataRole.DisplayRole)
-            if text is None:
-                continue
-            lines.append(str(text))
-        return lines
+        return [self.log_display.toPlainText()]
 
     def copy_selected_logs(self) -> str:
         """Copy the selected log rows to the clipboard and return the payload."""
@@ -1900,9 +1868,12 @@ class LogcatWindow(QDialog):
 
         if numbered_lines:
             self.log_model.append_lines(numbered_lines)
-            self.log_proxy.reset_limit_cache()
             if self._has_active_filters():
+                matched = [line for line in numbered_lines if self._line_matches_filters(line)]
                 self._append_filtered_lines(numbered_lines)
+                self._append_lines_to_log_display(matched)
+            else:
+                self._append_lines_to_log_display(numbered_lines)
             self._manage_buffer_size()
             self.limit_log_lines()
             self._scroll_to_bottom()
@@ -1934,7 +1905,10 @@ class LogcatWindow(QDialog):
 
     def limit_log_lines(self):
         """Limit the number of lines in the display for performance."""
-        self.log_proxy.set_visible_limit(self.max_lines)
+        try:
+            self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
+        except Exception:
+            pass
         self._manage_buffer_size()
         if self._has_active_filters():
             capacity = max(1, self.max_lines)
@@ -2014,12 +1988,15 @@ class LogcatWindow(QDialog):
         self.filtered_model.clear()
         self.log_buffer.clear()
         self._partial_line = ""
-        self.log_proxy.reset_limit_cache()
         if self._has_active_filters():
             self._handle_filters_changed()
         else:
             self._update_status_label("Logs cleared")
         self._next_line_number = 1
+        try:
+            self.log_display.clear()
+        except Exception:
+            pass
 
     def set_auto_scroll_enabled(
         self, enabled: bool, *, from_scroll: bool = False
@@ -2074,18 +2051,11 @@ class LogcatWindow(QDialog):
         if not self._auto_scroll_enabled:
             return
 
-        model = self.log_display.model()
-        if model is None or model.rowCount() == 0:
-            return
-        last_index = model.index(model.rowCount() - 1, 0)
         scroll_bar = self.log_display.verticalScrollBar()
         self._suppress_scroll_signal = True
         try:
             if scroll_bar is not None:
                 scroll_bar.setValue(scroll_bar.maximum())
-            self.log_display.scrollTo(
-                last_index, QAbstractItemView.ScrollHint.PositionAtBottom
-            )
         finally:
             self._suppress_scroll_signal = False
 
@@ -2113,7 +2083,7 @@ class LogcatWindow(QDialog):
     _MAX_SEARCH_MATCHES = 1000
 
     def _update_search_matches(self) -> None:
-        """Scan visible logs and build list of matching row indices.
+        """Scan visible logs and build list of matching line indices.
 
         Limits results to _MAX_SEARCH_MATCHES for performance with large logs.
         """
@@ -2123,16 +2093,12 @@ class LogcatWindow(QDialog):
             self._search_bar.update_match_count(0, 0)
             return
 
-        model = self.log_display.model()
-        if model is None:
-            return
+        text = self.log_display.toPlainText()
+        lines = text.splitlines()
 
-        # Find rows with matches (limited for performance)
-        match_rows = []
-        for row in range(model.rowCount()):
-            index = model.index(row, 0)
-            text = model.data(index, Qt.ItemDataRole.DisplayRole)
-            if text and self._search_pattern.search(str(text)):
+        match_rows: List[int] = []
+        for row, line in enumerate(lines):
+            if self._search_pattern.search(line):
                 match_rows.append(row)
                 if len(match_rows) >= self._MAX_SEARCH_MATCHES:
                     break
@@ -2140,23 +2106,17 @@ class LogcatWindow(QDialog):
         self._search_match_rows = match_rows
 
         if match_rows:
-            # Set current match to the first visible or first overall
-            visible_rect = self.log_display.viewport().rect()
-            first_visible = self.log_display.indexAt(visible_rect.topLeft())
-            last_visible = self.log_display.indexAt(visible_rect.bottomLeft())
-
-            # Find a match that's visible, or default to first
             self._current_match_index = 0
-            if first_visible.isValid() and last_visible.isValid():
-                for i, row in enumerate(match_rows):
-                    if first_visible.row() <= row <= last_visible.row():
-                        self._current_match_index = i
-                        break
+            cursor_row = self.log_display.textCursor().blockNumber()
+            for i, row in enumerate(match_rows):
+                if row >= cursor_row:
+                    self._current_match_index = i
+                    break
 
             self._update_current_match_highlight()
         else:
             self._current_match_index = -1
-            self._update_delegate_highlight(None, -1)
+            self._apply_search_highlight(None, -1)
 
         total = len(match_rows)
         current = self._current_match_index + 1 if total > 0 else 0
@@ -2164,30 +2124,73 @@ class LogcatWindow(QDialog):
         self._search_bar.update_match_count(current, total, limited=limited)
 
     def _update_current_match_highlight(self) -> None:
-        """Update the delegate with current match info and refresh view."""
+        """Update match highlight and scroll to the current match."""
         if not self._search_match_rows or self._current_match_index < 0:
-            self._update_delegate_highlight(self._search_pattern, -1)
+            self._apply_search_highlight(self._search_pattern, -1)
             return
 
         current_row = self._search_match_rows[self._current_match_index]
-        self._update_delegate_highlight(self._search_pattern, current_row)
+        self._apply_search_highlight(self._search_pattern, current_row)
 
-        # Scroll to the current match
-        model = self.log_display.model()
-        if model:
-            index = model.index(current_row, 0)
-            self.log_display.scrollTo(index, QAbstractItemView.ScrollHint.EnsureVisible)
+        # Move cursor to the first match in the current line.
+        if not self._search_pattern:
+            return
+        document = self.log_display.document()
+        block = document.findBlockByNumber(current_row)
+        if not block.isValid():
+            return
+        line_text = block.text()
+        match = self._search_pattern.search(line_text)
+        if not match:
+            return
 
-    def _update_delegate_highlight(
+        cursor = QTextCursor(document)
+        cursor.setPosition(block.position() + match.start())
+        cursor.setPosition(block.position() + match.end(), QTextCursor.MoveMode.KeepAnchor)
+        self.log_display.setTextCursor(cursor)
+        self.log_display.ensureCursorVisible()
+
+    def _apply_search_highlight(
         self, pattern: Optional[re.Pattern], current_row: int
     ) -> None:
-        """Update the delegate with search pattern and refresh the view."""
-        if self._log_delegate:
-            self._log_delegate.set_search_pattern(pattern)
-            self._log_delegate.set_current_match_row(current_row)
+        """Highlight all matches in the text editor using extra selections."""
+        if pattern is None:
+            self.log_display.setExtraSelections([])
+            return
 
-        # Force repaint of the visible area
-        self.log_display.viewport().update()
+        document = self.log_display.document()
+        selections: List[QTextEdit.ExtraSelection] = []
+
+        # Highlight all matches (limited to reduce overhead).
+        match_budget = self._MAX_SEARCH_MATCHES
+        for row in self._search_match_rows:
+            if match_budget <= 0:
+                break
+            block = document.findBlockByNumber(row)
+            if not block.isValid():
+                continue
+            text = block.text()
+            for match in pattern.finditer(text):
+                if match_budget <= 0:
+                    break
+                sel = QTextEdit.ExtraSelection()
+                sel_cursor = QTextCursor(document)
+                sel_cursor.setPosition(block.position() + match.start())
+                sel_cursor.setPosition(
+                    block.position() + match.end(),
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                sel.cursor = sel_cursor
+                sel.format.setBackground(
+                    QColor(_LogListItemDelegate.HIGHLIGHT_BG)
+                    if row != current_row
+                    else QColor(_LogListItemDelegate.HIGHLIGHT_CURRENT_BG)
+                )
+                sel.format.setForeground(QColor(_LogListItemDelegate.HIGHLIGHT_TEXT))
+                selections.append(sel)
+                match_budget -= 1
+
+        self.log_display.setExtraSelections(selections)
 
     def _navigate_to_next_match(self) -> None:
         """Navigate to the next search match."""
@@ -2255,7 +2258,7 @@ class LogcatWindow(QDialog):
         self._search_pattern = None
         self._search_match_rows = []
         self._current_match_index = -1
-        self._update_delegate_highlight(None, -1)
+        self._apply_search_highlight(None, -1)
 
     # ─────────────────────────────────────────────────────────────────────────
 

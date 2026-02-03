@@ -99,8 +99,8 @@ class PresetManager:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(content)
-                # Atomic rename (on POSIX systems)
-                shutil.move(str(tmp_path_obj), str(path))
+                # Atomic replace across platforms (overwrites existing file)
+                os.replace(str(tmp_path_obj), str(path))
             except (OSError, IOError):
                 # Clean up temp file on failure
                 try:

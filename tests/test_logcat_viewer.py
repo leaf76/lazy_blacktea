@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch, ANY
 
-from PyQt6.QtWidgets import QApplication, QListView
+from PyQt6.QtWidgets import QApplication, QPlainTextEdit
 from PyQt6.QtCore import Qt, QItemSelectionModel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -136,7 +136,7 @@ class LogcatFilterProxyModelTest(unittest.TestCase):
 
 
 class LogcatWindowBehaviourTest(unittest.TestCase):
-    """Integration-level checks for the QListView-backed window."""
+    """Integration-level checks for the logcat window."""
 
     @classmethod
     def setUpClass(cls):
@@ -166,8 +166,8 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertRegex(prefix, r'^\d{5}$')
         return message
 
-    def test_log_display_is_list_view(self):
-        self.assertIsInstance(self.window.log_display, QListView)
+    def test_log_display_is_plain_text_edit(self):
+        self.assertIsInstance(self.window.log_display, QPlainTextEdit)
 
     def test_limit_log_lines_trims_model(self):
         self.window.history_multiplier = 1
@@ -335,10 +335,8 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         )
         self._drain_log_buffer()
 
-        model = self.window.log_display.model()
-        self.assertEqual(model.rowCount(), 1)
-        visible_text = model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole)
-        self.assertIn('match new', self._strip_line_number(visible_text))
+        visible_text = self.window.log_display.toPlainText()
+        self.assertIn('match new', visible_text)
 
     def test_scroll_up_disables_auto_follow_and_preserves_position(self):
         self.window.max_lines = 200
@@ -464,25 +462,20 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             for idx in range(3)
         ]
         self.window.log_model.append_lines(lines)
+        self.window._rebuild_log_display_from_model()
 
-        model = self.window.log_display.model()
-        selection = self.window.log_display.selectionModel()
-        selection.select(
-            model.index(0, 0),
-            QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
-        )
-        selection.select(
-            model.index(2, 0),
-            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-        )
+        cursor = self.window.log_display.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
+        self.window.log_display.setTextCursor(cursor)
 
         clipboard = Mock()
         clipboard_factory.return_value = clipboard
 
         copied_text = self.window.copy_selected_logs()
 
-        self.assertEqual(copied_text, 'line 0\nline 2')
-        clipboard.setText.assert_called_once_with('line 0\nline 2')
+        self.assertEqual(copied_text, 'line 0')
+        clipboard.setText.assert_called_once_with('line 0')
 
     def test_log_context_menu_has_copy_actions(self):
         menu = self.window._build_log_context_menu()
@@ -518,6 +511,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string('01-01 00:00:03.000 1 2 I TestTag: another error here'),
         ]
         self.window.log_model.append_lines(lines)
+        self.window._rebuild_log_display_from_model()
         QApplication.processEvents()
 
         # Perform search
@@ -540,6 +534,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string('01-01 00:00:04.000 1 2 I Tag: findme three'),
         ]
         self.window.log_model.append_lines(lines)
+        self.window._rebuild_log_display_from_model()
         QApplication.processEvents()
 
         # Search for "findme"
@@ -566,6 +561,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: test line'),
         ]
         self.window.log_model.append_lines(lines)
+        self.window._rebuild_log_display_from_model()
         self.window._search_bar.set_search_text('test')
         self.window._on_search_changed('test')
         QApplication.processEvents()
@@ -590,6 +586,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: highlight me'),
         ]
         self.window.log_model.append_lines(lines)
+        self.window._rebuild_log_display_from_model()
         QApplication.processEvents()
 
         self.window._search_bar.set_search_text('highlight')

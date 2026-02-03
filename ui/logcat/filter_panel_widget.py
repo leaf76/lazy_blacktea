@@ -123,6 +123,15 @@ class FilterPanelWidget(QWidget):
         self._save_preset_btn.clicked.connect(self._save_as_preset)
         header.addWidget(self._save_preset_btn)
 
+        self._overwrite_preset_btn = QPushButton("Update Preset")
+        self._overwrite_preset_btn.setFixedWidth(110)
+        self._overwrite_preset_btn.setToolTip(
+            "Overwrite the currently selected preset with active filters"
+        )
+        self._overwrite_preset_btn.clicked.connect(self._overwrite_selected_preset)
+        self._overwrite_preset_btn.setEnabled(False)
+        header.addWidget(self._overwrite_preset_btn)
+
         layout.addLayout(header)
 
         # Active filters list
@@ -291,6 +300,14 @@ class FilterPanelWidget(QWidget):
         for pattern in self._filter_state.active_patterns:
             item = QListWidgetItem(pattern)
             self._active_list.addItem(item)
+            label = QLabel(pattern)
+            label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            )
+            label.setCursor(Qt.CursorShape.IBeamCursor)
+            label.setToolTip(pattern)
+            self._active_list.setItemWidget(item, label)
 
         row_height = 20
         padding = 8
@@ -329,11 +346,16 @@ class FilterPanelWidget(QWidget):
             )
             return
 
+        default_name = "My Filters"
+        current_name = self._preset_combo.currentText().strip() if self._preset_combo else ""
+        if current_name and current_name != "No saved presets":
+            default_name = current_name
+
         name, ok = QInputDialog.getText(
             self,
             "Save Preset",
             "Enter preset name:",
-            text="My Filters",
+            text=default_name,
         )
 
         if not ok or not name.strip():
@@ -365,6 +387,46 @@ class FilterPanelWidget(QWidget):
         else:
             QMessageBox.warning(self, "Error", "Failed to save preset.")
 
+    def _overwrite_selected_preset(self) -> None:
+        """Overwrite the currently selected preset name with active filters."""
+        name = self._preset_combo.currentText().strip()
+        if not name or name == "No saved presets":
+            QMessageBox.information(
+                self,
+                "No Preset Selected",
+                "Select a preset to overwrite.",
+            )
+            return
+
+        if not self._filter_state.active_patterns:
+            QMessageBox.information(
+                self,
+                "No Filters",
+                "Add some filters before overwriting a preset.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Overwrite Preset",
+            f'Overwrite preset "{name}" with current active filters?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        preset = self._filter_state.to_preset(name)
+        if self._preset_manager.save_preset(preset):
+            self._refresh_presets()
+            index = self._preset_combo.findText(name)
+            if index >= 0:
+                self._preset_combo.setCurrentIndex(index)
+            QMessageBox.information(
+                self, "Saved", f'Preset "{name}" updated successfully!'
+            )
+        else:
+            QMessageBox.warning(self, "Error", f'Failed to save preset "{name}".')
+
     # -------------------------------------------------------------------------
     # Level 3: Saved Presets
     # -------------------------------------------------------------------------
@@ -378,6 +440,7 @@ class FilterPanelWidget(QWidget):
 
         self._load_preset_btn.setVisible(has_presets)
         self._delete_preset_btn.setVisible(has_presets)
+        self._overwrite_preset_btn.setEnabled(has_presets)
 
         if not has_presets:
             self._preset_combo.addItem("No saved presets")

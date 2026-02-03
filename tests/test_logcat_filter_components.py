@@ -196,6 +196,23 @@ class TestPresetManager:
                 assert len(presets) == 1
                 assert presets[0].name == "Test"
 
+    def test_save_preset_overwrites_existing(self):
+        from ui.logcat.filter_models import FilterPreset
+        from ui.logcat.preset_manager import PresetManager
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(PresetManager, "PRESETS_DIR", tmpdir):
+                manager = PresetManager()
+
+                original = FilterPreset(name="Test", filters=["error"])
+                updated = FilterPreset(name="Test", filters=["fatal"])
+                assert manager.save_preset(original)
+                assert manager.save_preset(updated)
+
+                loaded = manager.get_preset("Test")
+                assert loaded is not None
+                assert loaded.filters == ["fatal"]
+
     def test_delete_preset(self):
         from ui.logcat.filter_models import FilterPreset
         from ui.logcat.preset_manager import PresetManager
