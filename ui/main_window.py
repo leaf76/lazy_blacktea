@@ -795,6 +795,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.device_operation_status_manager.update_operation(
             event.operation_id,
             status=event.status,
+            progress=getattr(event, "progress", None),
             message=event.message,
             error_message=event.error_message,
         )
@@ -2214,6 +2215,15 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self._apply_progress_state_to_overlay("install_apk", state)
 
             total_devices = successful_installs + failed_installs
+            status_bar_manager = getattr(self, "status_bar_manager", None)
+            if status_bar_manager is not None:
+                summary = (
+                    f"Installed {apk_name}: {successful_installs} success, {failed_installs} failed"
+                )
+                status_bar_manager.update_progress(
+                    current=total_devices, total=max(1, total_devices), message=summary
+                )
+                QTimer.singleShot(1500, status_bar_manager.reset_progress)
 
             if successful_installs > 0 and failed_installs == 0:
                 # 全部成功
@@ -2250,6 +2260,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     def _handle_installation_progress(self, message: str, current: int, total: int):
         """處理APK安裝進度信號（可選，用於額外的進度處理）"""
         try:
+            status_message = message
+            if isinstance(message, str):
+                first_line = message.splitlines()[0].strip() if message.splitlines() else ""
+                status_message = first_line or message.strip()
+
+            status_bar_manager = getattr(self, "status_bar_manager", None)
+            if status_bar_manager is not None:
+                status_bar_manager.update_progress(
+                    current=current, total=total, message=status_message
+                )
+
             state = self.app_management_manager.apk_manager.get_installation_progress_state()
             self._apply_progress_state_to_overlay("install_apk", state)
         except Exception as exc:
@@ -2260,6 +2281,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         try:
             state = self.app_management_manager.apk_manager.get_installation_progress_state()
             self._apply_progress_state_to_overlay("install_apk", state)
+            status_bar_manager = getattr(self, "status_bar_manager", None)
+            if status_bar_manager is not None:
+                status_bar_manager.update_progress(
+                    current=0, total=0, message="APK installation failed"
+                )
+                QTimer.singleShot(1500, status_bar_manager.reset_progress)
             self.show_error("APK Installation Error", error_message)
             logger.error(f"APK installation error: {error_message}")
         except Exception as e:

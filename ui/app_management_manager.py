@@ -11,15 +11,20 @@
 """
 
 import os
+import re
 import shlex
+import subprocess
 import threading
+import time
+import uuid
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, Qt
 from PyQt6.QtWidgets import QFileDialog, QInputDialog
 
 from utils import adb_models, adb_tools, adb_commands
 from config.config_manager import ScrcpySettings
+from ui.signal_payloads import DeviceOperationEvent, OperationStatus, OperationType
 
 
 class ScrcpyManager(QObject):
@@ -379,6 +384,11 @@ class ApkInstallationManager(QObject):
         int, int, str
     )  # successful, failed, apk_name
     installation_error_signal = pyqtSignal(str)  # error_message
+    operation_started_signal = pyqtSignal(object)  # DeviceOperationEvent
+    operation_finished_signal = pyqtSignal(object)  # DeviceOperationEvent
+
+    _PUSH_PERCENT_RE = re.compile(r"(\d{1,3})%")
+    _PUSH_SPEED_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*([kKmMgG]i?B/s)")
 
     def __init__(self, parent_window):
         super().__init__()
@@ -386,6 +396,240 @@ class ApkInstallationManager(QObject):
         self._apk_cancelled = False
         self._installation_in_progress = False
         self._installation_progress_state = InstallationProgressState()
+        self._operation_events: Dict[str, DeviceOperationEvent] = {}
+        self._active_processes: Dict[str, object] = {}
+        self._process_lock = threading.Lock()
+
+    @staticmethod
+    def _parse_adb_push_progress(text: str) -> tuple[Optional[int], Optional[str]]:
+        """Parse adb push output and return (percent, speed)."""
+        percent: Optional[int] = None
+        speed: Optional[str] = None
+
+        if not text:
+            return None, None
+
+        percent_matches = ApkInstallationManager._PUSH_PERCENT_RE.findall(text)
+        if percent_matches:
+            try:
+                percent_val = int(percent_matches[-1])
+                percent = max(0, min(100, percent_val))
+            except ValueError:
+                percent = None
+
+        speed_matches = ApkInstallationManager._PUSH_SPEED_RE.findall(text)
+        if speed_matches:
+            value, unit = speed_matches[-1]
+            speed = f"{value} {unit.upper().replace('IB/S', 'iB/s').replace('B/S', 'B/s')}"
+            speed = speed.replace("KIB/S", "KiB/s").replace("MIB/S", "MiB/s").replace("GIB/S", "GiB/s")
+            speed = speed.replace("KB/S", "KB/s").replace("MB/S", "MB/s").replace("GB/S", "GB/s")
+
+        if percent is None and "file pushed" in text.lower():
+            percent = 100
+
+        return percent, speed
+
+    def _terminate_active_processes(self) -> None:
+        with self._process_lock:
+            processes = list(self._active_processes.values())
+            self._active_processes = {}
+
+        for proc in processes:
+            try:
+                poll = getattr(proc, "poll", None)
+                if callable(poll) and poll() is not None:
+                    continue
+                terminate = getattr(proc, "terminate", None)
+                if callable(terminate):
+                    terminate()
+            except Exception as exc:
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                    self.parent_window.logger.error(
+                        f"Failed to terminate installation process: {exc}"
+                    )
+
+    @staticmethod
+    def _sanitize_remote_filename(filename: str) -> str:
+        """Return a device-safe filename for /data/local/tmp."""
+        name = filename.strip() or "app.apk"
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+        if not name.lower().endswith(".apk"):
+            name = f"{name}.apk"
+        return name
+
+    @staticmethod
+    def _filter_pm_install_extra_args(extra_args: str) -> tuple[list[str], list[str]]:
+        """Filter extra args into a safe subset supported by `pm install`.
+
+        Returns (allowed_tokens, ignored_tokens).
+        """
+        raw = (extra_args or "").strip()
+        if not raw:
+            return [], []
+
+        try:
+            tokens = [tok for tok in shlex.split(raw) if tok]
+        except Exception:
+            return [], [raw]
+
+        allowed: list[str] = []
+        ignored: list[str] = []
+        idx = 0
+        while idx < len(tokens):
+            token = tokens[idx]
+            if token in {"--dont-kill", "--wait"}:
+                allowed.append(token)
+                idx += 1
+                continue
+            if token in {"--user", "--install-location", "-i"}:
+                if idx + 1 < len(tokens):
+                    allowed.extend([token, tokens[idx + 1]])
+                    idx += 2
+                    continue
+                ignored.append(token)
+                idx += 1
+                continue
+
+            ignored.append(token)
+            idx += 1
+
+        return allowed, ignored
+
+    def _build_pm_install_args(self, remote_apk_path: str) -> list[str]:
+        """Build `adb shell pm install ...` args based on persisted settings."""
+        try:
+            from config.config_manager import ConfigManager
+
+            settings = ConfigManager().get_apk_install_settings()
+        except Exception:
+            class _F:
+                replace_existing = True
+                allow_downgrade = True
+                grant_permissions = True
+                allow_test_packages = False
+                extra_args = ""
+
+            settings = _F()
+
+        parts: list[str] = ["shell", "pm", "install"]
+        if getattr(settings, "allow_downgrade", True):
+            parts.append("-d")
+        if getattr(settings, "replace_existing", True):
+            parts.append("-r")
+        if getattr(settings, "grant_permissions", True):
+            parts.append("-g")
+        if getattr(settings, "allow_test_packages", False):
+            parts.append("-t")
+
+        extra_allowed, extra_ignored = self._filter_pm_install_extra_args(
+            getattr(settings, "extra_args", "") or ""
+        )
+        if extra_ignored:
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.warning(
+                    f"Ignoring unsupported pm install args: {extra_ignored}"
+                )
+            if hasattr(self.parent_window, "write_to_console"):
+                try:
+                    self.parent_window.write_to_console(
+                        f"Warning: Ignoring unsupported pm install args: {', '.join(extra_ignored)}"
+                    )
+                except Exception as exc:
+                    if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                        self.parent_window.logger.error(
+                            f"Failed to write ignored args to console: {exc}"
+                        )
+
+        parts.extend(extra_allowed)
+        parts.append(remote_apk_path)
+        return parts
+
+    def _run_adb_process(
+        self,
+        serial: str,
+        adb_args: list[str],
+        *,
+        label: str,
+        stream_output: bool = False,
+        on_chunk: Optional[Callable[[str, str], None]] = None,
+    ) -> tuple[int, str]:
+        """Run an adb subprocess and return (returncode, combined_output)."""
+        adb_cmd = adb_commands.get_adb_command()
+        args = [adb_cmd, "-s", serial] + adb_args
+
+        if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+            self.parent_window.logger.info(f"Running adb command ({label}): {args}")
+
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        with self._process_lock:
+            self._active_processes[serial] = proc
+
+        output_chunks: list[str] = []
+
+        try:
+            if not stream_output:
+                stdout, _ = proc.communicate()
+                combined = stdout or ""
+                output_chunks.append(combined)
+                return proc.returncode or 0, combined
+
+            if proc.stdout is None:
+                stdout, _ = proc.communicate()
+                combined = stdout or ""
+                output_chunks.append(combined)
+                return proc.returncode or 0, combined
+
+            buffer = ""
+            last_callback_at = 0.0
+            while True:
+                if self._apk_cancelled:
+                    raise RuntimeError("Installation cancelled")
+
+                chunk = proc.stdout.read(256)
+                if chunk:
+                    output_chunks.append(chunk)
+                    buffer += chunk
+                    if len(buffer) > 8192:
+                        buffer = buffer[-8192:]
+                    if on_chunk is not None:
+                        now = time.monotonic()
+                        if now - last_callback_at >= 0.1:
+                            try:
+                                on_chunk(chunk, buffer)
+                            except Exception as exc:
+                                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                                    self.parent_window.logger.error(
+                                        f"Progress callback failed ({label}): {exc}"
+                                    )
+                            last_callback_at = now
+                    continue
+
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+
+            remaining = buffer
+            if remaining and on_chunk is not None:
+                try:
+                    on_chunk("", remaining)
+                except Exception as exc:
+                    if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                        self.parent_window.logger.error(
+                            f"Progress callback failed ({label}): {exc}"
+                        )
+
+            return proc.returncode or 0, "".join(output_chunks)
+        finally:
+            with self._process_lock:
+                if self._active_processes.get(serial) is proc:
+                    self._active_processes.pop(serial, None)
 
     def install_apk_dialog(self):
         """顯示APK選擇對話框並開始安裝"""
@@ -414,7 +658,18 @@ class ApkInstallationManager(QObject):
 
         try:
             first_serial = devices[0].device_serial_num
-            preview_cmd = adb_commands.cmd_adb_install(first_serial, apk_file)
+            preview_cmd = ""
+            if apk_file.lower().endswith(".apk"):
+                adb_cmd = adb_commands.get_adb_command()
+                remote_name = self._sanitize_remote_filename(os.path.basename(apk_file))
+                remote_path = f"/data/local/tmp/<temp>_{remote_name}"
+                pm_args = self._build_pm_install_args(remote_path)
+                preview_cmd = (
+                    f"{adb_cmd} -s {first_serial} push -p \"{apk_file}\" {remote_path}\n"
+                    f"{adb_cmd} -s {first_serial} {' '.join(pm_args)}"
+                )
+            else:
+                preview_cmd = adb_commands.cmd_adb_install(first_serial, apk_file)
             message = (
                 f"You are about to install:\n\n"
                 f"  APK: {apk_name}\n"
@@ -434,26 +689,54 @@ class ApkInstallationManager(QObject):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        except Exception:
-            # 若預覽產生失敗，依舊允許安裝，僅略過確認
-            pass
+        except Exception as exc:
+            # If preview fails, still allow installation, but keep the confirmation.
+            preview_cmd = "(preview unavailable)"
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.warning(
+                    f"Failed to build install preview command: {exc}"
+                )
 
         # 將預覽指令輸出到 Console，便於追蹤
         try:
             if hasattr(self.parent_window, "write_to_console"):
                 self.parent_window.write_to_console(
-                    f"🚀 Install command: {preview_cmd}"
+                    f"Install command preview:\n{preview_cmd}"
                 )
                 if len(devices) > 1:
                     self.parent_window.write_to_console(
-                        f"… and {len(devices) - 1} more device(s) with respective serials"
+                        f"... and {len(devices) - 1} more device(s)"
                     )
-        except Exception:
-            pass
+        except Exception as exc:
+            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                self.parent_window.logger.error(
+                    f"Failed to write install preview to console: {exc}"
+                )
 
         total_devices = len(devices)
         self._installation_in_progress = True
         self._apk_cancelled = False
+        self._operation_events = {}
+        with self._process_lock:
+            self._active_processes = {}
+
+        for device in devices:
+            serial = device.device_serial_num
+            try:
+                event = DeviceOperationEvent.create(
+                    device_serial=serial,
+                    operation_type=OperationType.INSTALL_APK,
+                    device_name=device.device_model or serial,
+                    message=f"Queued to install {apk_name}",
+                    can_cancel=False,
+                )
+                self._operation_events[serial] = event
+                self.operation_started_signal.emit(event)
+            except Exception as exc:
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                    self.parent_window.logger.error(
+                        f"Failed to register install operation for {serial}: {exc}"
+                    )
 
         preparing_message = f"🚀 Installing {apk_name}...\nPreparing installation..."
         self._update_progress(
@@ -512,14 +795,20 @@ class ApkInstallationManager(QObject):
             self._installation_in_progress = False
             self._apk_cancelled = False
             self._installation_progress_state = InstallationProgressState()
+            self._operation_events = {}
+            with self._process_lock:
+                self._active_processes = {}
             try:
                 refresh_cb = getattr(
                     self.parent_window, "on_apk_install_progress_reset", None
                 )
                 if callable(refresh_cb):
                     refresh_cb()
-            except Exception:
-                pass
+            except Exception as exc:
+                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                    self.parent_window.logger.error(
+                        f"Failed to refresh APK install progress UI: {exc}"
+                    )
 
     def is_installation_in_progress(self) -> bool:
         return self._installation_in_progress
@@ -541,96 +830,237 @@ class ApkInstallationManager(QObject):
                 if self._apk_cancelled:
                     break
 
-                # 更新進度對話框
-                progress_msg = (
-                    f"🚀 Installing {apk_name}\n"
-                    f"Device {index}/{total_devices}\n\n"
-                    f"📱 {device.device_model}\n"
-                    f"🔧 {device.device_serial_num}\n\n"
-                    f"⏱️ Please wait..."
-                )
+                serial = device.device_serial_num
+                event = self._operation_events.get(serial)
+                if event is not None:
+                    running_event = event.with_status(
+                        OperationStatus.RUNNING,
+                        message=f"Installing {apk_name} ({index}/{total_devices})",
+                    )
+                    self._operation_events[serial] = running_event
+                    self.operation_finished_signal.emit(running_event)
 
-                self._update_progress(progress_msg, index - 1, total_devices)
+                device_model = device.device_model or serial
+                is_regular_apk = apk_file.lower().endswith(".apk")
 
-                # 也發送原有信號（保持向後兼容）
-                self.installation_progress_signal.emit(
-                    progress_msg, index - 1, total_devices
-                )
-
-                if hasattr(self.parent_window, "logger") and self.parent_window.logger:
-                    self.parent_window.logger.info(
-                        f"Installing APK on device {index}/{total_devices}: "
-                        f"{device.device_model} ({device.device_serial_num})"
+                if is_regular_apk:
+                    unique_id = uuid.uuid4().hex[:8]
+                    remote_filename = self._sanitize_remote_filename(
+                        os.path.basename(apk_file)
+                    )
+                    remote_path = (
+                        f"/data/local/tmp/lazy_blacktea_{unique_id}_{remote_filename}"
                     )
 
-                # 在 Console 顯示即將執行的指令
-                try:
-                    preview_cmd = adb_commands.cmd_adb_install(
-                        device.device_serial_num, apk_file
-                    )
+                    last_percent: int = 0
+                    last_speed: Optional[str] = None
+                    last_reported_percent: int = -1
+                    last_reported_speed: Optional[str] = None
+
+                    def on_push_chunk(_chunk: str, buffered: str) -> None:
+                        nonlocal last_percent
+                        nonlocal last_speed
+                        nonlocal last_reported_percent
+                        nonlocal last_reported_speed
+
+                        percent, speed = self._parse_adb_push_progress(buffered[-4096:])
+                        if percent is not None:
+                            last_percent = percent
+                        if speed is not None:
+                            last_speed = speed
+
+                        should_report = (
+                            last_percent != last_reported_percent
+                            or last_speed != last_reported_speed
+                        )
+                        if not should_report:
+                            return
+
+                        msg = (
+                            f"Pushing {apk_name} to {device_model} "
+                            f"({index}/{total_devices}) - {last_percent}%"
+                        )
+                        if last_speed:
+                            msg += f" @ {last_speed}"
+
+                        self._update_progress(msg, last_percent, 100, mode="progress")
+                        self.installation_progress_signal.emit(msg, last_percent, 100)
+
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            progress_val = max(
+                                0.0, min(1.0, float(last_percent) / 100.0)
+                            )
+                            updated = ev.with_status(
+                                OperationStatus.RUNNING,
+                                progress=progress_val,
+                                message=msg,
+                            )
+                            self._operation_events[serial] = updated
+                            self.operation_finished_signal.emit(updated)
+
+                        last_reported_percent = last_percent
+                        last_reported_speed = last_speed
+
                     if hasattr(self.parent_window, "write_to_console"):
-                        self.parent_window.write_to_console(
-                            f"🚀 Executing: {preview_cmd}"
-                        )
-                except Exception:
-                    pass
-
-                # 執行安裝
-                result = adb_tools.install_the_apk([device.device_serial_num], apk_file)
-
-                # 檢查安裝結果 (install_the_apk 返回嵌套列表 [['Performing Streamed Install', 'Success']])
-                if result and isinstance(result, list) and len(result) > 0:
-                    # 取第一個設備的結果
-                    device_result = result[0]
-                    if isinstance(device_result, list) and len(device_result) > 0:
-                        # 檢查是否包含 'Success'
-                        success_found = any(
-                            "Success" in str(line) for line in device_result
-                        )
-                        if success_found:
-                            successful_installs += 1
-                            if (
-                                hasattr(self.parent_window, "logger")
-                                and self.parent_window.logger
-                            ):
-                                self.parent_window.logger.info(
-                                    f"✅ APK installation successful on {device.device_model}"
+                        try:
+                            self.parent_window.write_to_console(
+                                f"Running: adb -s {serial} push -p \"{apk_file}\" {remote_path}"
+                            )
+                        except Exception as exc:
+                            if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                                self.parent_window.logger.error(
+                                    f"Failed to write adb push command to console: {exc}"
                                 )
-                        else:
-                            failed_installs += 1
-                            error_msg = " | ".join(str(line) for line in device_result)
-                            if (
-                                hasattr(self.parent_window, "logger")
-                                and self.parent_window.logger
-                            ):
-                                self.parent_window.logger.warning(
-                                    f"❌ APK installation failed on {device.device_model}: {error_msg}"
-                                )
+
+                    push_rc, push_output = self._run_adb_process(
+                        serial,
+                        ["push", "-p", apk_file, remote_path],
+                        label="push_apk",
+                        stream_output=True,
+                        on_chunk=on_push_chunk,
+                    )
+                    if self._apk_cancelled:
+                        break
+
+                    if push_rc != 0:
+                        failed_installs += 1
+                        error_msg = (push_output or "").strip() or "adb push failed"
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            failed_event = ev.with_status(
+                                OperationStatus.FAILED,
+                                error_message=error_msg,
+                            )
+                            self._operation_events[serial] = failed_event
+                            self.operation_finished_signal.emit(failed_event)
+                        if hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                            self.parent_window.logger.warning(
+                                f"APK push failed on {device_model}: {error_msg}"
+                            )
+                        continue
+
+                    install_msg = (
+                        f"Installing {apk_name} on {device_model} "
+                        f"({index}/{total_devices})"
+                    )
+                    self._update_progress(install_msg, 0, 0, mode="busy")
+                    self.installation_progress_signal.emit(install_msg, 0, 0)
+
+                    ev = self._operation_events.get(serial)
+                    if ev is not None:
+                        updated = ev.with_status(
+                            OperationStatus.RUNNING, progress=None, message=install_msg
+                        )
+                        self._operation_events[serial] = updated
+                        self.operation_finished_signal.emit(updated)
+
+                    pm_args = self._build_pm_install_args(remote_path)
+                    pm_rc, pm_output = self._run_adb_process(
+                        serial,
+                        pm_args,
+                        label="pm_install",
+                        stream_output=False,
+                    )
+                    if self._apk_cancelled:
+                        break
+
+                    rm_rc, rm_output = self._run_adb_process(
+                        serial,
+                        ["shell", "rm", remote_path],
+                        label="cleanup_tmp_apk",
+                        stream_output=False,
+                    )
+                    if rm_rc != 0 and hasattr(self.parent_window, "logger") and self.parent_window.logger:
+                        self.parent_window.logger.warning(
+                            f"Failed to remove remote APK: {rm_output}"
+                        )
+
+                    success_found = pm_rc == 0 and "Success" in (pm_output or "")
+                    if success_found:
+                        successful_installs += 1
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            completed_event = ev.with_status(
+                                OperationStatus.COMPLETED,
+                                message=f"Installed {apk_name}",
+                            )
+                            self._operation_events[serial] = completed_event
+                            self.operation_finished_signal.emit(completed_event)
                     else:
                         failed_installs += 1
-                        if (
-                            hasattr(self.parent_window, "logger")
-                            and self.parent_window.logger
-                        ):
+                        error_msg = (pm_output or "").strip() or "pm install failed"
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            failed_event = ev.with_status(
+                                OperationStatus.FAILED,
+                                error_message=error_msg,
+                            )
+                            self._operation_events[serial] = failed_event
+                            self.operation_finished_signal.emit(failed_event)
+                        if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                             self.parent_window.logger.warning(
-                                f"❌ APK installation failed on {device.device_model}: Invalid result format"
+                                f"APK install failed on {device_model}: {error_msg}"
                             )
                 else:
-                    failed_installs += 1
-                    if (
-                        hasattr(self.parent_window, "logger")
-                        and self.parent_window.logger
-                    ):
-                        self.parent_window.logger.warning(
-                            f"❌ APK installation failed on {device.device_model}: No result returned"
-                        )
+                    # Fallback to legacy path for non-APK files (e.g., split bundles)
+                    result = adb_tools.install_the_apk([serial], apk_file)
+                    success_found = False
+                    device_result = result[0] if isinstance(result, list) and result else []
+                    if isinstance(device_result, list):
+                        success_found = any("Success" in str(line) for line in device_result)
+                    if success_found:
+                        successful_installs += 1
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            completed_event = ev.with_status(
+                                OperationStatus.COMPLETED,
+                                message=f"Installed {apk_name}",
+                            )
+                            self._operation_events[serial] = completed_event
+                            self.operation_finished_signal.emit(completed_event)
+                    else:
+                        failed_installs += 1
+                        error_msg = " | ".join(str(line) for line in device_result) if isinstance(device_result, list) else str(device_result)
+                        ev = self._operation_events.get(serial)
+                        if ev is not None:
+                            failed_event = ev.with_status(
+                                OperationStatus.FAILED,
+                                error_message=error_msg,
+                            )
+                            self._operation_events[serial] = failed_event
+                            self.operation_finished_signal.emit(failed_event)
 
             except Exception as device_error:
+                if self._apk_cancelled:
+                    break
                 failed_installs += 1
+                serial = getattr(device, "device_serial_num", None)
+                if serial:
+                    event = self._operation_events.get(serial)
+                    if event is not None:
+                        failed_event = event.with_status(
+                            OperationStatus.FAILED,
+                            error_message=str(device_error),
+                        )
+                        self._operation_events[serial] = failed_event
+                        self.operation_finished_signal.emit(failed_event)
                 if hasattr(self.parent_window, "logger") and self.parent_window.logger:
                     self.parent_window.logger.error(
                         f"Exception during APK installation on {device.device_model}: {device_error}"
                     )
+
+        if self._apk_cancelled:
+            for device in devices:
+                serial = device.device_serial_num
+                event = self._operation_events.get(serial)
+                if event is not None and not event.is_terminal:
+                    cancelled_event = event.with_status(
+                        OperationStatus.CANCELLED,
+                        message="Cancelled",
+                    )
+                    self._operation_events[serial] = cancelled_event
+                    self.operation_finished_signal.emit(cancelled_event)
 
         # 顯示完成狀態
         if self._apk_cancelled:
@@ -673,6 +1103,7 @@ class ApkInstallationManager(QObject):
         if not self._installation_in_progress:
             return
         self._apk_cancelled = True
+        self._terminate_active_processes()
         cancel_msg = "Cancelling APK installation..."
         self._update_progress(
             cancel_msg,
@@ -730,6 +1161,16 @@ class AppManagementManager(QObject):
         if hasattr(self.parent_window, "_handle_installation_progress"):
             self.apk_manager.installation_progress_signal.connect(
                 self.parent_window._handle_installation_progress,
+                Qt.ConnectionType.QueuedConnection,
+            )
+        if hasattr(self.parent_window, "_on_operation_started"):
+            self.apk_manager.operation_started_signal.connect(
+                self.parent_window._on_operation_started,
+                Qt.ConnectionType.QueuedConnection,
+            )
+        if hasattr(self.parent_window, "_on_operation_finished"):
+            self.apk_manager.operation_finished_signal.connect(
+                self.parent_window._on_operation_finished,
                 Qt.ConnectionType.QueuedConnection,
             )
 
