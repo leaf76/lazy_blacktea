@@ -1,7 +1,7 @@
 # LAZY BLACKTEA KNOWLEDGE BASE
 
-**Generated:** 2026-01-11  
-**Commit:** a3539a9  
+**Generated:** 2026-02-03  
+**Commit:** 8065c59  
 **Branch:** master
 
 ## OVERVIEW
@@ -12,6 +12,8 @@ PyQt6 desktop app for Android device automation via ADB. Multi-device monitoring
 
 ```
 lazy_blacktea/
+├── docs/                    # Markdown guides (quickstart, architecture, deployment)
+│   └── zh-TW/               # 繁體中文版本
 ├── lazy_blacktea_pyqt.py   # Entry point → Qt plugin → dependency check → WindowMain
 ├── ui/                      # Qt widgets, managers, facades (61 files, ~2500 LOC largest)
 │   ├── main_window.py       # Central orchestrator (77 imports - God Object)
@@ -139,6 +141,7 @@ Sources (keep in sync):
 - `VERSION` file (source of truth)
 - `config/constants.py::ApplicationConstants.APP_VERSION` (reads from VERSION)
 - README badge
+- `CHANGELOG.md` for release notes
 - Use `scripts/bump_version.py` for releases
 
 ## NOTES

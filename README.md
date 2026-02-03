@@ -7,7 +7,8 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current release: v0.0.49
+> Current release: v0.0.49 (2026-02-03)
+> Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 **Languages:** English | [繁體中文](README_zh-TW.md)
 
@@ -19,36 +20,12 @@
 - Rely on built-in tests and CI pipelines to lower regression risks.
 
 ## Quick Start
-### Requirements
-- Python 3.10 or newer.
-- Android SDK Platform Tools with `adb` available on your `PATH`.
-- A macOS or Linux desktop environment.
-- (Optional) Rust and Cargo if you plan to rebuild the native module.
+See the full setup guide in [docs/quickstart.md](docs/quickstart.md).
 
-### First-Time Setup
-```bash
-# Clone the repository
-git clone https://github.com/cy76/lazy_blacktea.git
-cd lazy_blacktea
-
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Sync dependencies (creates .venv automatically)
-uv sync
-```
-
-### Launch the App
 ```bash
 uv run python lazy_blacktea_pyqt.py
 ```
 For headless environments (CI, remote), add `QT_QPA_PLATFORM=offscreen`.
-
-### Run the Automated Tests
-```bash
-uv run python tests/run_tests.py
-```
-Run the full suite before every commit to keep the project stable.
 
 ## Core Features
 | Area | Highlights | Key Modules |
@@ -62,62 +39,11 @@ Run the full suite before every commit to keep the project stable.
 ## UI Preview
 ![Lazy Blacktea overview in dark mode](assets/screenshots/Screenshot_0036.png)
 
-## Project Tour
-| Path | Purpose | Highlights |
-| --- | --- | --- |
-| `lazy_blacktea_pyqt.py` | Application entry point | Bootstraps Qt, registers managers, configures logging |
-| `ui/` | UI widgets and controllers | Device list, tool panels, file browser, logcat viewer |
-| `utils/` | Shared utilities | ADB façade, logging, scheduling, Qt dependency checks, native bridge |
-| `config/` | Configuration modules | Constants, preference storage, paths, logcat options |
-| `tests/` | Test suites | Unit, integration, performance smoke tests via `tests/run_tests.py` |
-| `assets/` | Static assets | Icons and branding resources |
-| `build_scripts/`, `build-scripts/` | Packaging toolchain | PyInstaller specs, platform launch scripts, build helpers |
-| `native_lbb/` | Rust project | Optimized routines for high-volume operations |
-| `scripts/` | Automation scripts | Utilities like `bump_version.py` for release chores |
+## Architecture
+See [docs/architecture.md](docs/architecture.md) for the project tour, module responsibilities, and troubleshooting notes.
 
-## Architecture Overview
-- `lazy_blacktea_pyqt.py` orchestrates UI composition and cross-module signals.
-- `ui/` manages visual components and state via explicit signal/slot wiring.
-- `utils/` wraps ADB, scheduling, structured logging, and the native bridge.
-- `config/` stores defaults and persists user preferences.
-- `native_lbb/` delivers optimized routines for intensive I/O workloads.
-- `tests/` enforces the testing pyramid for functionality, performance, and concurrency safety.
-
-## Development & Tooling
-- Startup script `./start_lazy_blacktea.sh` checks Python/ADB readiness before booting the GUI.
-- Frequently used commands:
-  - `python3 -m pytest tests/test_async_device_performance.py`: concurrency-focused tests.
-  - `cargo build --release` (inside `native_lbb/`): rebuild the native module.
-- Follow TDD: write the test, implement the feature, then refactor.
-
-## Packaging & Release
-- Use PyInstaller specs under `build-scripts/` to build macOS and Linux bundles.
-- Platform scripts:
-  - `build-scripts/build_macos.sh`
-  - `build-scripts/build_linux.sh`
-- Keep version identifiers aligned:
-  - `VERSION`
-  - `config/constants.py::ApplicationConstants.APP_VERSION`
-  - README `Current release` badge (manually or via `scripts/bump_version.py`).
-
-## Native Companion
-- `native_lbb` is the Rust crate powering batched file operations and metadata gathering.
-- Build it locally with:
-  ```bash
-  cd native_lbb
-  cargo build --release
-  ```
-- Python loads the resulting shared library through `utils.native_bridge`; ensure the artifact sits on the dynamic loader path or configure environment variables accordingly.
-
-## Performance, Observability & Troubleshooting
-- Key techniques: debounced refreshes, batched UI updates, async I/O, and offloading to Rust helpers.
-- Logging uses `utils.common.get_logger` for structured messages and trace IDs.
-- Common issues:
-  - **ADB not found**: set `ANDROID_HOME` or `ANDROID_SDK_ROOT`, or configure a custom path in-app.
-  - **Permission errors**: enable USB Debugging and root access where required.
-  - **Slow discovery**: restart ADB (`adb kill-server && adb start-server`) and clear `/tmp/lazy_blacktea_*` artifacts.
-  - **Qt plugin warnings**: run `utils.qt_dependency_checker.check_and_fix_qt_dependencies()` and confirm clean output.
-  - **Headless runs**: export `QT_QPA_PLATFORM=offscreen`.
+## Deployment & Release
+See [docs/deployment.md](docs/deployment.md) for packaging steps, version management, and release checklist details.
 
 ## Community & Support
 - Issue tracker: <https://github.com/cy76/lazy_blacktea/issues>
