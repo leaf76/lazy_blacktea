@@ -9,7 +9,7 @@ Provides a structured UI for managing filters with three distinct levels:
 from typing import Optional, List
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -30,6 +30,54 @@ from ui.logcat.filter_models import ActiveFilterState, FilterPreset
 from ui.logcat.preset_manager import PresetManager
 
 logger = logging.getLogger(__name__)
+
+
+class _ActivePatternLabel(QLabel):
+    """Selectable label that also keeps the parent QListWidget selection in sync."""
+
+    def __init__(
+        self, text: str, *, list_widget: QListWidget, item: QListWidgetItem
+    ) -> None:
+        super().__init__(text)
+        self._list_widget = list_widget
+        self._item = item
+
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.setCursor(Qt.CursorShape.IBeamCursor)
+        self.setToolTip(text)
+        self.setWordWrap(False)
+        self.setStyleSheet("padding: 2px 6px;")
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            self._item.setSelected(not self._item.isSelected())
+            self._list_widget.setCurrentItem(self._item)
+        elif modifiers & Qt.KeyboardModifier.ShiftModifier:
+            current_row = self._list_widget.currentRow()
+            target_row = self._list_widget.row(self._item)
+            if current_row >= 0 and target_row >= 0:
+                start = min(current_row, target_row)
+                end = max(current_row, target_row)
+                self._list_widget.clearSelection()
+                for row in range(start, end + 1):
+                    it = self._list_widget.item(row)
+                    if it is not None:
+                        it.setSelected(True)
+                self._list_widget.setCurrentRow(target_row)
+            else:
+                self._list_widget.clearSelection()
+                self._item.setSelected(True)
+                self._list_widget.setCurrentItem(self._item)
+        else:
+            self._list_widget.clearSelection()
+            self._item.setSelected(True)
+            self._list_widget.setCurrentItem(self._item)
+
+        super().mousePressEvent(event)
 
 
 class FilterPanelWidget(QWidget):
@@ -297,19 +345,17 @@ class FilterPanelWidget(QWidget):
             self._active_list.setFixedHeight(24)
             return
 
+        row_height = 22
         for pattern in self._filter_state.active_patterns:
-            item = QListWidgetItem(pattern)
+            item = QListWidgetItem("")
+            item.setData(Qt.ItemDataRole.UserRole, pattern)
             self._active_list.addItem(item)
-            label = QLabel(pattern)
-            label.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-                | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            label = _ActivePatternLabel(
+                pattern, list_widget=self._active_list, item=item
             )
-            label.setCursor(Qt.CursorShape.IBeamCursor)
-            label.setToolTip(pattern)
             self._active_list.setItemWidget(item, label)
+            item.setSizeHint(QSize(0, max(row_height, label.sizeHint().height())))
 
-        row_height = 20
         padding = 8
         content_height = len(self._filter_state.active_patterns) * row_height + padding
         self._active_list.setFixedHeight(min(content_height, 80))
@@ -321,7 +367,7 @@ class FilterPanelWidget(QWidget):
             return
 
         for item in selected:
-            pattern = item.text()
+            pattern = item.data(Qt.ItemDataRole.UserRole) or item.text()
             self._filter_state.remove_pattern(pattern)
 
         self._refresh_active_list()

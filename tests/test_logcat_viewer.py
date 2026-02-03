@@ -1,11 +1,12 @@
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch, ANY
 
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit
-from PyQt6.QtCore import Qt, QItemSelectionModel
+from PyQt6.QtCore import Qt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -150,21 +151,29 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
-    def _drain_log_buffer(self):
-        """Ensure buffered log entries are fully processed for deterministic tests."""
-        guard = 0
-        while self.window.log_buffer and guard < 1000:
-            self.window.process_buffered_logs()
-            guard += 1
-        if guard >= 1000:
-            raise AssertionError('Log buffer did not drain during test setup')
+    def _emit_stream_batch(self, lines):
+        """Simulate a background worker batch arriving in the UI thread."""
+        from ui.logcat_viewer import _filter_log_lines_snapshot
 
-    def _strip_line_number(self, text: str) -> str:
-        if ' | ' not in text:
-            return text
-        prefix, message = text.split(' | ', 1)
-        self.assertRegex(prefix, r'^\d{5}$')
-        return message
+        matched = []
+        if self.window._has_active_filters():
+            patterns = []
+            if self.window.live_filter_pattern:
+                patterns.append(self.window.live_filter_pattern)
+            patterns.extend(self.window.active_filters)
+            matched = _filter_log_lines_snapshot(lines, patterns, capacity=len(lines))
+
+        self.window._on_stream_batch_ready(lines, matched, self.window._filter_revision)
+        QApplication.processEvents()
+
+    def _wait_for(self, predicate, *, timeout_s=5.0):
+        start = time.time()
+        while time.time() - start < timeout_s:
+            QApplication.processEvents()
+            if predicate():
+                return
+            time.sleep(0.01)
+        raise AssertionError('Condition not met within timeout')
 
     def test_log_display_is_plain_text_edit(self):
         self.assertIsInstance(self.window.log_display, QPlainTextEdit)
@@ -199,6 +208,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         # Set live filter through filter panel
         filter_panel.set_live_filter('beta')
 
+        self._wait_for(lambda: self.window.filtered_model.rowCount() == 2)
         results = [
             self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
             for row in range(self.window.filtered_model.rowCount())
@@ -208,6 +218,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         # Removing the active filter should shrink the proxy results
         filter_panel.remove_active_pattern('alpha')
 
+        self._wait_for(lambda: self.window.filtered_model.rowCount() == 1)
         results = [
             self.window.filtered_model.data(self.window.filtered_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
             for row in range(self.window.filtered_model.rowCount())
@@ -269,17 +280,15 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string(f'09-30 12:00:0{i}.000  123  456 I Tag: match {i}')
             for i in range(3)
         ]
-        self.window.log_buffer.extend(matching_lines)
-        self._drain_log_buffer()
+        self._emit_stream_batch(matching_lines)
 
         self.window.apply_live_filter('match')
-        self.assertEqual(self.window.filtered_model.rowCount(), 3)
+        self._wait_for(lambda: self.window.filtered_model.rowCount() == 3)
 
         for i in range(20):
-            self.window.log_buffer.append(
+            self._emit_stream_batch([
                 LogLine.from_string(f'09-30 12:01:{i:02d}.000  123  456 I Tag: other {i}')
-            )
-            self._drain_log_buffer()
+            ])
 
         visible = [
             self.window.filtered_model.data(
@@ -289,16 +298,16 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             for row in range(self.window.filtered_model.rowCount())
         ]
         self.assertEqual(
-            [self._strip_line_number(entry) for entry in visible],
+            visible,
             [line.raw for line in matching_lines],
         )
 
         for i in range(3):
-            self.window.log_buffer.append(
+            self._emit_stream_batch([
                 LogLine.from_string(f'09-30 12:02:0{i}.000  123  456 I Tag: match-new {i}')
-            )
-            self._drain_log_buffer()
+            ])
 
+        self._wait_for(lambda: self.window.filtered_model.rowCount() == 3)
         latest = [
             self.window.filtered_model.data(
                 self.window.filtered_model.index(row, 0),
@@ -307,7 +316,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             for row in range(self.window.filtered_model.rowCount())
         ]
         self.assertEqual(
-            [self._strip_line_number(entry) for entry in latest],
+            latest,
             [
                 '09-30 12:02:00.000  123  456 I Tag: match-new 0',
                 '09-30 12:02:01.000  123  456 I Tag: match-new 1',
@@ -320,20 +329,18 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string(f'09-30 12:10:0{i}.000  123  456 I Tag: match {i}')
             for i in range(2)
         ]
-        self.window.log_buffer.extend(initial_lines)
-        self._drain_log_buffer()
+        self._emit_stream_batch(initial_lines)
 
         self.window.apply_live_filter('match')
-        self.assertEqual(self.window.filtered_model.rowCount(), 2)
+        self._wait_for(lambda: self.window.filtered_model.rowCount() == 2)
 
         self.window.clear_logs()
         self.assertTrue(self.window._has_active_filters())
         self.assertEqual(self.window.log_model.rowCount(), 0)
 
-        self.window.log_buffer.append(
+        self._emit_stream_batch([
             LogLine.from_string('09-30 12:11:00.000  123  456 I Tag: match new')
-        )
-        self._drain_log_buffer()
+        ])
 
         visible_text = self.window.log_display.toPlainText()
         self.assertIn('match new', visible_text)
@@ -344,8 +351,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string(f'09-30 12:20:{i:02d}.000  123  456 I Tag: seed {i}')
             for i in range(120)
         ]
-        self.window.log_buffer.extend(seed_lines)
-        self._drain_log_buffer()
+        self._emit_stream_batch(seed_lines)
 
         scroll_bar = self.window.log_display.verticalScrollBar()
         self.window._scroll_to_bottom()
@@ -357,10 +363,9 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertFalse(self.window.follow_latest_checkbox.isChecked())
         position_before = scroll_bar.value()
 
-        self.window.log_buffer.append(
+        self._emit_stream_batch([
             LogLine.from_string('09-30 12:21:00.000  123  456 I Tag: latest new')
-        )
-        self._drain_log_buffer()
+        ])
 
         self.assertEqual(scroll_bar.value(), position_before)
         self.assertLess(scroll_bar.value(), scroll_bar.maximum())
@@ -371,8 +376,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
             LogLine.from_string(f'09-30 12:30:{i:02d}.000  123  456 I Tag: follow {i}')
             for i in range(400)
         ]
-        self.window.log_buffer.extend(seed_lines)
-        self._drain_log_buffer()
+        self._emit_stream_batch(seed_lines)
 
         scroll_bar = self.window.log_display.verticalScrollBar()
         self.window._scroll_to_bottom()
@@ -385,10 +389,9 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertTrue(self.window._auto_scroll_enabled)
         self.assertTrue(self.window.follow_latest_checkbox.isChecked())
 
-        self.window.log_buffer.append(
+        self._emit_stream_batch([
             LogLine.from_string('09-30 12:31:00.000  123  456 I Tag: follow latest')
-        )
-        self._drain_log_buffer()
+        ])
 
         self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
 
@@ -398,9 +401,6 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         fake_process.waitForFinished = Mock()
         self.window.logcat_process = fake_process
         self.window.is_running = True
-        self.window.log_buffer = [LogLine.from_string('old entry')]
-        self.window.update_timer = Mock()
-        self.window.update_timer.stop = Mock()
         self.window.start_btn.setEnabled(False)
         self.window.stop_btn.setEnabled(True)
 
@@ -408,36 +408,21 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
 
         fake_process.kill.assert_called_once()
         fake_process.waitForFinished.assert_called_once()
-        self.window.update_timer.stop.assert_called_once()
         self.assertFalse(self.window.is_running)
         self.assertIsNone(self.window.logcat_process)
-        self.assertEqual(self.window.log_buffer, [])
         self.assertTrue(self.window.start_btn.isEnabled())
         self.assertFalse(self.window.stop_btn.isEnabled())
 
     def test_partial_line_buffering_merges_chunks(self):
-        class StubProcess:
-            def __init__(self):
-                self.chunks = [
-                    b'First line part',
-                    b' two\nSecond line\n'
-                ]
+        from ui.logcat_viewer import _split_logcat_chunk
 
-            def readAllStandardOutput(self):
-                return self.chunks.pop(0)
+        lines, partial = _split_logcat_chunk('', b'First line part')
+        self.assertEqual(lines, [])
+        self.assertEqual(partial, 'First line part')
 
-        stub = StubProcess()
-        self.window.logcat_process = stub
-
-        self.window.read_logcat_output()
-        self.assertEqual(self.window.log_model.rowCount(), 0)
-
-        self.window.read_logcat_output()
-        rows = [
-            self.window.log_model.data(self.window.log_model.index(row, 0), Qt.ItemDataRole.DisplayRole)
-            for row in range(self.window.log_model.rowCount())
-        ]
-        self.assertEqual(rows, ['First line part two', 'Second line'])
+        lines, partial = _split_logcat_chunk(partial, b' two\nSecond line\n')
+        self.assertEqual(lines, ['First line part two', 'Second line'])
+        self.assertEqual(partial, '')
 
     def test_close_event_triggers_stop(self):
         from PyQt6.QtGui import QCloseEvent
@@ -517,7 +502,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         # Perform search
         self.window._search_bar.set_search_text('error')
         self.window._on_search_changed('error')
-        QApplication.processEvents()
+        self._wait_for(lambda: len(self.window._search_match_rows) == 2)
 
         # Should find 2 matches
         self.assertEqual(len(self.window._search_match_rows), 2)
@@ -540,7 +525,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         # Search for "findme"
         self.window._search_bar.set_search_text('findme')
         self.window._on_search_changed('findme')
-        QApplication.processEvents()
+        self._wait_for(lambda: len(self.window._search_match_rows) == 3)
 
         # Should find 3 matches (rows 0, 2, 3)
         self.assertEqual(len(self.window._search_match_rows), 3)
@@ -564,7 +549,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.window._rebuild_log_display_from_model()
         self.window._search_bar.set_search_text('test')
         self.window._on_search_changed('test')
-        QApplication.processEvents()
+        self._wait_for(lambda: self.window._search_pattern is not None and len(self.window._search_match_rows) > 0)
 
         # Verify search is active
         self.assertIsNotNone(self.window._search_pattern)
@@ -580,7 +565,7 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
         self.assertEqual(self.window._current_match_index, -1)
 
     def test_search_delegate_receives_pattern(self):
-        """Search pattern should be passed to the delegate for highlighting."""
+        """Search should populate match spans for highlighting."""
         from ui.logcat_viewer import LogLine
         lines = [
             LogLine.from_string('01-01 00:00:01.000 1 2 I Tag: highlight me'),
@@ -591,11 +576,8 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
 
         self.window._search_bar.set_search_text('highlight')
         self.window._on_search_changed('highlight')
-        QApplication.processEvents()
-
-        # Verify delegate received the pattern
-        if self.window._log_delegate:
-            self.assertIsNotNone(self.window._log_delegate._search_pattern)
+        self._wait_for(lambda: len(self.window._search_match_spans) > 0)
+        self.assertTrue(any(span[0] == 0 for span in self.window._search_match_spans))
 
 
 class FakeSignal:

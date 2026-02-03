@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 import time
+from collections import deque
 from dataclasses import dataclass, replace
-from typing import Optional, Dict, List, Any, Callable, TYPE_CHECKING
+from typing import Optional, Dict, List, Any, Callable, TYPE_CHECKING, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -43,6 +44,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     QObject,
     QProcess,
+    QThread,
     QTimer,
     Qt,
     QAbstractListModel,
@@ -52,6 +54,8 @@ from PyQt6.QtCore import (
     QEvent,
     QPropertyAnimation,
     QEasingCurve,
+    pyqtSignal,
+    pyqtSlot,
 )
 from PyQt6.QtGui import (
     QFont,
@@ -73,6 +77,7 @@ from ui.logcat.filter_panel_widget import FilterPanelWidget
 from ui.logcat.search_bar_widget import SearchBarWidget
 from ui.logcat.scrcpy_preview_panel import ScrcpyPreviewPanel
 from ui.toast_notification import ToastNotification
+from utils.task_dispatcher import TaskCancelledError, TaskContext, TaskHandle, get_task_dispatcher
 
 if TYPE_CHECKING:
     from ui.device_manager import DeviceManager
@@ -169,6 +174,235 @@ class LogLine:
             )
         cleaned = line.strip()
         return cls("", "", "", "I", "Logcat", cleaned, raw=line)
+
+
+def _split_logcat_chunk(partial_line: str, chunk: bytes) -> Tuple[List[str], str]:
+    """Split a raw stdout chunk into complete log lines and a trailing partial line."""
+    if not chunk:
+        return [], partial_line
+
+    text = chunk.decode("utf-8", errors="replace")
+    if not text:
+        return [], partial_line
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    combined = f"{partial_line}{normalized}" if partial_line else normalized
+
+    parts = combined.split("\n")
+    if combined.endswith("\n"):
+        new_partial = ""
+    else:
+        new_partial = parts.pop() if parts else combined
+
+    lines = [line for line in parts if line.strip()]
+    return lines, new_partial
+
+
+def _filter_log_lines_snapshot(
+    logs: List[LogLine],
+    patterns: List[str],
+    capacity: int,
+    *,
+    task_handle: Optional[TaskHandle] = None,
+) -> List[LogLine]:
+    """Filter a snapshot of log lines and return the last `capacity` matches."""
+    capacity = max(1, int(capacity))
+    compiled: List[re.Pattern[str]] = []
+    for raw in patterns:
+        if not raw:
+            continue
+        try:
+            compiled.append(re.compile(raw, re.IGNORECASE))
+        except re.error:
+            continue
+
+    if not compiled:
+        return []
+
+    matched: List[LogLine] = []
+    for idx, line in enumerate(logs):
+        if task_handle is not None and idx % 256 == 0 and task_handle.is_cancelled():
+            raise TaskCancelledError("Operation cancelled")
+        text = line.raw
+        if any(pattern.search(text) for pattern in compiled):
+            matched.append(line)
+
+    if len(matched) > capacity:
+        matched = matched[-capacity:]
+    return matched
+
+
+def _scan_search_spans(
+    lines: List[str],
+    pattern: str,
+    flags: int,
+    max_spans: int,
+    *,
+    task_handle: Optional[TaskHandle] = None,
+) -> Tuple[List[int], List[Tuple[int, int, int]], bool]:
+    """Return (match_rows, match_spans, limited) for a list of visible lines."""
+    max_spans = max(1, int(max_spans))
+    compiled = re.compile(pattern, flags)
+
+    rows: List[int] = []
+    spans: List[Tuple[int, int, int]] = []
+    limited = False
+
+    for row, line in enumerate(lines):
+        if task_handle is not None and row % 256 == 0 and task_handle.is_cancelled():
+            raise TaskCancelledError("Operation cancelled")
+        line_has_match = False
+        for match in compiled.finditer(line):
+            spans.append((row, match.start(), match.end()))
+            line_has_match = True
+            if len(spans) >= max_spans:
+                limited = True
+                break
+        if line_has_match:
+            rows.append(row)
+        if limited:
+            break
+
+    return rows, spans, limited
+
+
+class _LogcatStreamWorker(QObject):
+    """Decode, parse and batch logcat output off the UI thread."""
+
+    batch_ready = pyqtSignal(object, object, int)  # all_lines, matched_lines, filter_revision
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._timer: Optional[QTimer] = None
+        self._partial_line = ""
+        self._pending: List[LogLine] = []
+        self._last_flush_ms = 0.0
+
+        self._update_interval_ms = 200
+        self._max_buffer_size = 100
+        self._max_lines_per_update = 50
+
+        self._compiled_patterns: List[re.Pattern[str]] = []
+        self._filter_revision = 0
+
+        self._next_line_number = 1
+
+    @pyqtSlot()
+    def initialize(self) -> None:
+        """Initialize Qt timers after the worker is moved to its thread."""
+        if self._timer is not None:
+            return
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._on_timer_timeout)
+        self._timer = timer
+
+    @pyqtSlot(int, int, int)
+    def set_performance_settings(
+        self, update_interval_ms: int, max_buffer_size: int, max_lines_per_update: int
+    ) -> None:
+        self._update_interval_ms = max(20, int(update_interval_ms))
+        self._max_buffer_size = max(10, int(max_buffer_size))
+        self._max_lines_per_update = max(5, int(max_lines_per_update))
+
+    @pyqtSlot(list, int)
+    def set_filter_patterns(self, patterns: List[str], revision: int) -> None:
+        compiled: List[re.Pattern[str]] = []
+        for raw in patterns:
+            if not raw:
+                continue
+            try:
+                compiled.append(re.compile(raw, re.IGNORECASE))
+            except re.error:
+                continue
+        self._compiled_patterns = compiled
+        self._filter_revision = int(revision)
+
+    @pyqtSlot()
+    def reset(self) -> None:
+        self._partial_line = ""
+        self._pending.clear()
+        self._next_line_number = 1
+        self._last_flush_ms = 0.0
+        if self._timer is not None:
+            self._timer.stop()
+
+    @pyqtSlot(bytes)
+    def feed_bytes(self, chunk: bytes) -> None:
+        lines, self._partial_line = _split_logcat_chunk(self._partial_line, chunk)
+        if not lines:
+            return
+
+        parsed = [LogLine.from_string(line) for line in lines]
+        self._pending.extend(parsed)
+
+        now_ms = time.monotonic() * 1000.0
+        elapsed = now_ms - self._last_flush_ms
+        should_flush = (
+            elapsed >= self._update_interval_ms
+            or len(self._pending) >= self._max_buffer_size
+        )
+
+        if should_flush:
+            self._flush_once(now_ms)
+            return
+
+        if self._timer is None:
+            return
+        if not self._timer.isActive():
+            remaining = max(1, int(self._update_interval_ms - elapsed))
+            self._timer.start(remaining)
+
+    @pyqtSlot()
+    def _on_timer_timeout(self) -> None:
+        if not self._pending:
+            return
+        self._flush_once(time.monotonic() * 1000.0)
+
+    def _flush_once(self, now_ms: float) -> None:
+        if not self._pending:
+            return
+
+        backlog = len(self._pending)
+        batch_size = int(self._max_lines_per_update)
+        if backlog > self._max_buffer_size * 20:
+            batch_size = min(backlog, batch_size * 8)
+        elif backlog > self._max_buffer_size * 10:
+            batch_size = min(backlog, batch_size * 6)
+        elif backlog > self._max_buffer_size * 5:
+            batch_size = min(backlog, batch_size * 4)
+        elif backlog > self._max_buffer_size * 2:
+            batch_size = min(backlog, batch_size * 2)
+
+        batch = self._pending[:batch_size]
+        del self._pending[:batch_size]
+
+        numbered: List[LogLine] = []
+        for line in batch:
+            numbered.append(replace(line, line_no=self._next_line_number))
+            self._next_line_number += 1
+
+        matched: List[LogLine] = []
+        if self._compiled_patterns:
+            for line in numbered:
+                if any(pattern.search(line.raw) for pattern in self._compiled_patterns):
+                    matched.append(line)
+
+        self._last_flush_ms = now_ms
+        self.batch_ready.emit(numbered, matched, self._filter_revision)
+
+        if not self._pending or self._timer is None:
+            return
+
+        if self._timer.isActive():
+            return
+
+        # Catch-up scheduling: flush sooner when backlog is large.
+        if len(self._pending) > self._max_buffer_size * 5:
+            interval = max(10, int(self._update_interval_ms // 4))
+        else:
+            interval = int(self._update_interval_ms)
+        self._timer.start(interval)
 
 
 class LogcatListModel(QAbstractListModel):
@@ -749,6 +983,11 @@ class PerformanceSettingsDialog(QDialog):
 class LogcatWindow(QDialog):
     """Logcat viewer window with real-time streaming and filtering capabilities."""
 
+    _stream_bytes = pyqtSignal(bytes)
+    _stream_reset = pyqtSignal()
+    _stream_perf_settings = pyqtSignal(int, int, int)  # interval_ms, buffer_size, lines_per_update
+    _stream_filter_patterns = pyqtSignal(list, int)  # patterns, revision
+
     def __init__(
         self,
         device,
@@ -797,21 +1036,18 @@ class LogcatWindow(QDialog):
         self.log_proxy.setSourceModel(self.log_model)
         self.log_proxy.set_visible_limit(self.max_lines)
         self.filtered_model = LogcatListModel(self)
-        self._compiled_filter_patterns: List[re.Pattern[str]] = []
 
-        # Performance and buffering configuration
-        self.log_buffer: List[LogLine] = []
+        # Performance and streaming configuration
         self.max_buffer_size = 100
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.process_buffered_logs)
-        self.update_timer.setSingleShot(True)
         self.update_interval_ms = 200
-        self._partial_line = ""
+        self.max_lines_per_update = 50
+        self.history_multiplier = 5
         self._suppress_logcat_errors = False
 
-        self.max_lines_per_update = 50
-        self.last_update_time = 0
-        self.history_multiplier = 5
+        # Stream worker (off-UI-thread decoding/parsing/batching)
+        self._stream_thread: Optional[QThread] = None
+        self._stream_worker: Optional[_LogcatStreamWorker] = None
+        self._filter_revision = 0
 
         if self._viewer_settings:
             self._auto_scroll_enabled = self._viewer_settings.auto_scroll_enabled
@@ -819,8 +1055,17 @@ class LogcatWindow(QDialog):
             self._auto_scroll_enabled = True
         self._suppress_scroll_signal = False
 
-        # Line numbering for log display
-        self._next_line_number = 1
+        # Display/search bookkeeping (avoid scanning editor text on every update)
+        self._display_revision = 0
+        self._display_lines: deque[str] = deque()
+        self._search_match_spans_by_row: Dict[int, List[Tuple[int, int]]] = {}
+        self._search_debounce_timer = QTimer(self)
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.timeout.connect(self._run_debounced_search_scan)
+        self._search_scan_inflight = False
+        self._search_scan_pending = False
+        self._search_task_handle = None
+        self._filter_rebuild_handle = None
 
         self._apply_persisted_settings(settings or {})
 
@@ -832,8 +1077,10 @@ class LogcatWindow(QDialog):
         # Search state (for highlight search feature)
         self._search_pattern: Optional[re.Pattern] = None
         self._search_match_rows: List[int] = []  # Rows with matches
+        self._search_match_spans: List[Tuple[int, int, int]] = []
         self._current_match_index: int = -1  # Current match in _search_match_rows
-        self._log_delegate: Optional[_LogListItemDelegate] = None
+
+        self._init_stream_worker()
 
         self.init_ui()
         self._setup_copy_features()
@@ -883,8 +1130,7 @@ class LogcatWindow(QDialog):
             self.max_buffer_size = _coerce(
                 settings.get("max_buffer_size"), 10, self.max_buffer_size
             )
-
-        self.update_timer.setInterval(self.update_interval_ms)
+        # Stream worker settings are synced after worker initialization.
 
     def _apply_viewer_settings(self) -> None:
         if not self._viewer_settings:
@@ -913,24 +1159,52 @@ class LogcatWindow(QDialog):
             show_preview_panel=show_preview,
         )
 
+    def _init_stream_worker(self) -> None:
+        """Start the background stream worker used for parsing/batching."""
+        thread = QThread(self)
+        worker = _LogcatStreamWorker()
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.initialize)
+        worker.batch_ready.connect(self._on_stream_batch_ready)
+
+        self._stream_bytes.connect(
+            worker.feed_bytes, Qt.ConnectionType.QueuedConnection
+        )
+        self._stream_reset.connect(worker.reset, Qt.ConnectionType.QueuedConnection)
+        self._stream_perf_settings.connect(
+            worker.set_performance_settings, Qt.ConnectionType.QueuedConnection
+        )
+        self._stream_filter_patterns.connect(
+            worker.set_filter_patterns, Qt.ConnectionType.QueuedConnection
+        )
+
+        thread.start()
+
+        self._stream_thread = thread
+        self._stream_worker = worker
+
+        self._sync_stream_worker_settings()
+        self._sync_stream_worker_filters()
+
+    def _sync_stream_worker_settings(self) -> None:
+        self._stream_perf_settings.emit(
+            int(self.update_interval_ms),
+            int(self.max_buffer_size),
+            int(self.max_lines_per_update),
+        )
+
+    def _sync_stream_worker_filters(self) -> None:
+        patterns: List[str] = []
+        if self.live_filter_pattern:
+            patterns.append(self.live_filter_pattern)
+        patterns.extend(self.active_filters)
+        self._stream_filter_patterns.emit(patterns, int(self._filter_revision))
+
     def _update_status_label(self, text):
         """Update status label with consistent formatting."""
         prefix = self._get_status_prefix()
         self.status_label.setText(f"{prefix} {text}")
-
-    def _get_buffer_stats(self):
-        """Get buffer statistics."""
-        if self._has_active_filters():
-            total_logs = self.filtered_model.rowCount()
-            filtered_count = total_logs
-        else:
-            total_logs = self.log_model.rowCount()
-            filtered_count = 0
-        return {
-            "total_logs": total_logs,
-            "buffer_size": len(self.log_buffer),
-            "filtered_count": filtered_count,
-        }
 
     def _rebuild_log_display_from_model(self) -> None:
         """Rebuild the text display from the current model state."""
@@ -942,7 +1216,9 @@ class LogcatWindow(QDialog):
                 capacity = max(1, int(self.max_lines))
                 lines = [line.raw for line in self.log_model.to_list()][-capacity:]
             self.log_display.setPlainText("\n".join(lines))
-            self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
+            self._display_lines = deque(lines)
+            self._display_revision += 1
+            self._schedule_search_refresh()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Failed to rebuild log display: %s", exc)
 
@@ -951,9 +1227,27 @@ class LogcatWindow(QDialog):
         if not lines:
             return
         try:
+            raw_lines = [line.raw for line in lines]
+            doc = self.log_display.document()
+            is_empty = doc.blockCount() == 1 and not doc.firstBlock().text()
+            prefix = "" if is_empty else "\n"
+
+            self.log_display.setUpdatesEnabled(False)
+            try:
+                cursor = QTextCursor(doc)
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                cursor.insertText(prefix + "\n".join(raw_lines))
+            finally:
+                self.log_display.setUpdatesEnabled(True)
+
+            capacity = max(1, int(self.max_lines))
             for line in lines:
-                self.log_display.appendPlainText(line.raw)
-            self.log_display.setMaximumBlockCount(max(1, int(self.max_lines)))
+                self._display_lines.append(line.raw)
+            while len(self._display_lines) > capacity:
+                self._display_lines.popleft()
+
+            self._display_revision += 1
+            self._schedule_search_refresh()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Failed to append lines to display: %s", exc)
 
@@ -967,75 +1261,83 @@ class LogcatWindow(QDialog):
 
     def _handle_filters_changed(self):
         """Rebuild filtered view when filters are updated."""
-        self._compiled_filter_patterns = self._compile_filter_patterns()
+        self._filter_revision += 1
+        current_revision = int(self._filter_revision)
+        self._sync_stream_worker_filters()
 
-        if self._has_active_filters():
-            self._rebuild_filtered_model()
-        else:
+        if self._filter_rebuild_handle is not None:
+            try:
+                self._filter_rebuild_handle.cancel()
+            except Exception:
+                pass
+            self._filter_rebuild_handle = None
+
+        if not self._has_active_filters():
             self.filtered_model.clear()
+            self._rebuild_log_display_from_model()
+            self._update_status_counts()
+            self._scroll_to_bottom()
+            return
 
-        self.limit_log_lines()
-        self._update_status_counts()
-        self._rebuild_log_display_from_model()
-        self._scroll_to_bottom()
-
-    def _has_active_filters(self) -> bool:
-        """Return whether any filter (live or saved) is active."""
-        return bool(self.live_filter_pattern) or bool(self.active_filters)
-
-    def _compile_filter_patterns(self) -> List[re.Pattern[str]]:
-        """Compile all active filter patterns into regex objects."""
         patterns: List[str] = []
         if self.live_filter_pattern:
             patterns.append(self.live_filter_pattern)
         patterns.extend(self.active_filters)
 
-        compiled: List[re.Pattern[str]] = []
-        for raw_pattern in patterns:
-            if not raw_pattern:
-                continue
-            try:
-                compiled.append(re.compile(raw_pattern, re.IGNORECASE))
-            except re.error:
-                continue
-        return compiled
+        logs_snapshot = self.log_model.to_list()
+        if len(logs_snapshot) <= 600:
+            matched = _filter_log_lines_snapshot(
+                logs_snapshot,
+                patterns,
+                int(self.max_lines),
+            )
+            self._apply_refilter_result(matched, current_revision)
+            return
 
-    def _line_matches_filters(self, line: LogLine) -> bool:
-        if not self._compiled_filter_patterns:
-            return False
-        return any(
-            pattern.search(line.raw) for pattern in self._compiled_filter_patterns
+        dispatcher = get_task_dispatcher()
+        context = TaskContext(
+            name="logcat_refilter",
+            device_serial=getattr(self.device, "device_serial_num", None),
+            category="logcat",
         )
+        handle = dispatcher.submit(
+            _filter_log_lines_snapshot,
+            logs_snapshot,
+            patterns,
+            int(self.max_lines),
+            context=context,
+        )
+        self._filter_rebuild_handle = handle
+        handle.completed.connect(
+            lambda matched: self._apply_refilter_result(matched, current_revision)
+        )
+        handle.failed.connect(self._on_filter_rebuild_failed)
+        self._update_status_label("Applying filters...")
 
-    def _rebuild_filtered_model(self) -> None:
+    def _on_filter_rebuild_failed(self, exc: Exception) -> None:
+        if isinstance(exc, TaskCancelledError):
+            return
+        logger.debug("Filter rebuild failed: %s", exc)
+
+    def _apply_refilter_result(self, matched: List[LogLine], revision: int) -> None:
+        """Apply an async refilter result if it matches the current revision."""
+        if int(revision) != int(self._filter_revision):
+            return
+        if not self._has_active_filters():
+            return
+
         self.filtered_model.clear()
-        if not self._compiled_filter_patterns:
-            return
+        if matched:
+            self.filtered_model.append_lines(matched)
 
-        matched = [
-            line
-            for line in self.log_model.to_list()
-            if self._line_matches_filters(line)
-        ]
+        self.limit_log_lines()
+        self._rebuild_log_display_from_model()
+        self._update_status_counts()
+        self._scroll_to_bottom()
 
-        capacity = max(1, self.max_lines)
-        if len(matched) > capacity:
-            matched = matched[-capacity:]
-        self.filtered_model.append_lines(matched)
-
-    def _append_filtered_lines(self, lines: List[LogLine]) -> None:
-        if not lines or not self._compiled_filter_patterns:
-            return
-
-        matched = [line for line in lines if self._line_matches_filters(line)]
-        if not matched:
-            return
-
-        self.filtered_model.append_lines(matched)
-        capacity = max(1, self.max_lines)
-        overflow = self.filtered_model.rowCount() - capacity
-        if overflow > 0:
-            self.filtered_model.remove_first(overflow)
+    def _has_active_filters(self) -> bool:
+        """Return whether any filter (live or saved) is active."""
+        return bool(self.live_filter_pattern) or bool(self.active_filters)
 
     def init_ui(self):
         """Initialize the logcat window UI."""
@@ -1112,6 +1414,7 @@ class LogcatWindow(QDialog):
         self.log_display.verticalScrollBar().valueChanged.connect(
             self._on_log_view_scrolled
         )
+        self.log_display.selectionChanged.connect(self._on_log_selection_changed)
 
         self.status_label = QLabel("Ready to start logcat...")
 
@@ -1651,9 +1954,10 @@ class LogcatWindow(QDialog):
 
     def on_performance_settings_updated(self):
         """Handle updates from the performance settings dialog."""
+        self.log_proxy.set_visible_limit(self.max_lines)
         self.limit_log_lines()
         self._update_status_counts()
-        self.update_timer.setInterval(self.update_interval_ms)
+        self._sync_stream_worker_settings()
         self._notify_settings_changed()
 
     def start_logcat(self):
@@ -1671,8 +1975,10 @@ class LogcatWindow(QDialog):
 
         try:
             self._clear_device_logcat_buffer()
-            self._partial_line = ""
+            self._stream_reset.emit()
             self._suppress_logcat_errors = False
+            self._sync_stream_worker_settings()
+            self._sync_stream_worker_filters()
 
             # Create QProcess for logcat
             process = QProcess(self)
@@ -1801,107 +2107,52 @@ class LogcatWindow(QDialog):
             return []
 
     def read_logcat_output(self):
-        """Read and buffer logcat output for processing."""
+        """Read stdout bytes and forward to the background worker."""
         if not self.logcat_process:
             return
 
         data = self.logcat_process.readAllStandardOutput()
-        text = bytes(data).decode("utf-8", errors="replace")
-
-        if not text:
+        chunk = bytes(data)
+        if not chunk:
             return
 
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        combined = (
-            f"{self._partial_line}{normalized}" if self._partial_line else normalized
-        )
+        self._stream_bytes.emit(chunk)
 
-        lines = combined.split("\n")
-        if combined.endswith("\n"):
-            self._partial_line = ""
-        else:
-            self._partial_line = lines.pop() if lines else combined
-
-        new_lines = [line for line in lines if line.strip()]
-
-        if not new_lines:
+    def _on_stream_batch_ready(
+        self, all_lines: List[LogLine], matched_lines: List[LogLine], revision: int
+    ) -> None:
+        """Apply a parsed batch from the stream worker to models and UI."""
+        if int(revision) != int(self._filter_revision):
             return
 
-        new_log_lines = [LogLine.from_string(line) for line in new_lines]
+        if all_lines:
+            self.log_model.append_lines(all_lines)
 
-        # Buffer new lines for throttled updates
-        self.log_buffer.extend(new_log_lines)
-
-        current_time = time.time() * 1000  # Convert to milliseconds
-        time_since_last_update = current_time - self.last_update_time
-
-        should_flush = (
-            time_since_last_update >= self.update_interval_ms
-            or len(self.log_buffer) >= self.max_buffer_size
-        )
-
-        if should_flush:
-            self.process_buffered_logs()
-        elif not self.update_timer.isActive():
-            remaining_time = max(
-                1, int(self.update_interval_ms - time_since_last_update)
-            )
-            self.update_timer.start(remaining_time)
-
-    def process_buffered_logs(self):
-        """Process buffered log lines and update UI."""
-        if not self.log_buffer:
-            return
-
-        current_time = time.time() * 1000
-        self.last_update_time = current_time
-
-        lines_to_process = self.log_buffer[: self.max_lines_per_update]
-        self.log_buffer = self.log_buffer[self.max_lines_per_update :]
-
-        if not lines_to_process:
-            if self.log_buffer and not self.update_timer.isActive():
-                self.update_timer.start(self.update_interval_ms)
-            return
-
-        numbered_lines = self._assign_line_numbers(lines_to_process)
-
-        if numbered_lines:
-            self.log_model.append_lines(numbered_lines)
-            if self._has_active_filters():
-                matched = [line for line in numbered_lines if self._line_matches_filters(line)]
-                self._append_filtered_lines(numbered_lines)
-                self._append_lines_to_log_display(matched)
-            else:
-                self._append_lines_to_log_display(numbered_lines)
-            self._manage_buffer_size()
+        if self._has_active_filters():
+            if matched_lines:
+                self.filtered_model.append_lines(matched_lines)
             self.limit_log_lines()
-            self._scroll_to_bottom()
+            self._append_lines_to_log_display(matched_lines)
+        else:
+            self._append_lines_to_log_display(all_lines)
+            self.limit_log_lines()
+        self._scroll_to_bottom()
 
         if self.is_running:
-            stats = self._get_buffer_stats()
-            if stats["buffer_size"] > 0:
+            if self._has_active_filters():
+                active_count = len(self.active_filters) + (
+                    1 if self.live_filter_pattern else 0
+                )
+                filtered_count = self.filtered_model.rowCount()
                 self._update_status_label(
-                    f"Logcat running... (buffered: {stats['buffer_size']} lines)"
+                    f"Logcat running... (filtered: {filtered_count}/{self.max_lines}, active: {active_count})"
                 )
             else:
-                suffix = "visible lines" if self._has_active_filters() else "lines"
+                capacity = self.max_lines * self.history_multiplier
+                total_logs = self.log_model.rowCount()
                 self._update_status_label(
-                    f"Logcat running... ({stats['total_logs']} {suffix})"
+                    f"Logcat running... ({total_logs}/{capacity} lines)"
                 )
-
-        if self.log_buffer and not self.update_timer.isActive():
-            self.update_timer.start(self.update_interval_ms)
-
-    def _assign_line_numbers(self, lines: List[LogLine]) -> List[LogLine]:
-        if not lines:
-            return []
-
-        numbered: List[LogLine] = []
-        for line in lines:
-            numbered.append(replace(line, line_no=self._next_line_number))
-            self._next_line_number += 1
-        return numbered
 
     def limit_log_lines(self):
         """Limit the number of lines in the display for performance."""
@@ -1967,9 +2218,15 @@ class LogcatWindow(QDialog):
 
     def _handle_logcat_stopped(self):
         """Reset state and UI once logcat streaming halts."""
-        self.update_timer.stop()
-        self.log_buffer.clear()
-        self._partial_line = ""
+        self._stream_reset.emit()
+        self._search_debounce_timer.stop()
+        self._search_scan_inflight = False
+        self._search_scan_pending = False
+        if self._search_task_handle is not None:
+            try:
+                self._search_task_handle.cancel()
+            except Exception:
+                pass
         self._suppress_logcat_errors = False
 
         self.is_running = False
@@ -1986,13 +2243,11 @@ class LogcatWindow(QDialog):
         """Clear the log display."""
         self.log_model.clear()
         self.filtered_model.clear()
-        self.log_buffer.clear()
-        self._partial_line = ""
-        if self._has_active_filters():
-            self._handle_filters_changed()
-        else:
-            self._update_status_label("Logs cleared")
-        self._next_line_number = 1
+        self._stream_reset.emit()
+        self._display_lines.clear()
+        self._display_revision += 1
+        self._clear_search_highlight()
+        self._update_status_label("Logs cleared")
         try:
             self.log_display.clear()
         except Exception:
@@ -2035,6 +2290,17 @@ class LogcatWindow(QDialog):
             if self._auto_scroll_enabled:
                 self.set_auto_scroll_enabled(False, from_scroll=True)
 
+    def _on_log_selection_changed(self) -> None:
+        """Pause auto-follow while the user is selecting text."""
+        try:
+            if not self._auto_scroll_enabled:
+                return
+            cursor = self.log_display.textCursor()
+            if cursor is not None and cursor.hasSelection():
+                self.set_auto_scroll_enabled(False, from_scroll=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Selection change handling failed: %s", exc)
+
     def apply_live_filter(self, pattern):
         """Apply live regex filter to logs in real-time."""
         self.live_filter_pattern = pattern.strip() if pattern.strip() else None
@@ -2042,9 +2308,7 @@ class LogcatWindow(QDialog):
 
     def refilter_display(self):
         """Re-filter all logs and update display."""
-        self.log_proxy.invalidateFilter()
-        self.limit_log_lines()
-        self._update_status_counts()
+        self._handle_filters_changed()
 
     def _scroll_to_bottom(self):
         """Scroll log display to bottom."""
@@ -2063,6 +2327,8 @@ class LogcatWindow(QDialog):
     # Search functionality
     # ─────────────────────────────────────────────────────────────────────────
 
+    _SEARCH_DEBOUNCE_MS = 250
+    _SYNC_SEARCH_SCAN_MAX_LINES = 600
     def _on_search_changed(self, pattern: str) -> None:
         """Handle search pattern changes from the search bar."""
         if not pattern:
@@ -2077,118 +2343,197 @@ class LogcatWindow(QDialog):
             return
 
         self._search_pattern = compiled
-        self._update_search_matches()
+        self._schedule_search_refresh(immediate=True)
 
     # Maximum search matches to collect for performance
     _MAX_SEARCH_MATCHES = 1000
 
-    def _update_search_matches(self) -> None:
-        """Scan visible logs and build list of matching line indices.
-
-        Limits results to _MAX_SEARCH_MATCHES for performance with large logs.
-        """
+    def _schedule_search_refresh(self, *, immediate: bool = False) -> None:
+        """Throttle search scanning to keep UI responsive during heavy streaming."""
         if not self._search_pattern:
-            self._search_match_rows = []
-            self._current_match_index = -1
-            self._search_bar.update_match_count(0, 0)
+            return
+        if self._search_scan_inflight:
+            self._search_scan_pending = True
             return
 
-        text = self.log_display.toPlainText()
-        lines = text.splitlines()
+        if immediate:
+            self._search_debounce_timer.start(1)
+            return
 
-        match_rows: List[int] = []
-        for row, line in enumerate(lines):
-            if self._search_pattern.search(line):
-                match_rows.append(row)
-                if len(match_rows) >= self._MAX_SEARCH_MATCHES:
-                    break
+        # Avoid starving updates during constant streaming by not restarting an active timer.
+        if self._search_debounce_timer.isActive():
+            return
+        self._search_debounce_timer.start(int(self._SEARCH_DEBOUNCE_MS))
 
-        self._search_match_rows = match_rows
+    def _run_debounced_search_scan(self) -> None:
+        """Kick off a background scan over the current visible display lines."""
+        if not self._search_pattern:
+            return
+        if self._search_scan_inflight:
+            self._search_scan_pending = True
+            return
 
-        if match_rows:
-            self._current_match_index = 0
+        if self._search_task_handle is not None:
+            try:
+                self._search_task_handle.cancel()
+            except Exception:
+                pass
+            self._search_task_handle = None
+
+        self._search_scan_inflight = True
+        self._search_scan_pending = False
+
+        lines_snapshot = list(self._display_lines)
+        revision = int(self._display_revision)
+        pattern = self._search_pattern.pattern
+        flags = int(self._search_pattern.flags)
+
+        if len(lines_snapshot) <= int(self._SYNC_SEARCH_SCAN_MAX_LINES):
+            result = _scan_search_spans(
+                lines_snapshot,
+                pattern,
+                flags,
+                int(self._MAX_SEARCH_MATCHES),
+            )
+            self._apply_search_scan_result(result, revision, pattern, flags)
+            return
+
+        dispatcher = get_task_dispatcher()
+        context = TaskContext(
+            name="logcat_search_scan",
+            device_serial=getattr(self.device, "device_serial_num", None),
+            category="logcat",
+        )
+        handle = dispatcher.submit(
+            _scan_search_spans,
+            lines_snapshot,
+            pattern,
+            flags,
+            int(self._MAX_SEARCH_MATCHES),
+            context=context,
+        )
+        self._search_task_handle = handle
+        handle.completed.connect(
+            lambda result: self._apply_search_scan_result(
+                result, revision, pattern, flags
+            )
+        )
+        handle.failed.connect(self._on_search_scan_failed)
+
+    def _on_search_scan_failed(self, exc: Exception) -> None:
+        self._search_scan_inflight = False
+        if isinstance(exc, TaskCancelledError):
+            if self._search_pattern and self._search_scan_pending:
+                self._schedule_search_refresh(immediate=True)
+            return
+        logger.debug("Search scan failed: %s", exc)
+        if self._search_pattern:
+            self._search_scan_pending = True
+            self._schedule_search_refresh(immediate=True)
+
+    def _apply_search_scan_result(
+        self,
+        result: Tuple[List[int], List[Tuple[int, int, int]], bool],
+        revision: int,
+        pattern: str,
+        flags: int,
+    ) -> None:
+        """Apply a background scan result if it still matches the current view."""
+        self._search_scan_inflight = False
+
+        if (
+            int(revision) != int(self._display_revision)
+            or not self._search_pattern
+            or self._search_pattern.pattern != pattern
+            or int(self._search_pattern.flags) != int(flags)
+        ):
+            if self._search_pattern:
+                self._search_scan_pending = True
+                self._schedule_search_refresh(immediate=True)
+            return
+
+        rows, spans, limited = result
+        self._search_match_rows = rows
+        self._search_match_spans = spans
+
+        spans_by_row: Dict[int, List[Tuple[int, int]]] = {}
+        for row, start, end in spans:
+            spans_by_row.setdefault(row, []).append((start, end))
+        self._search_match_spans_by_row = spans_by_row
+
+        if rows:
             cursor_row = self.log_display.textCursor().blockNumber()
-            for i, row in enumerate(match_rows):
+            self._current_match_index = 0
+            for i, row in enumerate(rows):
                 if row >= cursor_row:
                     self._current_match_index = i
                     break
-
-            self._update_current_match_highlight()
         else:
             self._current_match_index = -1
-            self._apply_search_highlight(None, -1)
 
-        total = len(match_rows)
+        total = len(rows)
         current = self._current_match_index + 1 if total > 0 else 0
-        limited = total >= self._MAX_SEARCH_MATCHES
-        self._search_bar.update_match_count(current, total, limited=limited)
+        self._search_bar.update_match_count(current, total, limited=bool(limited))
+
+        self._update_current_match_highlight()
+
+        if self._search_scan_pending:
+            self._search_scan_pending = False
+            self._schedule_search_refresh(immediate=True)
 
     def _update_current_match_highlight(self) -> None:
         """Update match highlight and scroll to the current match."""
         if not self._search_match_rows or self._current_match_index < 0:
-            self._apply_search_highlight(self._search_pattern, -1)
+            self._apply_search_highlight(-1)
             return
 
         current_row = self._search_match_rows[self._current_match_index]
-        self._apply_search_highlight(self._search_pattern, current_row)
+        self._apply_search_highlight(current_row)
 
-        # Move cursor to the first match in the current line.
-        if not self._search_pattern:
+        spans = self._search_match_spans_by_row.get(current_row) or []
+        if not spans:
             return
+
+        start, end = spans[0]
         document = self.log_display.document()
         block = document.findBlockByNumber(current_row)
         if not block.isValid():
             return
-        line_text = block.text()
-        match = self._search_pattern.search(line_text)
-        if not match:
-            return
 
         cursor = QTextCursor(document)
-        cursor.setPosition(block.position() + match.start())
-        cursor.setPosition(block.position() + match.end(), QTextCursor.MoveMode.KeepAnchor)
+        cursor.setPosition(block.position() + start)
+        cursor.setPosition(block.position() + end, QTextCursor.MoveMode.KeepAnchor)
         self.log_display.setTextCursor(cursor)
         self.log_display.ensureCursorVisible()
 
-    def _apply_search_highlight(
-        self, pattern: Optional[re.Pattern], current_row: int
-    ) -> None:
+    def _apply_search_highlight(self, current_row: int) -> None:
         """Highlight all matches in the text editor using extra selections."""
-        if pattern is None:
+        if not self._search_match_spans:
             self.log_display.setExtraSelections([])
             return
 
         document = self.log_display.document()
         selections: List[QTextEdit.ExtraSelection] = []
 
-        # Highlight all matches (limited to reduce overhead).
-        match_budget = self._MAX_SEARCH_MATCHES
-        for row in self._search_match_rows:
-            if match_budget <= 0:
-                break
+        for row, start, end in self._search_match_spans:
             block = document.findBlockByNumber(row)
             if not block.isValid():
                 continue
-            text = block.text()
-            for match in pattern.finditer(text):
-                if match_budget <= 0:
-                    break
-                sel = QTextEdit.ExtraSelection()
-                sel_cursor = QTextCursor(document)
-                sel_cursor.setPosition(block.position() + match.start())
-                sel_cursor.setPosition(
-                    block.position() + match.end(),
-                    QTextCursor.MoveMode.KeepAnchor,
-                )
-                sel.cursor = sel_cursor
-                sel.format.setBackground(
-                    QColor(_LogListItemDelegate.HIGHLIGHT_BG)
-                    if row != current_row
-                    else QColor(_LogListItemDelegate.HIGHLIGHT_CURRENT_BG)
-                )
-                sel.format.setForeground(QColor(_LogListItemDelegate.HIGHLIGHT_TEXT))
-                selections.append(sel)
-                match_budget -= 1
+            sel = QTextEdit.ExtraSelection()
+            sel_cursor = QTextCursor(document)
+            sel_cursor.setPosition(block.position() + start)
+            sel_cursor.setPosition(
+                block.position() + end,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            sel.cursor = sel_cursor
+            sel.format.setBackground(
+                QColor(_LogListItemDelegate.HIGHLIGHT_BG)
+                if row != current_row
+                else QColor(_LogListItemDelegate.HIGHLIGHT_CURRENT_BG)
+            )
+            sel.format.setForeground(QColor(_LogListItemDelegate.HIGHLIGHT_TEXT))
+            selections.append(sel)
 
         self.log_display.setExtraSelections(selections)
 
@@ -2255,10 +2600,23 @@ class LogcatWindow(QDialog):
 
     def _clear_search_highlight(self) -> None:
         """Clear search pattern and refresh view."""
+        self._search_debounce_timer.stop()
+        self._search_scan_inflight = False
+        self._search_scan_pending = False
+        if self._search_task_handle is not None:
+            try:
+                self._search_task_handle.cancel()
+            except Exception:
+                pass
+            self._search_task_handle = None
         self._search_pattern = None
         self._search_match_rows = []
+        self._search_match_spans = []
+        self._search_match_spans_by_row = {}
         self._current_match_index = -1
-        self._apply_search_highlight(None, -1)
+        self._apply_search_highlight(-1)
+        if hasattr(self, "_search_bar") and self._search_bar:
+            self._search_bar.update_match_count(0, 0)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -2268,6 +2626,28 @@ class LogcatWindow(QDialog):
 
         if self.logcat_process:
             self.stop_logcat()
+        self._search_debounce_timer.stop()
+        self._search_scan_inflight = False
+        self._search_scan_pending = False
+        if self._search_task_handle is not None:
+            try:
+                self._search_task_handle.cancel()
+            except Exception:
+                pass
+            self._search_task_handle = None
+        if self._filter_rebuild_handle is not None:
+            try:
+                self._filter_rebuild_handle.cancel()
+            except Exception:
+                pass
+            self._filter_rebuild_handle = None
+
+        if self._stream_thread is not None:
+            self._stream_reset.emit()
+            self._stream_thread.quit()
+            self._stream_thread.wait(1500)
+            self._stream_thread = None
+            self._stream_worker = None
 
         # Cleanup device watcher to prevent memory leaks
         if self._device_watcher:
