@@ -1669,6 +1669,11 @@ class LogcatWindow(QDialog):
         clear_btn.clicked.connect(self.clear_logs)
         primary_row.addWidget(clear_btn)
 
+        clear_buffer_btn = QPushButton("🧹 Clear Buffer")
+        clear_buffer_btn.setToolTip("Clear the device logcat buffer")
+        clear_buffer_btn.clicked.connect(self.confirm_clear_device_logcat_buffer)
+        primary_row.addWidget(clear_buffer_btn)
+
         primary_row.addWidget(self.create_vertical_separator())
 
         self.follow_latest_checkbox = QCheckBox("Follow newest")
@@ -1974,7 +1979,6 @@ class LogcatWindow(QDialog):
             return
 
         try:
-            self._clear_device_logcat_buffer()
             self._stream_reset.emit()
             self._suppress_logcat_errors = False
             self._sync_stream_worker_settings()
@@ -2014,7 +2018,7 @@ class LogcatWindow(QDialog):
         return selected or ["E"]
 
     def _clear_device_logcat_buffer(self) -> None:
-        """Clear device-side logcat buffer so streaming starts from current time."""
+        """Clear the device-side logcat buffer."""
         try:
             subprocess.run(
                 ["adb", "-s", self.device.device_serial_num, "logcat", "-c"],
@@ -2026,6 +2030,21 @@ class LogcatWindow(QDialog):
             logger.warning("ADB executable not found when clearing logcat buffer.")
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Clearing logcat buffer failed but continuing: %s", exc)
+
+    def confirm_clear_device_logcat_buffer(self) -> None:
+        """Ask for confirmation before clearing the device logcat buffer."""
+        response = QMessageBox.question(
+            self,
+            "Clear Logcat Buffer",
+            "Clear the device logcat buffer? This removes buffered logs on the device.",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if response != QMessageBox.StandardButton.Ok:
+            return
+
+        self._clear_device_logcat_buffer()
+        self._update_status_label("Device logcat buffer cleared.")
 
     def _handle_logcat_started(self):
         """Update state when the logcat process reports it has started."""

@@ -7,6 +7,13 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 ## Unreleased
 - None.
 
+## 0.0.50 - 2026-02-03
+### Added
+- Logcat viewer button to clear the device logcat buffer with confirmation.
+
+### Changed
+- Logcat streaming no longer clears the device logcat buffer on start.
+
 ## 0.0.49 - 2026-02-03
 ### Added
 - APK install transfer progress with cancel support (`1d36edc`).

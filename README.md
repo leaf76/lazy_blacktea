@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current release: v0.0.49 (2026-02-03)
+> Current release: v0.0.50 (2026-02-03)
 > Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 **Languages:** English | [繁體中文](README_zh-TW.md)
@@ -33,7 +33,7 @@ For headless environments (CI, remote), add `QT_QPA_PLATFORM=offscreen`.
 | Device management | Live discovery, grouping, and dynamic refresh | `ui.async_device_manager`, `ui.device_manager` |
 | Automation tasks | Batch installs (with transfer progress + cancel), bug reports, shell, recording, screenshots | `ui.device_operations_manager`, `utils.adb_tools` |
 | File workflows | Browse device files, preview, and coordinate export paths | `ui.device_file_browser_manager`, `utils.file_generation_utils` |
-| Diagnostics | Logcat streaming, error classification, completion dialogs | `ui.logcat_viewer`, `ui.console_manager`, `ui.error_handler` |
+| Diagnostics | Logcat streaming, buffer controls, error classification, completion dialogs | `ui.logcat_viewer`, `ui.console_manager`, `ui.error_handler` |
 | Performance | Debounced refresh, batched UI updates, native helpers | `utils.debounced_refresh`, `utils.task_dispatcher`, `native_lbb` |
 
 ## UI Preview

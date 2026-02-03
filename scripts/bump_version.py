@@ -7,7 +7,9 @@ import argparse
 import re
 from pathlib import Path
 
-RELEASE_LINE_PATTERN = re.compile(r"^(>\s+Current\s+release:\s+v)(\S+)$", re.MULTILINE)
+RELEASE_LINE_PATTERN = re.compile(
+    r"^(>\s+Current\s+release:\s+v)(\S+?)(\s+\(.*\))?$", re.MULTILINE
+)
 
 
 def write_version_file(root: Path, version: str) -> None:
@@ -22,7 +24,8 @@ def update_readme(root: Path, version: str) -> None:
     content = readme_path.read_text(encoding="utf-8")
 
     def _replace(match: re.Match[str]) -> str:
-        return f"{match.group(1)}{version}"
+        suffix = match.group(3) or ""
+        return f"{match.group(1)}{version}{suffix}"
 
     updated, count = RELEASE_LINE_PATTERN.subn(_replace, content)
     if count == 0:

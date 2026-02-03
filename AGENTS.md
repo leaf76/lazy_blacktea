@@ -152,3 +152,4 @@ Sources (keep in sync):
 - **Dead Code**: `main.py` in root is vestigial (prints "Hello") - can remove
 - **Qt Plugin**: Must call `configure_qt_plugin_path()` before any Qt import
 - **Coverage**: Track `utils/`, `ui/`, `config/` - see `.coveragerc`
+- **Logcat Buffer**: Logcat start no longer clears the device buffer; use the Clear Buffer button in the viewer
