@@ -11,12 +11,14 @@ This module is responsible for:
 
 import re
 import shlex
+import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from utils import adb_models, adb_tools, common
-from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
+from utils.task_dispatcher import TaskCancelledError, TaskContext, TaskHandle, get_task_dispatcher
 
 logger = common.get_logger("terminal_manager")
 
@@ -113,6 +115,8 @@ class TerminalManager(QObject):
         self.parent_window = parent_window
         self._dispatcher = get_task_dispatcher()
         self._active_handles: List[TaskHandle] = []
+        self._run_seq: int = 0
+        self._active_run_id: Optional[int] = None
         self._command_history: List[str] = []
         self._history_index: int = -1
         self._max_history: int = 100
@@ -130,6 +134,12 @@ class TerminalManager(QObject):
             raw_command: The raw command string from user input
         """
         if not raw_command.strip():
+            return
+
+        if self._is_executing:
+            self.system_message.emit(
+                "A command is already executing. Cancel it before starting a new one."
+            )
             return
 
         # Get selected devices
@@ -169,6 +179,10 @@ class TerminalManager(QObject):
         self._is_executing = True
         self.execution_started.emit()
 
+        self._run_seq += 1
+        run_id = self._run_seq
+        self._active_run_id = run_id
+
         # Execute on each device
         context = TaskContext(name="terminal_shell", category="terminal")
         handle = self._dispatcher.submit(
@@ -179,33 +193,54 @@ class TerminalManager(QObject):
         )
 
         handle.completed.connect(
-            lambda payload: self._on_execution_completed(shell_cmd, payload)
+            lambda payload, rid=run_id: self._on_execution_completed(shell_cmd, payload, rid)
         )
-        handle.failed.connect(lambda exc: self._on_execution_failed(shell_cmd, exc))
+        handle.failed.connect(lambda exc, rid=run_id: self._on_execution_failed(shell_cmd, exc, rid))
+        handle.finished.connect(lambda h=handle: self._cleanup_handle(h))
         self._active_handles.append(handle)
 
     def _execute_shell_on_devices(
         self,
         devices: List[adb_models.DeviceInfo],
         shell_cmd: str,
+        *,
+        task_handle: Optional[TaskHandle] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """Execute shell command on devices and collect results.
 
         This runs in a background thread.
         """
-        results = {}
+        results: Dict[str, Any] = {}
         serials = [d.device_serial_num for d in devices]
 
         # Use the cancellable command runner
-        processes = adb_tools.run_cancellable_adb_shell_command(serials, shell_cmd)
+        processes_by_serial = adb_tools.run_cancellable_adb_shell_command(serials, shell_cmd)
+        processes = [p for p in processes_by_serial.values() if p is not None]
 
-        for device, process in zip(devices, processes):
+        if task_handle and task_handle.is_cancelled():
+            self._terminate_processes(processes)
+            raise TaskCancelledError("Operation cancelled")
+
+        for device in devices:
             serial = device.device_serial_num
             name = device.device_model or serial
+            process = processes_by_serial.get(serial)
+
+            if process is None:
+                results[serial] = {
+                    "name": name,
+                    "lines": ["Failed to start adb process"],
+                    "is_error": True,
+                }
+                continue
 
             try:
-                stdout, stderr = process.communicate(timeout=60)
+                stdout, stderr = self._collect_process_output(
+                    process,
+                    task_handle,
+                    overall_timeout=60.0,
+                )
 
                 lines = []
                 is_error = False
@@ -237,17 +272,36 @@ class TerminalManager(QObject):
                     "is_error": is_error,
                 }
 
-            except Exception as e:
+            except TaskCancelledError:
+                self._terminate_processes(processes)
+                raise
+            except subprocess.TimeoutExpired:
                 results[serial] = {
                     "name": name,
-                    "lines": [f"Error: {str(e)}"],
+                    "lines": ["Error: command timed out"],
+                    "is_error": True,
+                }
+            except OSError as exc:
+                results[serial] = {
+                    "name": name,
+                    "lines": [f"Error: {str(exc)}"],
+                    "is_error": True,
+                }
+            except Exception as exc:
+                logger.exception("Terminal command error on %s: %s", serial, exc)
+                results[serial] = {
+                    "name": name,
+                    "lines": [f"Error: {str(exc)}"],
                     "is_error": True,
                 }
 
         return {"results": results}
 
-    def _on_execution_completed(self, shell_cmd: str, payload: Any) -> None:
+    def _on_execution_completed(self, shell_cmd: str, payload: Any, run_id: int) -> None:
         """Handle successful command execution."""
+        if self._active_run_id != run_id:
+            return
+
         results = payload.get("results", {}) if isinstance(payload, dict) else {}
 
         for serial, data in results.items():
@@ -262,24 +316,105 @@ class TerminalManager(QObject):
         QTimer.singleShot(
             0, lambda: self.system_message.emit(f"Completed: {shell_cmd}")
         )
+        self._active_run_id = None
         self._is_executing = False
         QTimer.singleShot(0, self.execution_finished.emit)
 
-    def _on_execution_failed(self, shell_cmd: str, exc: Exception) -> None:
-        error_msg = f"Execution failed: {str(exc)}"
-        logger.error(f"Terminal command failed: {shell_cmd} - {exc}")
+    def _on_execution_failed(self, shell_cmd: str, exc: Exception, run_id: int) -> None:
+        if self._active_run_id != run_id:
+            return
+
+        if isinstance(exc, TaskCancelledError):
+            logger.info('Terminal command cancelled: %s', shell_cmd)
+            error_msg = f"Cancelled: {shell_cmd}"
+        else:
+            error_msg = f"Execution failed: {str(exc)}"
+            logger.error(f"Terminal command failed: {shell_cmd} - {exc}")
 
         QTimer.singleShot(0, lambda: self.system_message.emit(error_msg))
+        self._active_run_id = None
         self._is_executing = False
         QTimer.singleShot(0, self.execution_finished.emit)
 
     def cancel_all(self) -> None:
-        for handle in self._active_handles:
+        if not self._active_handles:
+            return
+
+        for handle in list(self._active_handles):
             handle.cancel()
-        self._active_handles.clear()
+
+        self._active_run_id = None
         self._is_executing = False
-        self.system_message.emit("All commands cancelled.")
+        self.system_message.emit("Cancellation requested.")
         self.execution_finished.emit()
+
+    def _cleanup_handle(self, handle: TaskHandle) -> None:
+        try:
+            self._active_handles.remove(handle)
+        except ValueError:
+            return
+
+    @staticmethod
+    def _request_process_termination(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except Exception as exc:
+            logger.debug("Failed to terminate process %s: %s", getattr(process, "pid", "?"), exc)
+
+    @staticmethod
+    def _force_kill_process(process: subprocess.Popen, *, timeout: float) -> None:
+        if process.poll() is not None:
+            return
+        TerminalManager._request_process_termination(process)
+        try:
+            process.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+        try:
+            process.kill()
+        except Exception as exc:
+            logger.debug("Failed to kill process %s: %s", getattr(process, "pid", "?"), exc)
+
+    @staticmethod
+    def _terminate_processes(processes: List[subprocess.Popen]) -> None:
+        for proc in processes:
+            TerminalManager._request_process_termination(proc)
+        for proc in processes:
+            TerminalManager._force_kill_process(proc, timeout=0.5)
+
+    def _collect_process_output(
+        self,
+        process: subprocess.Popen,
+        task_handle: Optional[TaskHandle],
+        *,
+        poll_interval: float = 0.2,
+        kill_timeout: float = 0.5,
+        overall_timeout: float = 60.0,
+    ) -> tuple[Any, Any]:
+        """Wait for process completion while honouring task cancellation."""
+        deadline = time.time() + overall_timeout
+
+        while True:
+            if task_handle and task_handle.is_cancelled():
+                self._request_process_termination(process)
+
+            remaining = max(0.0, deadline - time.time())
+            if remaining <= 0.0:
+                self._force_kill_process(process, timeout=kill_timeout)
+                raise subprocess.TimeoutExpired(cmd="adb shell", timeout=overall_timeout)
+
+            timeout = min(poll_interval, remaining)
+            try:
+                return process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if task_handle and task_handle.is_cancelled():
+                    self._force_kill_process(process, timeout=kill_timeout)
+                    raise TaskCancelledError("Operation cancelled")
+                continue
 
     def _get_selected_devices(self) -> List[adb_models.DeviceInfo]:
         """Get the list of currently selected devices."""

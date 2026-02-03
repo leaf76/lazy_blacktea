@@ -473,14 +473,20 @@ class CommandExecutionManager(QObject):
         task_handle: Optional[TaskHandle] = None,
         **_: Any,
     ) -> Dict[str, Any]:
-        processes = adb_tools.run_cancellable_adb_shell_command(serials, command)
-        if not processes:
+        processes_by_serial = adb_tools.run_cancellable_adb_shell_command(serials, command)
+        started_processes = [p for p in processes_by_serial.values() if p is not None]
+        if not started_processes:
             raise RuntimeError(f"Failed to start command '{command}'.")
 
-        self._register_processes_for_handle(task_handle, processes)
+        self._register_processes_for_handle(task_handle, started_processes)
 
         results: List[List[str]] = []
-        for serial, process in zip(serials, processes):
+        for serial in serials:
+            process = processes_by_serial.get(serial)
+            if process is None:
+                results.append(["Failed to start adb process"])
+                continue
+
             stdout, stderr = self._collect_process_output(process, task_handle)
             lines: List[str] = []
             if stdout:

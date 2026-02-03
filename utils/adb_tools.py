@@ -1283,14 +1283,12 @@ def run_adb_shell_command(
 def run_cancellable_adb_shell_command(
     serial_nums: list[str],
     command_str: str,
-) -> list[subprocess.Popen]:
-    """Run adb shell command on multiple devices and return the process objects."""
-    processes = []
+) -> dict[str, Optional[subprocess.Popen]]:
+    """Run adb shell command on multiple devices and return process objects by serial."""
+    processes: dict[str, Optional[subprocess.Popen]] = {}
     for s in serial_nums:
         cmd = adb_commands.cmd_adb_shell(s, command_str)
-        process = common.create_cancellable_process(cmd)
-        if process:
-            processes.append(process)
+        processes[s] = common.create_cancellable_process(cmd)
     return processes
 
 

@@ -595,29 +595,29 @@ class ToolsPanelController:
     def _setup_terminal_history_navigation(
         self, terminal_widget: TerminalWidget, terminal_manager: TerminalManager
     ) -> None:
-        from PyQt6.QtCore import QEvent
-        from PyQt6.QtGui import QKeyEvent
+        from PyQt6.QtCore import QEvent, QObject
 
-        original_event_filter = terminal_widget.eventFilter
+        input_line = terminal_widget.input_line
 
-        def enhanced_event_filter(obj, event):
-            if (
-                obj is terminal_widget.input_line
-                and event.type() == QEvent.Type.KeyPress
-            ):
-                if event.key() == Qt.Key.Key_Up:
-                    prev_cmd = terminal_manager.get_previous_command()
-                    if prev_cmd is not None:
-                        terminal_widget.input_line.setText(prev_cmd)
-                    return True
-                elif event.key() == Qt.Key.Key_Down:
-                    next_cmd = terminal_manager.get_next_command()
-                    if next_cmd is not None:
-                        terminal_widget.input_line.setText(next_cmd)
-                    return True
-            return original_event_filter(obj, event)
+        class _TerminalHistoryEventFilter(QObject):
+            def eventFilter(self, obj, event):  # type: ignore[override]
+                if obj is input_line and event.type() == QEvent.Type.KeyPress:
+                    if event.key() == Qt.Key.Key_Up:
+                        prev_cmd = terminal_manager.get_previous_command()
+                        if prev_cmd is not None:
+                            input_line.setText(prev_cmd)
+                        return True
+                    if event.key() == Qt.Key.Key_Down:
+                        next_cmd = terminal_manager.get_next_command()
+                        if next_cmd is not None:
+                            input_line.setText(next_cmd)
+                        return True
+                return False
 
-        terminal_widget.eventFilter = enhanced_event_filter
+        history_filter = _TerminalHistoryEventFilter(input_line)
+        input_line.installEventFilter(history_filter)
+        # Keep the filter alive for the widget lifetime.
+        terminal_widget._history_event_filter = history_filter  # type: ignore[attr-defined]
 
     def _create_command_templates_bar(self, terminal_widget: TerminalWidget) -> QWidget:
         bar = QWidget()
