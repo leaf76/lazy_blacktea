@@ -782,13 +782,17 @@ class AsyncDeviceManager(QObject):
             # 只更新實際獲得的有效值，保持原有值不被覆蓋
             wifi_status = detailed_info.get('wifi_status')
             if wifi_status is not None:
-                device_info.wifi_status = wifi_status
-                device_info.wifi_is_on = (wifi_status == 1)
+                try:
+                    device_info.wifi_is_on = bool(int(wifi_status))
+                except (ValueError, TypeError):
+                    device_info.wifi_is_on = bool(wifi_status)
 
             bt_status = detailed_info.get('bluetooth_status')
             if bt_status is not None:
-                device_info.bluetooth_status = bt_status
-                device_info.bt_is_on = (bt_status == 1)
+                try:
+                    device_info.bt_is_on = bool(int(bt_status))
+                except (ValueError, TypeError):
+                    device_info.bt_is_on = bool(bt_status)
 
             # 只在獲得有效非Unknown值時才更新字符串字段
             android_ver = detailed_info.get('android_version')
