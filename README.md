@@ -12,6 +12,11 @@
 
 **Languages:** English | [繁體中文](README_zh-TW.md)
 
+## Project Status
+This Python/PyQt6 version may no longer receive active maintenance or new releases.
+
+For a Rust-based version, please use: <https://github.com/leaf76/lazy_blacktea_rust>
+
 ## Why Lazy Blacktea?
 - Monitor multiple Android devices and schedule operations from a single window.
 - Ship ready-to-run automation tasks (install, record, capture, shell commands, logcat streaming).

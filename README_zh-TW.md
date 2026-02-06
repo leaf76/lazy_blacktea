@@ -10,6 +10,11 @@
 > Current release: v0.0.50（2026-02-03） | [English version](README.md)
 > Release notes：[`CHANGELOG.md`](CHANGELOG.md)
 
+## 專案狀態
+此 Python/PyQt6 版本可能不再主動維護或發布新版本。
+
+若要使用 Rust 版本，請移駕：<https://github.com/leaf76/lazy_blacktea_rust>
+
 ## 為什麼選擇 Lazy Blacktea？
 - 單一視窗即可掌握多台 Android 裝置狀態與操作排程。
 - 內建常用自動化工作（安裝、錄製、截圖、shell 指令、logcat 串流）。
