@@ -230,6 +230,8 @@ class StyleManager:
 
     # 動態顏色表（會依主題更新）
     COLORS: Dict[str, str] = deepcopy(_THEME_PRESETS["light"])
+    # Prefer broadly available monospace fonts to avoid Qt font warnings at startup.
+    TERMINAL_FONT_FAMILY = "'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace"
 
     BUTTON_STYLE_PROFILES: Dict[ButtonStyle, Dict[str, str]] = {
         ButtonStyle.PRIMARY: {
@@ -487,7 +489,7 @@ class StyleManager:
                     ("border", "none"),
                     ("border-radius", "0"),
                     ("padding", "12px"),
-                    ("font-family", "'SF Mono', 'Consolas', 'Monaco', monospace"),
+                    ("font-family", TERMINAL_FONT_FAMILY),
                     ("font-size", "13px"),
                     ("line-height", "1.5"),
                 ),
@@ -500,7 +502,7 @@ class StyleManager:
                     ("border", "1px solid {terminal_input_border}"),
                     ("border-radius", "6px"),
                     ("padding", "10px 12px"),
-                    ("font-family", "'SF Mono', 'Consolas', 'Monaco', monospace"),
+                    ("font-family", TERMINAL_FONT_FAMILY),
                     ("font-size", "13px"),
                 ),
             ),
@@ -515,7 +517,7 @@ class StyleManager:
                 "#promptLabel",
                 (
                     ("color", "{terminal_prompt}"),
-                    ("font-family", "'SF Mono', 'Consolas', 'Monaco', monospace"),
+                    ("font-family", TERMINAL_FONT_FAMILY),
                     ("font-size", "13px"),
                     ("font-weight", "bold"),
                 ),

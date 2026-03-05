@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import Mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -46,10 +47,19 @@ class DummyController:
         self.last_dict = dict(device_dict)
 
 
+class DummySelectionManager:
+    def __init__(self, active_serial=None):
+        self._active_serial = active_serial
+
+    def get_active_serial(self):
+        return self._active_serial
+
+
 class DummyWindow:
     def __init__(self):
         self.device_dict = {}
         self.device_list_controller = DummyController()
+        self.device_selection_manager = DummySelectionManager()
         self.run_in_thread = lambda func, *args, **kwargs: func()
 
 
@@ -91,6 +101,36 @@ class BatteryInfoManagerTest(unittest.TestCase):
         self.assertTrue(self.timer.started)
         self.timer.trigger()
         self.assertIn("ABC", self.fetch_calls)
+
+    def test_apply_refresh_updates_active_overview_explicitly(self):
+        self.window.device_dict = {"ABC": DummyDeviceInfo()}
+        self.window.device_selection_manager = DummySelectionManager("ABC")
+        self.window.overview_snapshot = {}
+
+        def update_device_overview():
+            self.window.overview_snapshot = self.manager.get_cached_info("ABC")
+
+        self.window.update_device_overview = Mock(side_effect=update_device_overview)
+
+        self.manager._apply_refresh(
+            {
+                "ABC": {
+                    "battery_level": "80%",
+                    "screen_size": "Physical size: 999x999",
+                    "cpu_arch": "x86",
+                }
+            }
+        )
+
+        self.window.update_device_overview.assert_called_once_with()
+        self.assertEqual(
+            self.window.overview_snapshot,
+            {
+                "battery_level": "80%",
+                "screen_size": "Physical size: 999x999",
+                "cpu_arch": "x86",
+            },
+        )
 
 
 if __name__ == '__main__':

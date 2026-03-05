@@ -298,6 +298,22 @@ class DeviceManager(QObject):
         # 觸發UI更新以顯示詳細信息
         self.update_device_list(self.device_dict)
 
+        selection_manager = getattr(self.parent, 'device_selection_manager', None)
+        active_serial = None
+        if selection_manager is not None and hasattr(selection_manager, 'get_active_serial'):
+            active_serial = selection_manager.get_active_serial()
+
+        if active_serial != serial:
+            return
+
+        battery_info_manager = getattr(self.parent, 'battery_info_manager', None)
+        if battery_info_manager is None or not hasattr(
+            battery_info_manager, 'refresh_serials'
+        ):
+            return
+
+        battery_info_manager.refresh_serials([serial])
+
     def _on_basic_devices_ready(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         """處理基本設備信息全部就緒"""
         current_serials = set(device_dict.keys())

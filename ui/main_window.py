@@ -1503,18 +1503,6 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             device, device_serial
         )
 
-        widget = getattr(self, "device_overview_widget", None)
-        if widget is not None and widget.get_active_serial() == device_serial:
-            condensed_text = self.device_list_controller.get_device_detail_text(
-                device,
-                device_serial,
-                include_additional=False,
-                include_identity=False,
-                include_connectivity=False,
-                include_status=True,
-            )
-            widget.set_overview(device, device_serial, condensed_text)
-
         return detail_text
 
     def browse_output_path(self):

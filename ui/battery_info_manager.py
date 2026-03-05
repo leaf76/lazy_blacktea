@@ -86,7 +86,19 @@ class BatteryInfoManager:
     # ------------------------------------------------------------------
     def _apply_refresh(self, data: Dict[str, Dict[str, str]]) -> None:
         self.cache.update(data)
-        self.window.device_list_controller.update_device_list(self.window.device_dict)
+        controller = getattr(self.window, 'device_list_controller', None)
+        if controller is not None and hasattr(controller, 'update_device_list'):
+            controller.update_device_list(self.window.device_dict)
+
+        selection_manager = getattr(self.window, 'device_selection_manager', None)
+        active_serial = None
+        if selection_manager is not None and hasattr(selection_manager, 'get_active_serial'):
+            active_serial = selection_manager.get_active_serial()
+
+        if active_serial and active_serial in data:
+            update_overview = getattr(self.window, 'update_device_overview', None)
+            if callable(update_overview):
+                update_overview()
 
     @staticmethod
     def _default_post_callback(callback: Callable[[], None]) -> None:

@@ -71,6 +71,18 @@ class ShellCommandsLayoutTest(unittest.TestCase):
             "Terminal widget should have cancel_requested signal",
         )
 
+    def test_terminal_stylesheet_avoids_missing_sf_mono_font(self):
+        self.controller._create_shell_commands_tab(self.tab_widget)
+
+        terminal_widget = self.window.terminal_widget
+        style_sheet = terminal_widget.styleSheet()
+
+        self.assertNotIn(
+            "SF Mono",
+            style_sheet,
+            "Terminal stylesheet should avoid fonts that trigger Qt fatal warnings on macOS",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

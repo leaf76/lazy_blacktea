@@ -7,6 +7,11 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 ## Unreleased
 - None.
 
+## 0.0.51 - 2026-03-06
+### Fixed
+- Refresh the active device overview when detailed device data and battery snapshots update.
+- Avoid terminal startup aborts on macOS/Qt environments that treat missing font warnings as fatal.
+
 ## 0.0.50 - 2026-02-03
 ### Added
 - Logcat viewer button to clear the device logcat buffer with confirmation.

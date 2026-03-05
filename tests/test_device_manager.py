@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ['HOME'] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.test_home')
 
 # Import Qt modules for testing
-from PyQt6.QtCore import QCoreApplication, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from utils import adb_models
@@ -200,10 +200,10 @@ class TestDeviceRefreshThread(unittest.TestCase):
     def setUp(self):
         """Set up test environment."""
         # Create a minimal Qt application for signal testing
-        if not QCoreApplication.instance():
-            self.app = QCoreApplication([])
+        if not QApplication.instance():
+            self.app = QApplication([])
         else:
-            self.app = QCoreApplication.instance()
+            self.app = QApplication.instance()
 
         # Create a real QObject for the parent since QThread requires it
         self.parent_widget = QObject()
@@ -337,10 +337,10 @@ class TestDeviceManager(unittest.TestCase):
 
     def setUp(self):
         """Set up test environment."""
-        if not QCoreApplication.instance():
-            self.app = QCoreApplication([])
+        if not QApplication.instance():
+            self.app = QApplication([])
         else:
-            self.app = QCoreApplication.instance()
+            self.app = QApplication.instance()
 
         # Create a real QWidget for testing since DeviceManager expects a widget parent
         self.parent_widget = QWidget()
@@ -507,6 +507,36 @@ class TestDeviceManager(unittest.TestCase):
         self.device_manager.force_refresh()
 
         self.device_manager.refresh_thread.force_refresh.assert_called_once()
+
+    def test_on_device_detailed_loaded_refreshes_active_serial_additional_info(self):
+        """Active device detail refresh should also refresh cached additional info."""
+        serial = "TEST123"
+        self.parent_widget.device_selection_manager = Mock(
+            get_active_serial=Mock(return_value=serial)
+        )
+        self.parent_widget.battery_info_manager = Mock(refresh_serials=Mock())
+        self.parent_widget.update_device_list = Mock()
+
+        self.device_manager._on_device_detailed_loaded(serial, self.mock_device)
+
+        self.parent_widget.update_device_list.assert_called_once_with(
+            self.device_manager.device_dict
+        )
+        self.parent_widget.battery_info_manager.refresh_serials.assert_called_once_with(
+            [serial]
+        )
+
+    def test_on_device_detailed_loaded_skips_additional_refresh_for_inactive_serial(self):
+        """Non-active device detail refresh should not force overview cache updates."""
+        self.parent_widget.device_selection_manager = Mock(
+            get_active_serial=Mock(return_value="OTHER123")
+        )
+        self.parent_widget.battery_info_manager = Mock(refresh_serials=Mock())
+        self.parent_widget.update_device_list = Mock()
+
+        self.device_manager._on_device_detailed_loaded("TEST123", self.mock_device)
+
+        self.parent_widget.battery_info_manager.refresh_serials.assert_not_called()
 
 
 def run_device_manager_tests():
