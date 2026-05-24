@@ -21,14 +21,14 @@ class MainWindowShellIntegrationTests(unittest.TestCase):
         QMainWindow.__init__(self.window)
         self.addCleanup(self.window.deleteLater)
 
-    def test_shell_wraps_existing_workspace_splitter(self):
+    def test_shell_installs_into_host_without_workspace(self):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.window._install_app_shell(splitter)
 
-        self.assertIs(self.window.app_shell, self.window.centralWidget())
-        self.assertEqual(self.window.app_shell.pane_names(), ["workspace"])
-        self.assertEqual(self.window.app_shell.active_pane(), "workspace")
+        self.assertIs(self.window.app_shell, splitter.widget(0))
+        self.assertEqual(self.window.app_shell.pane_names(), [])
+        self.assertIsNone(self.window.app_shell.active_pane())
 
     def test_command_palette_registers_navigation_and_actions(self):
         splitter = QSplitter(Qt.Orientation.Vertical)

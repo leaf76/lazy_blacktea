@@ -14,9 +14,9 @@ from utils.common import get_logger
 class DeviceOperationStatusManager(QObject):
     """Manages operation states for all devices.
 
-    Provides a central registry for tracking active operations per device,
-    emits signals when operations change, and handles auto-dismiss of
-    completed operations after a configurable delay.
+    Provides a central registry for tracking active and recent operations per
+    device and emits signals when operations change. Terminal operations are
+    retained so the AppShell Tasks pane can display recent history.
     """
 
     operation_added = pyqtSignal(object)
@@ -122,8 +122,8 @@ class DeviceOperationStatusManager(QObject):
         self.device_status_changed.emit(updated.device_serial)
 
         if updated.is_terminal:
-            self._schedule_auto_dismiss(operation_id)
             self._cancel_callbacks.pop(operation_id, None)
+            self._cleanup_old_operations()
 
         return updated
 

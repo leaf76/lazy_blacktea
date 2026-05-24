@@ -28,6 +28,9 @@ from ui.shell.palette_providers import (
     build_default_palette_providers,
 )
 from ui.shell.status_bar import AppStatusBar, StatusChipIntent
+from ui.shell.tools_workspace import ToolsWorkspace
+from ui.shell.tasks_pane import TasksPane
+from ui.shell.logcat_pane import LogcatPane
 
 __all__ = [
     "AppShell",
@@ -39,5 +42,8 @@ __all__ = [
     "PaletteProvider",
     "StaticActionsPaletteProvider",
     "StatusChipIntent",
+    "ToolsWorkspace",
+    "TasksPane",
+    "LogcatPane",
     "build_default_palette_providers",
 ]

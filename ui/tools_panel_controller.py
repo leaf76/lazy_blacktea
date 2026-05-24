@@ -32,6 +32,7 @@ from ui.app_list_tab import AppListTab
 from ui.tool_icon_factory import get_tile_tool_icon
 from ui.terminal_widget import TerminalWidget
 from ui.terminal_manager import TerminalManager
+from ui.shell import ToolsWorkspace
 from ui.components.selected_devices_bar import SelectedDevicesBar
 from ui.components.tool_section import (
     QuickActionsSection,
@@ -75,11 +76,7 @@ class ToolsPanelController:
         self.window.tools_tab_widget = tab_widget  # type: ignore[attr-defined]
         tools_layout.addWidget(tab_widget)
 
-        # Widgets reused across tabs live on the main window instance
-        self.window.output_path_edit = QLineEdit()
-        self.window.file_gen_output_path_edit = QLineEdit()
-        self.window.groups_listbox = QListWidget()
-        self.window.group_name_edit = QLineEdit()
+        self._ensure_shared_widgets()
 
         self._create_device_overview_tab(tab_widget)
         self._create_adb_tools_tab(tab_widget)
@@ -90,15 +87,68 @@ class ToolsPanelController:
 
         parent.addWidget(tools_widget)
 
+    def create_tools_workspace(self) -> ToolsWorkspace:
+        """Create the Phase 3 Tools workspace with left-rail navigation."""
+
+        self._ensure_shared_widgets()
+        workspace = ToolsWorkspace()
+        workspace.add_page(
+            "overview", PanelText.TAB_DEVICE_OVERVIEW, self._create_device_overview_page()
+        )
+        workspace.add_page(
+            "adb_tools", PanelText.TAB_ADB_TOOLS, self._create_adb_tools_page()
+        )
+        workspace.add_page(
+            "shell_commands",
+            PanelText.TAB_SHELL_COMMANDS,
+            self._create_shell_commands_page(),
+        )
+        workspace.add_page(
+            "device_groups",
+            PanelText.TAB_DEVICE_GROUPS,
+            self._create_device_groups_page(),
+        )
+        self.window.tools_workspace = workspace  # type: ignore[attr-defined]
+        return workspace
+
+    def create_files_pane(self) -> QWidget:
+        """Create the top-level Files pane."""
+
+        self._ensure_shared_widgets()
+        return self._create_device_file_browser_page()
+
+    def create_apps_pane(self) -> QWidget:
+        """Create the top-level Apps pane."""
+
+        return self._create_apps_page()
+
+    def _ensure_shared_widgets(self) -> None:
+        if getattr(self.window, "output_path_edit", None) is None:
+            self.window.output_path_edit = QLineEdit()
+        if getattr(self.window, "file_gen_output_path_edit", None) is None:
+            self.window.file_gen_output_path_edit = QLineEdit()
+        if getattr(self.window, "groups_listbox", None) is None:
+            self.window.groups_listbox = QListWidget()
+        if getattr(self.window, "group_name_edit", None) is None:
+            self.window.group_name_edit = QLineEdit()
+
     def _create_device_overview_tab(self, tab_widget: QTabWidget) -> None:
+        tab_widget.addTab(
+            self._create_device_overview_page(), PanelText.TAB_DEVICE_OVERVIEW
+        )
+
+    def _create_device_overview_page(self) -> QWidget:
         widget = DeviceOverviewWidget(self.window)
         self.window.device_overview_widget = widget
-        tab_widget.addTab(widget, PanelText.TAB_DEVICE_OVERVIEW)
+        return widget
 
     # ------------------------------------------------------------------
     # ADB Tools Tab - UIUX Redesign 2026-01
     # ------------------------------------------------------------------
     def _create_adb_tools_tab(self, tab_widget: QTabWidget) -> None:
+        tab_widget.addTab(self._create_adb_tools_page(), PanelText.TAB_ADB_TOOLS)
+
+    def _create_adb_tools_page(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -125,7 +175,7 @@ class ToolsPanelController:
 
         self._create_operation_status_panel(layout)
 
-        tab_widget.addTab(tab, PanelText.TAB_ADB_TOOLS)
+        return tab
 
     def _create_selected_devices_bar(self, parent_layout: QVBoxLayout) -> None:
         self._selected_devices_bar = SelectedDevicesBar()
@@ -558,6 +608,11 @@ class ToolsPanelController:
         return container, button, progress_bar
 
     def _create_shell_commands_tab(self, tab_widget: QTabWidget) -> None:
+        tab_widget.addTab(
+            self._create_shell_commands_page(), PanelText.TAB_SHELL_COMMANDS
+        )
+
+    def _create_shell_commands_page(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -591,7 +646,7 @@ class ToolsPanelController:
         templates_bar = self._create_command_templates_bar(terminal_widget)
         layout.insertWidget(0, templates_bar)
 
-        tab_widget.addTab(container, PanelText.TAB_SHELL_COMMANDS)
+        return container
 
     def _setup_terminal_history_navigation(
         self, terminal_widget: TerminalWidget, terminal_manager: TerminalManager
@@ -654,6 +709,11 @@ class ToolsPanelController:
         return bar
 
     def _create_device_file_browser_tab(self, tab_widget: QTabWidget) -> None:
+        tab_widget.addTab(
+            self._create_device_file_browser_page(), PanelText.TAB_DEVICE_FILES
+        )
+
+    def _create_device_file_browser_page(self) -> QWidget:
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
 
@@ -760,9 +820,12 @@ class ToolsPanelController:
         content_layout.addLayout(action_layout)
         content_layout.addStretch()
 
-        tab_widget.addTab(scroll_area, PanelText.TAB_DEVICE_FILES)
+        return scroll_area
 
     def _create_device_groups_tab(self, tab_widget: QTabWidget) -> None:
+        tab_widget.addTab(self._create_device_groups_page(), PanelText.TAB_DEVICE_GROUPS)
+
+    def _create_device_groups_page(self) -> QWidget:
         tab = QWidget()
         layout = QHBoxLayout(tab)
 
@@ -842,15 +905,19 @@ class ToolsPanelController:
 
         layout.addWidget(right_group, stretch=3)
 
-        tab_widget.addTab(tab, PanelText.TAB_DEVICE_GROUPS)
+        return tab
 
     def _create_apps_tab(self, tab_widget: QTabWidget) -> None:
         """Create the Apps tab and attach it to the tab widget."""
+        tab_widget.addTab(self._create_apps_page(), PanelText.TAB_APPS)
+
+    def _create_apps_page(self) -> QWidget:
+        """Create the Apps page."""
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         content = AppListTab(self.window)
         scroll_area.setWidget(content)
-        tab_widget.addTab(scroll_area, PanelText.TAB_APPS)
+        return scroll_area
 
 
 __all__ = ["ToolsPanelController"]

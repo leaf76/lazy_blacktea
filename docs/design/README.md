@@ -17,15 +17,19 @@ The single source of truth for the redesigned Lazy Blacktea UX.
 | --- | --- | --- |
 | **0** | Design spec (this folder) | **Implemented as baseline spec** |
 | 1 | `ui/design_tokens.py` + external `ui/qss/*.qss` + SVG icon set | implemented |
-| 2 | Shell refactor (`ui/shell/app_shell.py`), sidebar nav, inspector, command palette | partially wired |
-| 3 | Devices pane, Tools workspace, Logcat redesign, Tasks pane | not started |
+| 2 | Shell refactor (`ui/shell/app_shell.py`), sidebar nav, inspector, command palette | implemented |
+| 3 | Devices pane, Tools workspace, Logcat redesign, Tasks pane | implemented |
 | 4 | `AppDialog` shell, Preferences merge, a11y sweep | not started |
 
-Phase 2 is currently running in compatibility mode: `WindowMain` installs
-`AppShell` around the existing device/tools/console workspace, registers the
-`Ctrl+K` command palette, and keeps the legacy `QMainWindow` status bar as the
-active status surface. Full top-level pane splitting for Overview, ADB Tools,
-Shell Commands, Device Files, Apps, and Tasks remains Phase 3 work.
+Phase 3 wires `WindowMain` into the real AppShell information architecture:
+Devices, Tools, Logcat, Files, Apps, and Tasks are top-level panes, while the
+console remains in a resizable host splitter below the shell. Tools now uses a
+left-rail workspace for Overview, ADB Tools, Shell Commands, and Device Groups;
+Files and Apps are promoted to first-class shell panes. Logcat is available as
+an embedded pane through `LogcatViewerWidget`, while `LogcatWindow` remains as a
+detached compatibility wrapper. The shell status bar is the active visual
+surface for device/task/version/trace chips; the legacy `QStatusBar` API remains
+available for existing progress and message calls.
 
 ## Design principles
 

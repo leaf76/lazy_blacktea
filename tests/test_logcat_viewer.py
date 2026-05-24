@@ -16,6 +16,7 @@ from ui.logcat_viewer import (
     LogLine,
     LogcatListModel,
     LogcatFilterProxyModel,
+    LogcatViewerWidget,
     LogcatWindow,
     PerformanceSettingsDialog,
     PERFORMANCE_PRESETS,
@@ -177,6 +178,9 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
 
     def test_log_display_is_plain_text_edit(self):
         self.assertIsInstance(self.window.log_display, QPlainTextEdit)
+
+    def test_logcat_window_is_compatible_viewer_wrapper(self):
+        self.assertIsInstance(self.window, LogcatViewerWidget)
 
     def test_limit_log_lines_trims_model(self):
         self.window.history_multiplier = 1
@@ -662,12 +666,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
             ['-s', 'TESTSERIAL', 'logcat', '-v', 'threadtime', '*:V']
         )
         self.assertFalse(fake_process.waitForStarted_called)
-        mock_run.assert_called_once_with(
-            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
-            check=False,
-            stdout=ANY,
-            stderr=ANY,
-        )
+        mock_run.assert_not_called()
 
     @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.QProcess', new=FakeProcess)
@@ -682,12 +681,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         self.assertIn('MyTag:D', args)
         self.assertIn('*:S', args)
         self.assertFalse(self.window.logcat_process.waitForStarted_called)
-        mock_run.assert_called_once_with(
-            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
-            check=False,
-            stdout=ANY,
-            stderr=ANY,
-        )
+        mock_run.assert_not_called()
 
     @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=['123', '456'])
@@ -706,12 +700,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         )
         self.assertEqual(args[-1], '*:V')
         self.assertFalse(self.window.logcat_process.waitForStarted_called)
-        mock_run.assert_called_once_with(
-            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
-            check=False,
-            stdout=ANY,
-            stderr=ANY,
-        )
+        mock_run.assert_not_called()
 
     @patch('ui.logcat_viewer.subprocess.run')
     @patch('ui.logcat_viewer.adb_tools.get_package_pids', return_value=[])
@@ -740,12 +729,7 @@ class LogcatWindowStartCommandTest(unittest.TestCase):
         process = self.window.logcat_process
         self.assertIsNotNone(process)
         self.assertFalse(process.waitForStarted_called)
-        mock_run.assert_called_once_with(
-            ['adb', '-s', 'TESTSERIAL', 'logcat', '-c'],
-            check=False,
-            stdout=ANY,
-            stderr=ANY,
-        )
+        mock_run.assert_not_called()
 
 
 class PerformanceSettingsDialogTest(unittest.TestCase):

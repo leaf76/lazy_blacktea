@@ -980,8 +980,8 @@ class PerformanceSettingsDialog(QDialog):
         )
 
 
-class LogcatWindow(QDialog):
-    """Logcat viewer window with real-time streaming and filtering capabilities."""
+class LogcatViewerWidget(QWidget):
+    """Embeddable logcat viewer with real-time streaming and filtering."""
 
     _stream_bytes = pyqtSignal(bytes)
     _stream_reset = pyqtSignal()
@@ -999,16 +999,20 @@ class LogcatWindow(QDialog):
         config_manager: Optional["ConfigManager"] = None,
     ):
         super().__init__(parent)
-        # Configure as a normal resizable window (not always-on-top of parent)
-        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
-        self.setWindowFlag(Qt.WindowType.Window, True)
-        self.setWindowFlag(Qt.WindowType.Dialog, False)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
-        self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
-        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
-        self.setWindowModality(Qt.WindowModality.NonModal)
-        self.setSizeGripEnabled(True)
+        # Configure as a normal resizable window when used as a detached top-level
+        # widget. Embedded usage keeps the same viewer internals without changing
+        # the logcat command path.
+        if parent is None:
+            self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+            self.setWindowFlag(Qt.WindowType.Window, True)
+            self.setWindowFlag(Qt.WindowType.Dialog, False)
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
+            self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
+            self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+            self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
+            self.setWindowModality(Qt.WindowModality.NonModal)
+            if hasattr(self, "setSizeGripEnabled"):
+                self.setSizeGripEnabled(True)
 
         self.device = device
         self.logcat_process = None
@@ -2578,6 +2582,15 @@ class LogcatWindow(QDialog):
 
     def _on_search_closed(self) -> None:
         """Handle search bar close - clear all highlights."""
+        if hasattr(self, "_search_bar") and self._search_bar:
+            debounce_timer = getattr(self._search_bar, "_debounce_timer", None)
+            if debounce_timer is not None:
+                debounce_timer.stop()
+            search_input = getattr(self._search_bar, "_search_input", None)
+            if search_input is not None:
+                previous = search_input.blockSignals(True)
+                search_input.clear()
+                search_input.blockSignals(previous)
         self._clear_search_highlight()
 
     def _position_search_bar(self) -> None:
@@ -2703,3 +2716,9 @@ class LogcatWindow(QDialog):
         from PyQt6.QtWidgets import QMessageBox
 
         QMessageBox.critical(self, "Logcat Error", message)
+
+
+class LogcatWindow(LogcatViewerWidget):
+    """Detached compatibility wrapper for the embedded logcat viewer."""
+
+    pass

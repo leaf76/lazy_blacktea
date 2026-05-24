@@ -115,7 +115,7 @@ from ui.device_actions_facade import DeviceActionsFacade
 from ui.logcat_facade import LogcatFacade
 from ui.button_progress_overlay import ButtonProgressOverlay
 from ui.device_operation_status_manager import DeviceOperationStatusManager
-from ui.shell import AppShell, CommandPalette
+from ui.shell import AppShell, CommandPalette, LogcatPane, StatusChipIntent, TasksPane
 from ui.shell.palette_providers import (
     StaticPaletteAction,
     build_default_palette_providers,
@@ -145,6 +145,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     """Main PyQt6 application window."""
 
     DEVICE_FILE_BROWSER_DEFAULT_PATH = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
+    PANE_DEVICES = "devices"
+    PANE_TOOLS = "tools"
+    PANE_LOGCAT = "logcat"
+    PANE_FILES = "files"
+    PANE_APPS = "apps"
+    PANE_TASKS = "tasks"
 
     # Define custom signals for thread-safe UI updates
     recording_stopped_signal = pyqtSignal(
@@ -201,6 +207,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.app_shell: Optional[AppShell] = None
         self.command_palette: Optional[CommandPalette] = None
         self._command_palette_shortcut: Optional[QShortcut] = None
+        self._command_palette_alt_shortcut: Optional[QShortcut] = None
+        self.shell_host_splitter: Optional[QSplitter] = None
+        self.tools_workspace = None
+        self.logcat_pane: Optional[LogcatPane] = None
+        self.tasks_pane: Optional[TasksPane] = None
 
         # Background task dispatcher
         self._task_dispatcher = get_task_dispatcher()
@@ -277,6 +288,15 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Initialize device operations manager
         self.device_operations_manager = DeviceOperationsManager(parent_window=self)
         self.device_operation_status_manager = DeviceOperationStatusManager(self)
+        self.device_operation_status_manager.operation_added.connect(
+            lambda _event: self._refresh_shell_runtime_state()
+        )
+        self.device_operation_status_manager.operation_updated.connect(
+            lambda _event: self._refresh_shell_runtime_state()
+        )
+        self.device_operation_status_manager.operation_removed.connect(
+            lambda _operation_id: self._refresh_shell_runtime_state()
+        )
 
         # Initialize application management manager
         self.app_management_manager = AppManagementManager(self)
@@ -484,18 +504,18 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Menu bar
         self.panels_manager.create_menu_bar(self)
 
-        # Build a vertical splitter so the bottom console is resizable
-        vertical_splitter = QSplitter(Qt.Orientation.Vertical)
-        vertical_splitter.setObjectName("mainWorkspaceSplitter")
-        self._install_app_shell(vertical_splitter)
-
-        # Top: existing horizontal splitter for device list and tools
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        vertical_splitter.addWidget(main_splitter)
+        # Build a vertical host so the AppShell and bottom console remain
+        # independently resizable.
+        shell_host_splitter = QSplitter(Qt.Orientation.Vertical)
+        shell_host_splitter.setObjectName("shellHostSplitter")
+        self.shell_host_splitter = shell_host_splitter
+        self.setCentralWidget(shell_host_splitter)
+        self._install_app_shell(shell_host_splitter)
 
         # Create device list panel
         # Create device panel using panels_manager
-        device_components = self.panels_manager.create_device_panel(main_splitter, self)
+        device_components = self.panels_manager.create_device_panel(None, self)
+        devices_widget = device_components["root_widget"]
         self.title_label = device_components["title_label"]
         self.device_table = device_components["device_table"]
         self.no_devices_label = device_components["no_devices_label"]
@@ -521,34 +541,46 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.device_list_controller.attach_table(self.device_table)
         self.device_list_controller.update_selection_count()
 
-        # Create tools panel via controller
-        self.tools_panel_controller.create_tools_panel(main_splitter)
+        # Create AppShell panes via controller-backed widgets.
+        self.tools_workspace = self.tools_panel_controller.create_tools_workspace()
+        files_widget = self.tools_panel_controller.create_files_pane()
+        apps_widget = self.tools_panel_controller.create_apps_pane()
+        self.tasks_pane = TasksPane(self.device_operation_status_manager, self)
+        self.logcat_pane = LogcatPane(
+            viewer_factory=self._create_embedded_logcat_viewer,
+            on_open_devices=lambda: self.app_shell.set_active_pane(self.PANE_DEVICES)
+            if self.app_shell is not None
+            else None,
+            parent=self,
+        )
+
+        self._register_app_shell_panes(
+            devices=devices_widget,
+            tools=self.tools_workspace,
+            logcat=self.logcat_pane,
+            files=files_widget,
+            apps=apps_widget,
+            tasks=self.tasks_pane,
+        )
+        self._refresh_shell_runtime_state()
         self.update_device_overview()
 
-        # Set splitter proportions (default 50/50 but still resizable)
-        default_width = UIConstants.WINDOW_WIDTH
-        left_width = max(1, int(default_width * 0.4))
-        right_width = max(1, default_width - left_width)
-        main_splitter.setSizes([left_width, right_width])
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 1)
-
         # Bottom: console panel (resizable via the vertical splitter)
-        self.create_console_panel(vertical_splitter)
+        self.create_console_panel(shell_host_splitter)
 
         # Set initial proportions for vertical splitter (e.g., ~80% top / 20% bottom)
         try:
             total_h = max(self.height(), UIConstants.WINDOW_HEIGHT)
             top_h = max(300, int(total_h * 0.8))
             bottom_h = max(180, total_h - top_h)
-            vertical_splitter.setSizes([top_h, bottom_h])
+            shell_host_splitter.setSizes([top_h, bottom_h])
         except Exception:
             # Fallback sizes if geometry is not yet stable
-            vertical_splitter.setSizes([UIConstants.WINDOW_HEIGHT - 220, 220])
+            shell_host_splitter.setSizes([UIConstants.WINDOW_HEIGHT - 220, 220])
 
         # Encourage the top area to take remaining space when resizing
-        vertical_splitter.setStretchFactor(0, 5)
-        vertical_splitter.setStretchFactor(1, 1)
+        shell_host_splitter.setStretchFactor(0, 5)
+        shell_host_splitter.setStretchFactor(1, 1)
 
         # Create status bar
         self.create_status_bar()
@@ -578,22 +610,185 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to apply initial selection mode: %s", exc)
 
-    def _install_app_shell(self, workspace_widget: QWidget) -> AppShell:
-        """Install the compatibility-mode shell around the current workspace."""
+    def _install_app_shell(self, host_splitter: Optional[QSplitter] = None) -> AppShell:
+        """Install the Phase 3 shell into the main window host."""
 
         shell = AppShell(self)
-        shell.add_pane(
-            "workspace",
-            "Workspace",
-            workspace_widget,
+        self.app_shell = shell
+        if host_splitter is not None:
+            host_splitter.addWidget(shell)
+        else:
+            self.setCentralWidget(shell)
+        return shell
+
+    def _register_app_shell_panes(
+        self,
+        *,
+        devices: QWidget,
+        tools: QWidget,
+        logcat: QWidget,
+        files: QWidget,
+        apps: QWidget,
+        tasks: QWidget,
+    ) -> None:
+        """Register the Phase 3 top-level panes in sidebar order."""
+
+        if self.app_shell is None:
+            return
+
+        self.app_shell.add_pane(
+            self.PANE_DEVICES,
+            "Devices",
+            devices,
+            icon_name="smartphone",
+            badge_text_provider=self._device_badge_text,
+        )
+        self.app_shell.add_pane(
+            self.PANE_TOOLS,
+            "Tools",
+            tools,
+            icon_name="wrench",
+        )
+        self.app_shell.add_pane(
+            self.PANE_LOGCAT,
+            "Logcat",
+            logcat,
             icon_name="terminal",
         )
-        # Keep the existing QMainWindow status bar as the active status surface
-        # until status chips migrate pane-by-pane.
-        shell.status_bar().hide()
-        self.app_shell = shell
-        self.setCentralWidget(shell)
-        return shell
+        self.app_shell.add_pane(
+            self.PANE_FILES,
+            "Files",
+            files,
+            icon_name="folder",
+        )
+        self.app_shell.add_pane(
+            self.PANE_APPS,
+            "Apps",
+            apps,
+            icon_name="package",
+        )
+        self.app_shell.add_pane(
+            self.PANE_TASKS,
+            "Tasks",
+            tasks,
+            icon_name="activity",
+            badge_text_provider=self._tasks_badge_text,
+        )
+
+    def _create_embedded_logcat_viewer(self, device, parent=None) -> QWidget:
+        """Build the embedded Logcat viewer used by the Logcat pane."""
+
+        from ui.logcat_viewer import LogcatViewerWidget
+
+        settings_payload: Dict[str, int] = {}
+        if self.logcat_settings is not None:
+            settings_payload = {
+                "max_lines": self.logcat_settings.max_lines,
+                "history_multiplier": self.logcat_settings.history_multiplier,
+                "update_interval_ms": self.logcat_settings.update_interval_ms,
+                "max_lines_per_update": self.logcat_settings.max_lines_per_update,
+                "max_buffer_size": self.logcat_settings.max_buffer_size,
+            }
+
+        return LogcatViewerWidget(
+            device,
+            parent,
+            settings=settings_payload,
+            on_settings_changed=self.persist_logcat_settings,
+            device_manager=self.device_manager,
+            config_manager=self.config_manager,
+        )
+
+    def _device_badge_text(self) -> str:
+        device_count = len(getattr(self, "device_dict", {}) or {})
+        return str(device_count) if device_count else ""
+
+    def _tasks_badge_text(self) -> str:
+        manager = getattr(self, "device_operation_status_manager", None)
+        if manager is None:
+            return ""
+        active_count = len(manager.get_active_operations())
+        return str(active_count) if active_count else ""
+
+    def _refresh_shell_runtime_state(self) -> None:
+        """Refresh shell badges, status chips, and panes from current state."""
+
+        if self.app_shell is None:
+            return
+
+        device_count = len(getattr(self, "device_dict", {}) or {})
+        active_tasks = 0
+        recent_tasks = 0
+        manager = getattr(self, "device_operation_status_manager", None)
+        if manager is not None:
+            active_tasks = len(manager.get_active_operations())
+            recent_tasks = len(
+                [event for event in manager.get_all_operations() if event.is_terminal]
+            )
+
+        self._upsert_shell_chip(
+            "devices",
+            f"{device_count} device{'s' if device_count != 1 else ''}",
+            intent=StatusChipIntent.SUCCESS if device_count else StatusChipIntent.NEUTRAL,
+            on_click=lambda: self.app_shell.set_active_pane(self.PANE_DEVICES)
+            if self.app_shell is not None
+            else None,
+        )
+        self._upsert_shell_chip(
+            "tasks",
+            f"{active_tasks} active · {recent_tasks} recent",
+            intent=StatusChipIntent.INFO if active_tasks else StatusChipIntent.NEUTRAL,
+            on_click=lambda: self.app_shell.set_active_pane(self.PANE_TASKS)
+            if self.app_shell is not None
+            else None,
+        )
+        self._upsert_shell_chip(
+            "trace",
+            f"trace {common.get_trace_id()}",
+            intent=StatusChipIntent.NEUTRAL,
+            align="right",
+        )
+        self._upsert_shell_chip(
+            "version",
+            f"v{ApplicationConstants.APP_VERSION}",
+            intent=StatusChipIntent.NEUTRAL,
+            align="right",
+        )
+        self._upsert_shell_chip(
+            "adb",
+            "adb",
+            intent=StatusChipIntent.NEUTRAL,
+            align="right",
+        )
+
+        self.app_shell.refresh_badges()
+        if self.tasks_pane is not None:
+            self.tasks_pane.refresh()
+        if self.logcat_pane is not None:
+            self.logcat_pane.set_devices((getattr(self, "device_dict", {}) or {}).values())
+
+    def _upsert_shell_chip(
+        self,
+        name: str,
+        label: str,
+        *,
+        intent: StatusChipIntent,
+        on_click: Optional[Callable[[], None]] = None,
+        align: str = "left",
+    ) -> None:
+        if self.app_shell is None:
+            return
+        status_bar = self.app_shell.status_bar()
+        if status_bar.has_chip(name):
+            status_bar.update_chip(name, label, intent=intent)
+            return
+        status_bar.add_chip(
+            name,
+            label,
+            intent=intent,
+            on_click=on_click,
+            align=align,
+        )
 
     def _setup_command_palette(self) -> None:
         """Create the command palette and register compatibility providers."""
@@ -611,19 +806,24 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         shortcut.activated.connect(palette.open_palette)
 
+        alt_shortcut = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        alt_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        alt_shortcut.activated.connect(palette.open_palette)
+
         self.command_palette = palette
         self._command_palette_shortcut = shortcut
+        self._command_palette_alt_shortcut = alt_shortcut
 
     def _build_command_palette_actions(self) -> List[StaticPaletteAction]:
-        """Return the default command palette actions for the legacy workspace."""
+        """Return the default command palette actions for Phase 3 panes."""
 
         return [
             StaticPaletteAction(
                 title="Open Logcat",
-                subtitle="Open logcat for the selected device",
-                section="Actions",
+                subtitle="Open the Logcat pane for the active device",
+                section="Navigate",
                 keywords=("logcat", "logs", "device"),
-                invoke=lambda: self.handle_tool_action("show_logcat"),
+                invoke=lambda: self.show_logcat(),
             ),
             StaticPaletteAction(
                 title="Take Screenshot",
@@ -657,19 +857,39 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             ),
             StaticPaletteAction(
                 title="Open Device Files",
-                subtitle="Focus the Device Files tab",
+                subtitle="Open the Files pane",
                 section="Navigate",
                 keywords=("files", "device", "browser"),
-                invoke=lambda: self._focus_tools_tab_by_label(
-                    PanelText.TAB_DEVICE_FILES
-                ),
+                invoke=lambda: self.app_shell.set_active_pane(self.PANE_FILES)
+                if self.app_shell is not None
+                else None,
             ),
             StaticPaletteAction(
                 title="Open Apps",
-                subtitle="Focus the Apps tab",
+                subtitle="Open the Apps pane",
                 section="Navigate",
                 keywords=("apps", "packages", "applications"),
-                invoke=lambda: self._focus_tools_tab_by_label(PanelText.TAB_APPS),
+                invoke=lambda: self.app_shell.set_active_pane(self.PANE_APPS)
+                if self.app_shell is not None
+                else None,
+            ),
+            StaticPaletteAction(
+                title="Open Device Groups",
+                subtitle="Focus the Device Groups tool page",
+                section="Navigate",
+                keywords=("groups", "devices", "selection"),
+                invoke=lambda: self._focus_tools_tab_by_label(
+                    PanelText.TAB_DEVICE_GROUPS
+                ),
+            ),
+            StaticPaletteAction(
+                title="Open Tasks",
+                subtitle="Open active and recent operations",
+                section="Navigate",
+                keywords=("tasks", "operations", "status"),
+                invoke=lambda: self.app_shell.set_active_pane(self.PANE_TASKS)
+                if self.app_shell is not None
+                else None,
             ),
         ]
 
@@ -679,6 +899,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         tab_widget = getattr(self, "tools_tab_widget", None) or getattr(
             self, "logcat_tool_tabs", None
         )
+        tools_workspace = getattr(self, "tools_workspace", None)
+        if tools_workspace is not None and tools_workspace.set_active_page_by_label(label):
+            if self.app_shell is not None:
+                self.app_shell.set_active_pane(self.PANE_TOOLS)
+            return True
+
         if tab_widget is None:
             return False
 
@@ -687,7 +913,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             if tab_widget.tabText(index) == label:
                 tab_widget.setCurrentIndex(index)
                 if self.app_shell is not None:
-                    self.app_shell.set_active_pane("workspace")
+                    self.app_shell.set_active_pane(self.PANE_TOOLS)
                 return True
         return False
 
@@ -698,6 +924,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             self.app_shell.set_theme(theme_name)
         if self.command_palette is not None:
             self.command_palette.set_theme(theme_name)
+        for widget in (
+            getattr(self, "tools_workspace", None),
+            getattr(self, "tasks_pane", None),
+            getattr(self, "logcat_pane", None),
+        ):
+            if widget is not None and hasattr(widget, "set_theme"):
+                widget.set_theme(theme_name)
 
     # ------------------------------------------------------------------
     # Tools panel button registration & progress overlays
@@ -1211,11 +1444,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
     def update_device_list(self, device_dict: Dict[str, adb_models.DeviceInfo]):
         self.device_list_controller.update_device_list(device_dict)
+        self._refresh_shell_runtime_state()
 
     def _update_device_list_optimized(
         self, device_dict: Dict[str, adb_models.DeviceInfo]
     ):
         self.device_list_controller._update_device_list_optimized(device_dict)
+        self._refresh_shell_runtime_state()
 
     def filter_and_sort_devices(self):
         self.device_list_controller.filter_and_sort_devices()
@@ -2527,8 +2762,27 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.logcat_facade._open_logcat_for_device(device)
 
     def show_logcat(self):
-        """Open Logcat viewer for each selected device."""
-        self.logcat_facade.show_logcat_for_selected()
+        """Open the embedded Logcat pane for the active selected device."""
+        if self.app_shell is None or self.logcat_pane is None:
+            self.logcat_facade.show_logcat_for_selected()
+            return
+
+        self._refresh_shell_runtime_state()
+        self.app_shell.set_active_pane(self.PANE_LOGCAT)
+
+        devices = self.get_checked_devices()
+        if devices:
+            active_serial = self.device_selection_manager.get_active_serial()
+            target = next(
+                (
+                    device
+                    for device in devices
+                    if device.device_serial_num == active_serial
+                ),
+                devices[0],
+            )
+            self.logcat_pane.set_devices(self.device_dict.values())
+            self.logcat_pane.open_device(target)
 
     def view_logcat_for_device(self, device_serial: str) -> None:
         """Launch the logcat viewer for the device under the context menu pointer."""

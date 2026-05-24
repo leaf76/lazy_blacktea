@@ -642,7 +642,8 @@ class PanelsManager(QObject):
 
         expand_btn.clicked.connect(on_expand_toggle)
 
-        parent.addWidget(device_widget)
+        if parent is not None:
+            parent.addWidget(device_widget)
 
         # ============================================================
         # Backward compatibility: Create hidden legacy components
@@ -669,6 +670,7 @@ class PanelsManager(QObject):
 
         # Return references to components
         return {
+            'root_widget': device_widget,
             # New components
             'title_label': title_label,
             'subtitle_label': subtitle_label,

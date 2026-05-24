@@ -374,10 +374,16 @@ Banner sits above the affected pane content (sticky, full width). Uses
 
 - Shell layout lives in `ui/shell/app_shell.py`; existing managers connect to
   named slots (`add_pane`, `set_inspector`, `set_status_chip`).
-- Current production wiring is compatibility mode: `WindowMain` mounts the
-  existing device/tools/console splitter as a single `workspace` pane and wires
-  `Ctrl+K` to `ui/shell/command_palette.py` for navigation and high-value
-  legacy actions.
+- Current production wiring is Phase 3 AppShell mode: `WindowMain` mounts
+  Devices, Tools, Logcat, Files, Apps, and Tasks as top-level panes and keeps the
+  console as a resizable host-splitter panel below the shell.
+- Tools uses `ui/shell/tools_workspace.py` for left-rail subnavigation. Files
+  and Apps reuse the existing controller/widgets as first-class shell panes.
+- Logcat uses `LogcatViewerWidget` for embedded pane rendering and keeps
+  `LogcatWindow` as a detached compatibility wrapper.
+- Tasks uses `ui/shell/tasks_pane.py` backed by `DeviceOperationStatusManager`;
+  terminal operations remain available as recent task history until explicitly
+  cleared or trimmed by the manager limit.
 - Sidebar uses `QStackedWidget` for pane swap.
 - Inspector is a single `QWidget` slot; each pane provides its own builder.
 - Status bar is its own widget with a slot model: `chip(name, value, click)`.

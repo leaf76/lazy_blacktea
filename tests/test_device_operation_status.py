@@ -551,6 +551,15 @@ class TestDeviceOperationStatusManager(unittest.TestCase):
         self.assertIsNone(self.manager.get_operation(op_id2))
         self.assertIsNotNone(self.manager.get_operation(op_id3))
 
+    def test_terminal_operation_remains_available_for_recent_tasks(self):
+        event = self._create_event()
+        op_id = self.manager.add_operation(event)
+
+        self.manager.complete_operation(op_id)
+
+        self.assertIsNotNone(self.manager.get_operation(op_id))
+        self.assertEqual(len(self.manager.get_all_operations()), 1)
+
     def test_update_unknown_operation_returns_none(self):
         result = self.manager.update_operation("nonexistent_id")
         self.assertIsNone(result)

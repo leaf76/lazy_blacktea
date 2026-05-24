@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QLabel, QProgressBar, QStatusBar
 
 from utils import common
 from config.constants import ApplicationConstants
+from ui.shell import StatusChipIntent
 
 if TYPE_CHECKING:  # pragma: no cover
     from lazy_blacktea_pyqt import WindowMain
@@ -53,6 +54,21 @@ class StatusBarManager:
         self.window.version_label = version_label
         self.window.selection_mode_status_label = selection_label
 
+        shell_bar = self._shell_status_bar()
+        if shell_bar is not None:
+            if hasattr(status_bar, "hide"):
+                status_bar.hide()
+            self._upsert_shell_chip(
+                "selection_mode", "Mode: Multi", intent=StatusChipIntent.NEUTRAL
+            )
+            self._upsert_shell_chip(
+                "version",
+                f"v{ApplicationConstants.APP_VERSION}",
+                intent=StatusChipIntent.NEUTRAL,
+                align="right",
+            )
+            self._upsert_shell_chip("status", "Ready", intent=StatusChipIntent.INFO)
+
         self.show_message("Ready")
         logger.debug("Status bar and progress bar initialised")
 
@@ -91,11 +107,15 @@ class StatusBarManager:
                 else "Multi-select: use checkboxes to select multiple devices"
             )
             label.setToolTip(tip)
+        self._upsert_shell_chip(
+            "selection_mode", f"Mode: {mode_text}", intent=StatusChipIntent.NEUTRAL
+        )
 
     def show_message(self, message: str, timeout: int = 0) -> None:
         status_bar = getattr(self.window, "status_bar", None)
         if status_bar is not None:
             status_bar.showMessage(message, timeout)
+        self._upsert_shell_chip("status", message or "Ready", intent=StatusChipIntent.INFO)
 
     def update_progress(self, current: int, total: int, message: str) -> None:
         progress_bar = getattr(self.window, "progress_bar", None)
@@ -124,13 +144,40 @@ class StatusBarManager:
         progress_bar.setVisible(True)
 
         self.show_message(message)
+        label = f"{message} {current}/{total}" if total and total > 0 else message
+        self._upsert_shell_chip("progress", label, intent=StatusChipIntent.INFO)
 
     def reset_progress(self) -> None:
         progress_bar = getattr(self.window, "progress_bar", None)
         if progress_bar is not None:
             progress_bar.setValue(0)
             progress_bar.setVisible(False)
+        shell_bar = self._shell_status_bar()
+        if shell_bar is not None:
+            shell_bar.remove_chip("progress")
         self.show_message("Ready")
+
+    def _shell_status_bar(self):
+        shell = getattr(self.window, "app_shell", None)
+        if shell is None:
+            return None
+        return shell.status_bar()
+
+    def _upsert_shell_chip(
+        self,
+        name: str,
+        label: str,
+        *,
+        intent: StatusChipIntent,
+        align: str = "left",
+    ) -> None:
+        shell_bar = self._shell_status_bar()
+        if shell_bar is None:
+            return
+        if shell_bar.has_chip(name):
+            shell_bar.update_chip(name, label, intent=intent)
+            return
+        shell_bar.add_chip(name, label, intent=intent, align=align)
 
 
 __all__ = ["StatusBarManager"]

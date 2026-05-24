@@ -140,6 +140,17 @@ class AppShell(QWidget):
         self._inspector_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._inspector_shortcut.activated.connect(self.toggle_inspector)
 
+        self._pane_shortcuts: List[QShortcut] = []
+        for index in range(9):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(
+                lambda checked=False, pane_index=index: self.activate_pane_at(
+                    pane_index
+                )
+            )
+            self._pane_shortcuts.append(shortcut)
+
         self._apply_palette()
 
     # ------------------------------------------------------------------ API
@@ -229,6 +240,18 @@ class AppShell(QWidget):
         self._set_inspector_widget(record.inspector_widget)
         self.pane_changed.emit(name)
         return True
+
+    def activate_pane_at(self, index: int) -> bool:
+        """Activate a pane by sidebar order.
+
+        The method backs the ``Ctrl+1`` ... ``Ctrl+9`` shortcut contract and is
+        intentionally public so integration tests and host windows do not need
+        to poke at private sidebar widgets.
+        """
+
+        if index < 0 or index >= len(self._pane_order):
+            return False
+        return self.set_active_pane(self._pane_order[index])
 
     def set_inspector_widget(self, name: str, widget: Optional[QWidget]) -> bool:
         record = self._panes.get(name)
@@ -398,6 +421,7 @@ class AppShell(QWidget):
             if record is None:
                 continue
             item.setText(self._format_label(record.label))
+            item.setToolTip(self._format_label(record.label, include_badge=True))
         if emit:
             self.sidebar_toggled.emit(expanded)
 
@@ -409,12 +433,27 @@ class AppShell(QWidget):
             item = self._sidebar_list.item(row)
             if item and item.data(Qt.ItemDataRole.UserRole) == name:
                 item.setText(self._format_label(record.label))
+                item.setToolTip(self._format_label(record.label, include_badge=True))
                 break
 
-    def _format_label(self, label: str) -> str:
+    def _format_label(self, label: str, *, include_badge: bool = False) -> str:
+        badge = ""
+        for record in self._panes.values():
+            if record.label == label and record.badge_text_provider is not None:
+                try:
+                    badge = str(record.badge_text_provider() or "").strip()
+                except Exception:
+                    badge = ""
+                break
+
+        if include_badge:
+            return f"{label} · {badge}" if badge else label
+
         if not self._sidebar_expanded:
             # Collapsed: show only the first letter as a glyph.
             return label[:1].upper() if label else ""
+        if badge:
+            return f"{label} · {badge}"
         return label
 
     def _apply_palette(self) -> None:
