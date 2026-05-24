@@ -161,6 +161,7 @@ jobs:
         ls -la dist/ || echo "No dist directory created"
       env:
         # Ensure we're building for the correct architecture
+        TARGET_ARCH: ${{ matrix.arch }}
         ARCHFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
         CFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}
         LDFLAGS: ${{ matrix.platform == 'macos-arm64' && '-arch arm64' || matrix.platform == 'macos-intel' && '-arch x86_64' || '' }}

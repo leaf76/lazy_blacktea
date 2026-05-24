@@ -13,10 +13,10 @@
 - `CHANGELOG.md` 作為版本發佈紀錄。
 
 ## 最新版本
-最新版本：v0.0.53（2026-05-25）。近期重點：
+最新版本：v0.0.54（2026-05-25）。近期重點：
 - AppShell 現在提供 Devices、Tools、Logcat、Files、Apps 與 Tasks panes。
 - Desktop updater 會檢查 GitHub Releases，並要求 SHA256 manifest。
-- Release builds 會發佈 updater-compatible macOS DMG 與 ZIP assets，並附 SHA256 manifest。
+- Release builds 會針對 arm64 與 x86_64 發佈 updater-compatible macOS DMG 與 ZIP assets，並附 SHA256 manifest。
 - Preferences 現在集中 Appearance、device、capture、APK install、scrcpy、output、updates 與 advanced settings。
 - Settings menu entries 與 command palette actions 現在會 deep-link 到 Preferences sections。
 - UI density 會持久化，並套用到 AppShell surfaces。

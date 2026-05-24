@@ -7,6 +7,10 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 ## Unreleased
 - None.
 
+## 0.0.54 - 2026-05-25
+### Fixed
+- Set `TARGET_ARCH` in the release workflow so Intel builds publish `LazyBlacktea-macos-x86_64.dmg`.
+
 ## 0.0.53 - 2026-05-25
 ### Fixed
 - Support macOS ZIP updater assets and Intel asset aliases when selecting GitHub Release downloads.
