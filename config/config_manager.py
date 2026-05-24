@@ -22,6 +22,7 @@ class UISettings:
     window_y: int = 100
     ui_scale: float = 1.0
     theme: str = "dark"
+    density: str = "cozy"
     font_size: int = 10
     show_console_panel: bool = False
     # Device list selection mode: True means Single-select, False means Multi-select
@@ -247,6 +248,12 @@ class ConfigManager:
         ):
             ui_settings["ui_scale"] = 1.0
             logger.warning("UI scale out of range, reset to 1.0")
+        if ui_settings.get("theme") not in ("light", "dark"):
+            ui_settings["theme"] = "dark"
+            logger.warning("Theme invalid, reset to dark")
+        if ui_settings.get("density") not in ("compact", "cozy", "comfortable"):
+            ui_settings["density"] = "cozy"
+            logger.warning("Density invalid, reset to cozy")
         if not isinstance(ui_settings.get("show_console_panel", True), bool):
             ui_settings["show_console_panel"] = True
             logger.warning("Console panel visibility invalid, reset to True")

@@ -23,8 +23,7 @@ class MenuCaptureWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.user_scale = 1.0
-        self.registered_actions = None
-        self.handled_scales = []
+        self.preferences_sections = []
         self.auto_refresh_enabled = True
         self.refresh_interval_actions = {}
 
@@ -53,11 +52,8 @@ class MenuCaptureWindow(QMainWindow):
         for value, action in self.refresh_interval_actions.items():
             action.setChecked(value == interval)
 
-    def register_ui_scale_actions(self, actions):
-        self.registered_actions = actions
-
-    def handle_ui_scale_selection(self, scale):
-        self.handled_scales.append(scale)
+    def open_preferences_dialog(self, section="appearance"):
+        self.preferences_sections.append(section)
 
 
 class UIScaleMenuTest(unittest.TestCase):
@@ -103,18 +99,25 @@ class UIScaleMenuTest(unittest.TestCase):
         self.assertTrue(actions[1.5].isChecked())
         self.assertIn(1.5, self.window.config_manager.saved_scales)
 
-    def test_panels_manager_registers_and_triggers_ui_scale_actions(self):
+    def test_panels_manager_registers_preferences_deep_links(self):
         capture_window = MenuCaptureWindow()
         self.addCleanup(capture_window.deleteLater)
 
         panels = PanelsManager()
         panels.create_menu_bar(capture_window)
 
-        self.assertIsNotNone(capture_window.registered_actions)
-        self.assertSetEqual(set(capture_window.registered_actions.keys()), {1.0, 1.25, 1.5})
+        settings_actions = [
+            action
+            for action in capture_window.menuBar().actions()
+            if action.text() == "Settings"
+        ][0].menu().actions()
+        action_by_text = {action.text(): action for action in settings_actions}
 
-        capture_window.registered_actions[1.25].trigger()
-        self.assertIn(1.25, capture_window.handled_scales)
+        self.assertIn("Preferences...", action_by_text)
+        self.assertIn("Appearance...", action_by_text)
+
+        action_by_text["Appearance..."].trigger()
+        self.assertIn("appearance", capture_window.preferences_sections)
 
 
 if __name__ == '__main__':

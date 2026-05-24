@@ -53,6 +53,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.command.max_history_size, 50)
         self.assertEqual(config.logcat.max_lines, 1000)
         self.assertEqual(config.logcat.history_multiplier, 5)
+        self.assertEqual(config.ui.density, "cozy")
         self.assertTrue(config.scrcpy.stay_awake)
         self.assertTrue(config.scrcpy.turn_screen_off)
         self.assertTrue(config.scrcpy.disable_screensaver)
@@ -130,12 +131,14 @@ class TestConfigManager(unittest.TestCase):
         # Update UI settings
         self.config_manager.update_ui_settings(
             window_width=1800,
-            ui_scale=1.5
+            ui_scale=1.5,
+            density="compact",
         )
 
         config = self.config_manager.load_config()
         self.assertEqual(config.ui.window_width, 1800)
         self.assertEqual(config.ui.ui_scale, 1.5)
+        self.assertEqual(config.ui.density, "compact")
 
         # Update device settings
         self.config_manager.update_device_settings(
@@ -208,6 +211,21 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.update.skipped_version, "")
         self.assertEqual(config.update.download_dir, "")
         self.assertEqual(config.update.channel, "stable")
+
+    def test_invalid_ui_density_falls_back_to_cozy(self):
+        """Invalid density values should not leak into runtime styling."""
+        invalid_config = {
+            "ui": {
+                "density": "spacious",
+            }
+        }
+
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(invalid_config, f)
+
+        config = self.config_manager.load_config()
+
+        self.assertEqual(config.ui.density, "cozy")
 
     def test_load_legacy_ui_scale_from_flat_config(self):
         """Ensure legacy flat ui_scale values are respected."""

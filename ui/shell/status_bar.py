@@ -53,6 +53,11 @@ _INTENT_TO_TOKEN: Dict[StatusChipIntent, str] = {
     StatusChipIntent.DANGER: "accent_danger",
     StatusChipIntent.NEUTRAL: "fg_secondary",
 }
+DENSITY_STATUS = {
+    "compact": {"height": 24, "padding": "1px 8px", "font": 10},
+    "cozy": {"height": 28, "padding": "2px 10px", "font": 11},
+    "comfortable": {"height": 32, "padding": "3px 12px", "font": 12},
+}
 
 
 @dataclass
@@ -77,6 +82,7 @@ class AppStatusBar(QWidget):
         self.setObjectName("appStatusBar")
         self._chips: Dict[str, _Chip] = {}
         self._theme: str = "light"
+        self._density: str = "cozy"
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 4, 12, 4)
@@ -181,6 +187,15 @@ class AppStatusBar(QWidget):
         for chip in self._chips.values():
             self._style_button(chip.button, chip.intent)
 
+    def set_density(self, density: str) -> None:
+        """Adjust chip spacing for the active UI density."""
+
+        self._density = density if density in DENSITY_STATUS else "cozy"
+        style = DENSITY_STATUS[self._density]
+        self.setFixedHeight(style["height"])
+        for chip in self._chips.values():
+            self._style_button(chip.button, chip.intent)
+
     # --------------------------------------------------------------- helpers
     def _make_flow(self):
         frame = QFrame(self)
@@ -229,14 +244,15 @@ class AppStatusBar(QWidget):
         active_bg = palette["bg_active"]
         label = button.property("statusChipLabel") or ""
         bullet_glyph = "\u25CF"  # ●
+        density = DENSITY_STATUS[self._density]
         button.setText(f"{bullet_glyph}  {label}".strip())
         button.setStyleSheet(
             "QToolButton {"
             f" color: {accent};"
-            " padding: 2px 10px;"
+            f" padding: {density['padding']};"
             " border-radius: 9999px;"
             " border: 1px solid transparent;"
-            " font-size: 11px;"
+            f" font-size: {density['font']}px;"
             " font-weight: 500;"
             "}"
             f"QToolButton:hover {{ background-color: {hover_bg}; }}"

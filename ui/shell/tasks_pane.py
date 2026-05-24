@@ -19,6 +19,12 @@ from PyQt6.QtWidgets import (
 from ui.design_tokens import get_palette
 from ui.signal_payloads import DeviceOperationEvent
 
+DENSITY_PAGE = {
+    "compact": {"margin": 10, "spacing": 8, "title": 16},
+    "cozy": {"margin": 16, "spacing": 12, "title": 18},
+    "comfortable": {"margin": 20, "spacing": 16, "title": 20},
+}
+
 
 class TasksPane(QWidget):
     """Display active and recent device operations in the AppShell."""
@@ -28,6 +34,7 @@ class TasksPane(QWidget):
         self.setObjectName("tasksPane")
         self._status_manager = status_manager
         self._theme = "light"
+        self._density = "cozy"
         self._setup_ui()
         self._connect_manager()
         self.refresh()
@@ -64,8 +71,21 @@ class TasksPane(QWidget):
         self._theme = theme if theme in ("light", "dark") else "light"
         self._apply_palette()
 
+    def set_density(self, density: str) -> None:
+        self._density = density if density in DENSITY_PAGE else "cozy"
+        values = DENSITY_PAGE[self._density]
+        self._layout.setContentsMargins(
+            values["margin"],
+            values["margin"],
+            values["margin"],
+            values["margin"],
+        )
+        self._layout.setSpacing(values["spacing"])
+        self._apply_palette()
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self._layout = layout
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
@@ -143,6 +163,7 @@ class TasksPane(QWidget):
 
     def _apply_palette(self) -> None:
         palette = get_palette(self._theme)
+        title_size = DENSITY_PAGE[self._density]["title"]
         self.setStyleSheet(
             f"""
             #tasksPane {{
@@ -150,7 +171,7 @@ class TasksPane(QWidget):
                 color: {palette['fg_primary']};
             }}
             #tasksPaneTitle {{
-                font-size: 18px;
+                font-size: {title_size}px;
                 font-weight: 600;
                 color: {palette['fg_primary']};
             }}

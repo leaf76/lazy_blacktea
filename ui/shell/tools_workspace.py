@@ -18,6 +18,17 @@ from PyQt6.QtWidgets import (
 
 from ui.design_tokens import get_palette
 
+DENSITY_RAIL_PADDING = {
+    "compact": "6px 6px",
+    "cozy": "10px 8px",
+    "comfortable": "14px 10px",
+}
+DENSITY_ITEM_PADDING = {
+    "compact": "5px 8px",
+    "cozy": "8px 10px",
+    "comfortable": "10px 12px",
+}
+
 
 @dataclass
 class _ToolsPage:
@@ -38,6 +49,7 @@ class ToolsWorkspace(QWidget):
         self._page_order: List[str] = []
         self._active_page: Optional[str] = None
         self._theme = "light"
+        self._density = "cozy"
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -133,6 +145,10 @@ class ToolsWorkspace(QWidget):
         self._theme = theme if theme in ("light", "dark") else "light"
         self._apply_palette()
 
+    def set_density(self, density: str) -> None:
+        self._density = density if density in DENSITY_RAIL_PADDING else "cozy"
+        self._apply_palette()
+
     def _on_selection_changed(self) -> None:
         item = self._rail.currentItem()
         if item is None:
@@ -143,6 +159,8 @@ class ToolsWorkspace(QWidget):
 
     def _apply_palette(self) -> None:
         palette = get_palette(self._theme)
+        rail_padding = DENSITY_RAIL_PADDING[self._density]
+        item_padding = DENSITY_ITEM_PADDING[self._density]
         self.setStyleSheet(
             f"""
             #toolsWorkspace {{
@@ -155,10 +173,10 @@ class ToolsWorkspace(QWidget):
                 border-right: 1px solid {palette['border_subtle']};
                 color: {palette['fg_secondary']};
                 font-size: 13px;
-                padding: 10px 8px;
+                padding: {rail_padding};
             }}
             QListWidget#toolsWorkspaceRail::item {{
-                padding: 8px 10px;
+                padding: {item_padding};
                 border-radius: 6px;
                 margin: 1px 0;
             }}

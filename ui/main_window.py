@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QMessageBox,
+    QDialog,
     QProgressDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, pyqtSignal
@@ -105,11 +106,8 @@ from ui.signal_payloads import (
     OperationType,
     OperationStatus,
 )
-from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
-from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
-from ui.capture_settings_dialog import CaptureSettingsDialog
-from ui.output_settings_dialog import OutputSettingsDialog
 from ui.update_dialog import UpdateDialog
+from ui.preferences_dialog import PreferencesDialog, PreferencesResult
 from ui.device_files_facade import DeviceFilesFacade
 from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
@@ -179,11 +177,16 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         )
         self.update_dialog = None
         self._update_dialog_factory = UpdateDialog
+        self.preferences_dialog = None
+        self._preferences_dialog_factory = PreferencesDialog
         self.theme_manager = ThemeManager()
         self.theme_actions: Dict[str, QAction] = {}
         self._current_theme = "light"
         initial_config = self.config_manager.load_config()
         self._initial_ui_settings: UISettings = initial_config.ui
+        self._current_density = self._normalize_density(
+            getattr(self._initial_ui_settings, "density", "cozy")
+        )
         self._initial_single_selection = getattr(
             self._initial_ui_settings, "single_selection", False
         )
@@ -430,6 +433,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         self.init_ui()
         self.apply_theme(self._current_theme, persist=False, initial=True)
+        self.apply_density(self._current_density, persist=False)
         self.output_path_manager = OutputPathManager(self, self.file_dialog_manager)
         self.load_config(initial_config)
 
@@ -623,6 +627,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Install the Phase 3 shell into the main window host."""
 
         shell = AppShell(self)
+        shell.set_density(getattr(self, "_current_density", "cozy"))
         self.app_shell = shell
         if host_splitter is not None:
             host_splitter.addWidget(shell)
@@ -905,6 +910,34 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 invoke=lambda: self.app_shell.set_active_pane(self.PANE_TASKS)
                 if self.app_shell is not None
                 else None,
+            ),
+            StaticPaletteAction(
+                title="Preferences",
+                subtitle="Open application preferences",
+                section="Settings",
+                keywords=("preferences", "settings"),
+                invoke=lambda: self.open_preferences_dialog("appearance"),
+            ),
+            StaticPaletteAction(
+                title="Appearance Settings",
+                subtitle="Change theme, scale, and density",
+                section="Settings",
+                keywords=("appearance", "theme", "scale", "density"),
+                invoke=lambda: self.open_preferences_dialog("appearance"),
+            ),
+            StaticPaletteAction(
+                title="Output Settings",
+                subtitle="Set the default output directory",
+                section="Settings",
+                keywords=("output", "directory", "path"),
+                invoke=lambda: self.open_preferences_dialog("output"),
+            ),
+            StaticPaletteAction(
+                title="Update Settings",
+                subtitle="Configure background update checks",
+                section="Settings",
+                keywords=("updates", "version", "release"),
+                invoke=lambda: self.open_preferences_dialog("updates"),
             ),
             StaticPaletteAction(
                 title="Check for Updates",
@@ -1292,70 +1325,70 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.dialog_manager.show_error(title, message)
 
     def open_scrcpy_settings_dialog(self) -> None:
-        """Display the scrcpy settings dialog and persist updates."""
-        current_settings = self.config_manager.get_scrcpy_settings()
-        dialog = ScrcpySettingsDialog(current_settings, self)
-        dialog.exec()
-
-        updated_settings = dialog.get_settings()
-        if not updated_settings:
-            return
-
-        self.config_manager.set_scrcpy_settings(updated_settings)
-        self.show_info(
-            "scrcpy Settings Updated",
-            "scrcpy will use your new preferences the next time you launch mirroring.",
-        )
+        """Open Preferences focused on scrcpy settings."""
+        self.open_preferences_dialog("scrcpy")
 
     def open_apk_install_settings_dialog(self) -> None:
-        """Display the APK install settings dialog and persist updates."""
-        current_settings = self.config_manager.get_apk_install_settings()
-        dialog = ApkInstallSettingsDialog(current_settings, self)
-        dialog.exec()
-
-        updated_settings = dialog.get_settings()
-        if not updated_settings:
-            return
-
-        self.config_manager.set_apk_install_settings(updated_settings)
-        self.show_info(
-            "APK Install Settings Updated",
-            "New adb install flags will be applied to future installs.",
-        )
+        """Open Preferences focused on APK install settings."""
+        self.open_preferences_dialog("apk_install")
 
     def open_capture_settings_dialog(self) -> None:
-        """Display the Capture (Screenshot & Screen Record) settings dialog and persist updates."""
-        ss = self.config_manager.get_screenshot_settings()
-        rec = self.config_manager.get_screen_record_settings()
-        dialog = CaptureSettingsDialog(ss, rec, self)
-        dialog.exec()
-
-        new_ss, new_rec = dialog.get_settings()
-        changed = False
-        if new_ss is not None:
-            self.config_manager.set_screenshot_settings(new_ss)
-            changed = True
-        if new_rec is not None:
-            self.config_manager.set_screen_record_settings(new_rec)
-            changed = True
-        if changed:
-            self.show_info(
-                "Capture Settings Updated", "New settings will apply to future actions."
-            )
+        """Open Preferences focused on capture settings."""
+        self.open_preferences_dialog("capture")
 
     def open_output_settings_dialog(self) -> None:
-        """Display the Output Settings dialog for configuring global output path."""
-        current_path = self.config_manager.get_ui_settings().default_output_path
-        dialog = OutputSettingsDialog(current_path, self)
-        dialog.exec()
+        """Open Preferences focused on output settings."""
+        self.open_preferences_dialog("output")
 
-        new_path = dialog.get_output_path()
-        if new_path is not None:
-            self.config_manager.update_ui_settings(default_output_path=new_path)
-            self.show_info(
-                "Output Settings Updated",
-                f"Output path set to: {new_path or '(default)'}",
+    def open_preferences_dialog(self, section: str = "appearance") -> None:
+        """Open the tabbed Preferences dialog and persist accepted changes."""
+
+        config = self.config_manager.load_config()
+        dialog = self._preferences_dialog_factory(
+            config,
+            initial_section=section,
+            parent=self,
+        )
+        self.preferences_dialog = dialog
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        result = dialog.get_result()
+        if result is None:
+            return
+
+        self._apply_preferences_result(result)
+        self.show_info(
+            "Preferences Saved",
+            "Your preferences have been saved.",
+        )
+
+    def _apply_preferences_result(self, result: PreferencesResult) -> None:
+        """Persist and apply Preferences dialog changes."""
+
+        config = self.config_manager.load_config()
+        config.ui = result.ui
+        config.device = result.device
+        config.screenshot = result.screenshot
+        config.screen_record = result.screen_record
+        config.apk_install = result.apk_install
+        config.scrcpy = result.scrcpy
+        config.update = result.update
+        self.config_manager.save_config(config)
+
+        self.apply_theme(result.ui.theme, persist=False)
+        self.set_ui_scale(result.ui.ui_scale)
+        self.apply_density(result.ui.density, persist=False)
+        self.set_console_panel_visibility(result.ui.show_console_panel, persist=False)
+
+        if hasattr(self, "device_selection_manager"):
+            self.device_selection_manager.set_single_selection(result.ui.single_selection)
+            self._sync_selection_mode_dependent_ui()
+            self.status_bar_manager.update_selection_mode(
+                self.device_selection_manager.is_single_selection()
             )
+
+        self.set_refresh_interval(result.device.refresh_interval)
 
     def show_update_dialog(self) -> None:
         """Open the application update dialog and run a manual check."""
@@ -1542,6 +1575,30 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         self._update_ui_scale_actions(self.user_scale)
         logger.debug(f"UI scale set to {self.user_scale}")
+
+    def apply_density(self, density: str, persist: bool = False) -> None:
+        """Apply UI density to shell surfaces that support it."""
+
+        resolved = self._normalize_density(density)
+        self._current_density = resolved
+        self._sync_shell_density(resolved)
+        if persist:
+            self.config_manager.update_ui_settings(density=resolved)
+
+    @staticmethod
+    def _normalize_density(density: str) -> str:
+        return density if density in {"compact", "cozy", "comfortable"} else "cozy"
+
+    def _sync_shell_density(self, density: str) -> None:
+        for widget in (
+            getattr(self, "app_shell", None),
+            getattr(self, "tools_workspace", None),
+            getattr(self, "tasks_pane", None),
+            getattr(self, "logcat_pane", None),
+        ):
+            setter = getattr(widget, "set_density", None)
+            if callable(setter):
+                setter(density)
 
     def set_refresh_interval(self, interval: int):
         """Set device refresh interval."""
@@ -3381,6 +3438,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
             # Load UI scale from new config
             self.set_ui_scale(config.ui.ui_scale)
+            self.apply_density(getattr(config.ui, "density", "cozy"), persist=False)
 
             # Apply console visibility preference
             self.set_console_panel_visibility(

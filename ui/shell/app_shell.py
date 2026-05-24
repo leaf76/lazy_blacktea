@@ -58,6 +58,21 @@ SIDEBAR_COLLAPSED_WIDTH = 56
 INSPECTOR_DEFAULT_WIDTH = 320
 RESPONSIVE_COLLAPSE_THRESHOLD = 1100
 RESPONSIVE_HIDE_INSPECTOR_THRESHOLD = 900
+DENSITY_SIDEBAR_PADDING = {
+    "compact": "4px 8px",
+    "cozy": "6px 10px",
+    "comfortable": "8px 12px",
+}
+DENSITY_SIDEBAR_MARGIN = {
+    "compact": "0px 1px",
+    "cozy": "1px 2px",
+    "comfortable": "2px 3px",
+}
+DENSITY_LAYOUT = {
+    "compact": (6, 8, 6),
+    "cozy": (8, 12, 8),
+    "comfortable": (10, 14, 10),
+}
 
 
 @dataclass
@@ -99,6 +114,7 @@ class AppShell(QWidget):
         self._sidebar_expanded: bool = True
         self._inspector_visible: bool = False
         self._theme: str = "light"
+        self._density: str = "cozy"
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -302,6 +318,14 @@ class AppShell(QWidget):
         self._apply_palette()
         self._status_bar.set_theme(self._theme)
 
+    def set_density(self, density: str) -> None:
+        self._density = density if density in DENSITY_LAYOUT else "cozy"
+        margin_x, margin_y, spacing = DENSITY_LAYOUT[self._density]
+        self._sidebar_layout.setContentsMargins(margin_x, margin_y, margin_x, margin_y)
+        self._sidebar_layout.setSpacing(spacing)
+        self._status_bar.set_density(self._density)
+        self._apply_palette()
+
     # --------------------------------------------------------------- events
     def resizeEvent(self, event):  # noqa: N802 (Qt API)
         super().resizeEvent(event)
@@ -322,6 +346,7 @@ class AppShell(QWidget):
         sidebar.setFixedWidth(SIDEBAR_EXPANDED_WIDTH)
 
         layout = QVBoxLayout(sidebar)
+        self._sidebar_layout = layout
         layout.setContentsMargins(8, 12, 8, 12)
         layout.setSpacing(8)
 
@@ -458,6 +483,8 @@ class AppShell(QWidget):
 
     def _apply_palette(self) -> None:
         palette = get_palette(self._theme)
+        item_padding = DENSITY_SIDEBAR_PADDING[self._density]
+        item_margin = DENSITY_SIDEBAR_MARGIN[self._density]
         self.setStyleSheet(
             f"""
             #appShell {{
@@ -496,9 +523,9 @@ class AppShell(QWidget):
                 font-size: 13px;
             }}
             QListWidget#appShellSidebarList::item {{
-                padding: 6px 10px;
+                padding: {item_padding};
                 border-radius: 6px;
-                margin: 1px 2px;
+                margin: {item_margin};
             }}
             QListWidget#appShellSidebarList::item:hover {{
                 background-color: {palette['bg_hover']};

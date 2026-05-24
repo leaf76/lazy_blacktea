@@ -58,6 +58,8 @@ def main():
         ("Update Service Tests", "test_update_service.py"),
         ("Update Dialog Tests", "test_update_dialog.py"),
         ("Updater Integration Tests", "test_main_window_updater_integration.py"),
+        ("Preferences Dialog Tests", "test_preferences_dialog.py"),
+        ("Preferences Integration Tests", "test_main_window_preferences_integration.py"),
         ("Config Manager Tests", "test_config_manager.py"),
         ("Shell Commands Layout Tests", "test_shell_commands_layout.py"),
         ("Device Files Layout Tests", "test_device_files_layout.py"),

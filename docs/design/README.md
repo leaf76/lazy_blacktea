@@ -19,7 +19,7 @@ The single source of truth for the redesigned Lazy Blacktea UX.
 | 1 | `ui/design_tokens.py` + external `ui/qss/*.qss` + SVG icon set | implemented |
 | 2 | Shell refactor (`ui/shell/app_shell.py`), sidebar nav, inspector, command palette | implemented |
 | 3 | Devices pane, Tools workspace, Logcat redesign, Tasks pane | implemented |
-| 4 | `AppDialog` shell, Preferences merge, a11y sweep | not started |
+| 4 | `AppDialog` shell, Preferences merge, a11y sweep | partially implemented |
 
 Phase 3 wires `WindowMain` into the real AppShell information architecture:
 Devices, Tools, Logcat, Files, Apps, and Tasks are top-level panes, while the
@@ -30,6 +30,12 @@ an embedded pane through `LogcatViewerWidget`, while `LogcatWindow` remains as a
 detached compatibility wrapper. The shell status bar is the active visual
 surface for device/task/version/trace chips; the legacy `QStatusBar` API remains
 available for existing progress and message calls.
+
+Phase 4 now has the Preferences merge in place through a tabbed
+`PreferencesDialog`. Appearance owns theme, UI scale, and density; existing
+settings entries deep-link into Preferences sections; Updates exposes updater
+preferences. The broader `AppDialog` replacement and full accessibility sweep
+remain follow-up work.
 
 ## Design principles
 

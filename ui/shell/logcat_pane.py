@@ -19,6 +19,11 @@ from ui.design_tokens import get_palette
 
 
 ViewerFactory = Callable[[object, Optional[QWidget]], QWidget]
+DENSITY_PAGE = {
+    "compact": {"margin": 8, "spacing": 6, "empty_font": 13},
+    "cozy": {"margin": 12, "spacing": 8, "empty_font": 14},
+    "comfortable": {"margin": 16, "spacing": 12, "empty_font": 15},
+}
 
 
 class LogcatPane(QWidget):
@@ -38,6 +43,7 @@ class LogcatPane(QWidget):
         self._devices: Dict[str, object] = {}
         self._current_viewer: Optional[QWidget] = None
         self._theme = "light"
+        self._density = "cozy"
         self._setup_ui()
 
     def set_devices(self, devices: Iterable[object]) -> None:
@@ -96,12 +102,25 @@ class LogcatPane(QWidget):
         self._theme = theme if theme in ("light", "dark") else "light"
         self._apply_palette()
 
+    def set_density(self, density: str) -> None:
+        self._density = density if density in DENSITY_PAGE else "cozy"
+        values = DENSITY_PAGE[self._density]
+        self._layout.setContentsMargins(
+            values["margin"],
+            values["margin"],
+            values["margin"],
+            values["margin"],
+        )
+        self._layout.setSpacing(values["spacing"])
+        self._apply_palette()
+
     def cleanup(self) -> None:
         """Release the embedded viewer before the pane is destroyed."""
         self._clear_viewer()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self._layout = layout
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
@@ -174,6 +193,7 @@ class LogcatPane(QWidget):
 
     def _apply_palette(self) -> None:
         palette = get_palette(self._theme)
+        empty_font = DENSITY_PAGE[self._density]["empty_font"]
         self.setStyleSheet(
             f"""
             #logcatPane {{
@@ -182,7 +202,7 @@ class LogcatPane(QWidget):
             }}
             #logcatEmptyLabel {{
                 color: {palette['fg_secondary']};
-                font-size: 14px;
+                font-size: {empty_font}px;
             }}
             """
         )

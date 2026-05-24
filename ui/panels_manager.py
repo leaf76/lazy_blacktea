@@ -1,6 +1,6 @@
 """UI panels manager for organizing different UI components."""
 
-from typing import Dict, Optional
+from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QPushButton, QLabel, QGroupBox, QScrollArea, QTextEdit,
@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QStackedWidget, QSizePolicy, QToolButton, QMenu
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QFont, QAction, QActionGroup
+from PyQt6.QtGui import QFont, QAction
 
 from utils import common
 from ui.style_manager import PanelButtonVariant, StyleManager
@@ -408,38 +408,35 @@ class PanelsManager(QObject):
         # Settings menu
         settings_menu = menubar.addMenu('Settings')
 
-        theme_menu = settings_menu.addMenu('Theme')
-        theme_group = QActionGroup(main_window)
-        theme_group.setExclusive(True)
-        theme_actions: Dict[str, QAction] = {}
-        for title, key in [('Light', 'light'), ('Dark', 'dark')]:
-            action = QAction(title, main_window, checkable=True)
-            theme_group.addAction(action)
-            action.triggered.connect(
-                lambda checked, theme_key=key: main_window.handle_theme_selection(theme_key)
-                if checked else None
-            )
-            theme_menu.addAction(action)
-            theme_actions[key] = action
+        def add_preferences_action(title: str, section: str, shortcut: str = ""):
+            action = QAction(title, main_window)
+            if shortcut:
+                action.setShortcut(shortcut)
+            if hasattr(main_window, 'open_preferences_dialog'):
+                action.triggered.connect(
+                    lambda _checked=False, section_key=section: main_window.open_preferences_dialog(section_key)
+                )
+            else:  # pragma: no cover
+                action.setEnabled(False)
+            settings_menu.addAction(action)
+            return action
 
-        if hasattr(main_window, 'register_theme_actions'):
-            main_window.register_theme_actions(theme_actions)
-
-        # UI Scale submenu
-        scale_menu = settings_menu.addMenu('UI Scale')
-        scale_group = QActionGroup(main_window)
-        scale_group.setExclusive(True)
-        scales = [('Default', 1.0), ('Large', 1.25), ('Extra Large', 1.5)]
-        scale_actions = {}
-        for name, scale in scales:
-            action = QAction(name, main_window, checkable=True)
-            scale_group.addAction(action)
-            action.triggered.connect(lambda checked, s=scale: main_window.handle_ui_scale_selection(s))
-            scale_menu.addAction(action)
-            scale_actions[scale] = action
-
-        if hasattr(main_window, 'register_ui_scale_actions'):
-            main_window.register_ui_scale_actions(scale_actions)
+        main_window.preferences_action = add_preferences_action(
+            'Preferences...',
+            'appearance',
+            'Meta+,',
+        )
+        settings_menu.addSeparator()
+        main_window.appearance_settings_action = add_preferences_action('Appearance...', 'appearance')
+        main_window.devices_settings_action = add_preferences_action('Devices...', 'devices')
+        main_window.capture_settings_action = add_preferences_action('Capture...', 'capture')
+        main_window.apk_install_settings_action = add_preferences_action(
+            'APK Install...',
+            'apk_install',
+        )
+        main_window.scrcpy_settings_action = add_preferences_action('scrcpy...', 'scrcpy')
+        main_window.output_settings_action = add_preferences_action('Output...', 'output')
+        main_window.updates_settings_action = add_preferences_action('Updates...', 'updates')
 
         console_toggle_action = QAction('Show Console Output', main_window, checkable=True)
         console_toggle_action.setChecked(getattr(main_window, 'show_console_panel', True))
@@ -448,46 +445,6 @@ class PanelsManager(QObject):
 
         if hasattr(main_window, 'register_console_panel_action'):
             main_window.register_console_panel_action(console_toggle_action)
-
-        scrcpy_settings_action = QAction('scrcpy Settings...', main_window)
-        if hasattr(main_window, 'open_scrcpy_settings_dialog'):
-            scrcpy_settings_action.triggered.connect(main_window.open_scrcpy_settings_dialog)
-        else:  # pragma: no cover - compatibility with legacy harnesses
-            scrcpy_settings_action.setEnabled(False)
-        settings_menu.addAction(scrcpy_settings_action)
-
-        apk_install_settings_action = QAction('APK Install Settings...', main_window)
-        if hasattr(main_window, 'open_apk_install_settings_dialog'):
-            apk_install_settings_action.triggered.connect(main_window.open_apk_install_settings_dialog)
-        else:  # pragma: no cover
-            apk_install_settings_action.setEnabled(False)
-        settings_menu.addAction(apk_install_settings_action)
-
-        capture_settings_action = QAction('Capture Settings...', main_window)
-        if hasattr(main_window, 'open_capture_settings_dialog'):
-            capture_settings_action.triggered.connect(main_window.open_capture_settings_dialog)
-        else:  # pragma: no cover
-            capture_settings_action.setEnabled(False)
-        settings_menu.addAction(capture_settings_action)
-
-        output_settings_action = QAction('Output Directory...', main_window)
-        if hasattr(main_window, 'open_output_settings_dialog'):
-            output_settings_action.triggered.connect(main_window.open_output_settings_dialog)
-        else:  # pragma: no cover
-            output_settings_action.setEnabled(False)
-        settings_menu.addAction(output_settings_action)
-
-        # Refresh Interval submenu
-        refresh_menu = settings_menu.addMenu('Refresh Interval')
-        refresh_group = QActionGroup(main_window)
-        refresh_group.setExclusive(True)
-        intervals = [10, 20, 30, 60, 120]
-        for interval in intervals:
-            action = QAction(f'{interval} Seconds', main_window, checkable=True)
-            refresh_group.addAction(action)
-            refresh_menu.addAction(action)
-            main_window.refresh_interval_actions[interval] = action
-            action.triggered.connect(lambda checked, i=interval: main_window.set_refresh_interval(i))
 
         # Help menu
         help_menu = menubar.addMenu('Help')
