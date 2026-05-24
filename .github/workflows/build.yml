@@ -155,7 +155,7 @@ jobs:
         echo "Starting build for platform: ${{ matrix.platform }}"
         echo "Architecture: ${{ matrix.arch }}"
         echo "Working directory: $(pwd)"
-        uv run python build-scripts/build.py
+        uv run python build-scripts/build.py --arch "${{ matrix.arch }}"
         echo "Build script completed with exit code: $?"
         echo "Contents of dist/ after build:"
         ls -la dist/ || echo "No dist directory created"

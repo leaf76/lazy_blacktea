@@ -13,7 +13,7 @@
 - `CHANGELOG.md` for release notes.
 
 ## Latest Release
-Latest release: v0.0.54 (2026-05-25). Highlights from recent commits:
+Latest release: v0.0.55 (2026-05-25). Highlights from recent commits:
 - AppShell now provides Devices, Tools, Logcat, Files, Apps, and Tasks panes.
 - The desktop updater checks GitHub Releases and requires SHA256 manifests.
 - Release builds publish updater-compatible macOS DMG and ZIP assets for both arm64 and x86_64 with SHA256 manifests.

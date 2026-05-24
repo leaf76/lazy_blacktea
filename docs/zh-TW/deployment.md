@@ -13,7 +13,7 @@
 - `CHANGELOG.md` 作為版本發佈紀錄。
 
 ## 最新版本
-最新版本：v0.0.54（2026-05-25）。近期重點：
+最新版本：v0.0.55（2026-05-25）。近期重點：
 - AppShell 現在提供 Devices、Tools、Logcat、Files、Apps 與 Tasks panes。
 - Desktop updater 會檢查 GitHub Releases，並要求 SHA256 manifest。
 - Release builds 會針對 arm64 與 x86_64 發佈 updater-compatible macOS DMG 與 ZIP assets，並附 SHA256 manifest。
