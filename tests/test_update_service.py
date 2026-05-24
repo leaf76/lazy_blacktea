@@ -103,6 +103,96 @@ class UpdateServiceTests(unittest.TestCase):
         self.assertEqual(info.asset.name, "LazyBlacktea-macos-arm64.dmg")
         self.assertEqual(info.asset.sha256, sha)
 
+    def test_check_for_updates_selects_macos_arm64_zip_asset_and_checksum(self):
+        from utils.update_service import UpdateService
+
+        checksum_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/SHA256SUMS.txt"
+        asset_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/LazyBlacktea-macos-arm64.zip"
+        sha = "c" * 64
+        client = _FakeClient(
+            _release(
+                "v0.0.52",
+                [
+                    _asset("LazyBlacktea-macos-arm64.zip", asset_url),
+                    _asset("SHA256SUMS.txt", checksum_url),
+                ],
+            ),
+            texts={checksum_url: f"{sha}  LazyBlacktea-macos-arm64.zip\n"},
+        )
+        service = UpdateService(
+            current_version="0.0.51",
+            release_client=client,
+            platform_system="Darwin",
+            platform_machine="arm64",
+        )
+
+        info = service.check_for_updates()
+
+        self.assertTrue(info.is_update_available)
+        self.assertEqual(info.latest_version, "0.0.52")
+        self.assertEqual(info.asset.name, "LazyBlacktea-macos-arm64.zip")
+        self.assertEqual(info.asset.sha256, sha)
+
+    def test_check_for_updates_selects_macos_intel_zip_for_x86_64(self):
+        from utils.update_service import UpdateService
+
+        checksum_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/SHA256SUMS.txt"
+        asset_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/LazyBlacktea-macos-intel.zip"
+        sha = "d" * 64
+        client = _FakeClient(
+            _release(
+                "v0.0.52",
+                [
+                    _asset("LazyBlacktea-macos-intel.zip", asset_url),
+                    _asset("SHA256SUMS.txt", checksum_url),
+                ],
+            ),
+            texts={checksum_url: f"{sha}  LazyBlacktea-macos-intel.zip\n"},
+        )
+        service = UpdateService(
+            current_version="0.0.51",
+            release_client=client,
+            platform_system="Darwin",
+            platform_machine="x86_64",
+        )
+
+        info = service.check_for_updates()
+
+        self.assertTrue(info.is_update_available)
+        self.assertEqual(info.latest_version, "0.0.52")
+        self.assertEqual(info.asset.name, "LazyBlacktea-macos-intel.zip")
+        self.assertEqual(info.asset.sha256, sha)
+
+    def test_check_for_updates_selects_macos_x86_64_zip_for_x86_64(self):
+        from utils.update_service import UpdateService
+
+        checksum_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/SHA256SUMS.txt"
+        asset_url = "https://github.com/leaf76/lazy_blacktea/releases/download/v0.0.52/LazyBlacktea-macos-x86_64.zip"
+        sha = "e" * 64
+        client = _FakeClient(
+            _release(
+                "v0.0.52",
+                [
+                    _asset("LazyBlacktea-macos-x86_64.zip", asset_url),
+                    _asset("SHA256SUMS.txt", checksum_url),
+                ],
+            ),
+            texts={checksum_url: f"{sha}  LazyBlacktea-macos-x86_64.zip\n"},
+        )
+        service = UpdateService(
+            current_version="0.0.51",
+            release_client=client,
+            platform_system="Darwin",
+            platform_machine="x86_64",
+        )
+
+        info = service.check_for_updates()
+
+        self.assertTrue(info.is_update_available)
+        self.assertEqual(info.latest_version, "0.0.52")
+        self.assertEqual(info.asset.name, "LazyBlacktea-macos-x86_64.zip")
+        self.assertEqual(info.asset.sha256, sha)
+
     def test_check_for_updates_requires_checksum_manifest_for_new_release(self):
         from utils.update_service import UpdateService, UpdateVerificationError
 

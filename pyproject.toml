@@ -1,6 +1,6 @@
 [project]
 name = "lazy-blacktea"
-version = "0.0.52"
+version = "0.0.53"
 description = "A PyQt6 GUI application for simplifying Android ADB and automation tasks"
 requires-python = ">=3.10"
 readme = "README.md"

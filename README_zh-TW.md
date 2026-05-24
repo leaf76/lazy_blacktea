@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Current release: v0.0.52（2026-05-25） | [English version](README.md)
+> Current release: v0.0.53（2026-05-25） | [English version](README.md)
 > Release notes：[`CHANGELOG.md`](CHANGELOG.md)
 
 ## 專案狀態

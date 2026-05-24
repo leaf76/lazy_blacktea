@@ -163,25 +163,49 @@ def _normalise_machine(machine: str) -> str:
     return value
 
 
+def _machine_aliases(machine: str) -> tuple[str, ...]:
+    arch = _normalise_machine(machine)
+    if arch == "arm64":
+        return ("arm64", "aarch64")
+    if arch == "x86_64":
+        return ("x86_64", "amd64", "intel", "x64")
+    return (arch,)
+
+
+def _matches_arch(name: str, machine: str) -> bool:
+    lower = name.lower()
+    return any(alias in lower for alias in _machine_aliases(machine))
+
+
 def _asset_score(name: str, system: str, machine: str) -> int:
     lower = name.lower()
     arch = _normalise_machine(machine)
     if system == "Darwin":
         if name == f"LazyBlacktea-macos-{arch}.dmg":
             return 100
-        if lower.endswith(".dmg") and "macos" in lower and arch in lower:
+        if lower.endswith(".dmg") and "macos" in lower and _matches_arch(name, machine):
             return 90
         if lower.endswith(".dmg") and ("macos" in lower or "darwin" in lower):
             return 70
+        if name == f"LazyBlacktea-macos-{arch}.zip":
+            return 65
+        if lower.endswith(".zip") and "macos" in lower and _matches_arch(name, machine):
+            return 60
+        if lower.endswith(".zip") and ("macos" in lower or "darwin" in lower):
+            return 45
         return 0
     if system == "Linux":
         if name == "LazyBlacktea-x86_64.AppImage":
             return 100
-        if lower.endswith(".appimage") and arch in lower:
+        if name == f"LazyBlacktea-linux-{arch}.AppImage":
+            return 100
+        if lower.endswith(".appimage") and _matches_arch(name, machine):
             return 95
         if lower.endswith(".appimage"):
             return 85
         if name == "lazyblacktea-linux.tar.gz":
+            return 80
+        if name == f"lazyblacktea-linux-{arch}.tar.gz":
             return 80
         if lower.endswith(".tar.gz") and "linux" in lower:
             return 70

@@ -176,7 +176,11 @@ jobs:
         else
           # Verify macOS build
           [ -d "dist/LazyBlacktea.app" ] && echo "✅ macOS app bundle found" || (echo "❌ macOS app bundle missing" && exit 1)
-          [ -f "dist/LazyBlacktea.dmg" ] && echo "✅ macOS DMG found" || echo "⚠️  macOS DMG missing"
+          if [ -f "dist/LazyBlacktea-macos-${{ matrix.arch }}.dmg" ] || [ -f "dist/LazyBlacktea.dmg" ]; then
+            echo "✅ macOS DMG found"
+          else
+            echo "⚠️  macOS DMG missing"
+          fi
         fi
 
     - name: Test built application (quick smoke test)
@@ -228,16 +232,20 @@ jobs:
         else
           # Copy macOS artifacts
           echo "Looking for macOS artifacts..."
-          if [ -f "dist/LazyBlacktea.dmg" ]; then
-            cp "dist/LazyBlacktea.dmg" "artifacts/LazyBlacktea-${{ matrix.platform }}.dmg"
-            echo "✅ Copied DMG"
+
+          if [ -f "dist/LazyBlacktea-macos-${{ matrix.arch }}.dmg" ]; then
+            cp "dist/LazyBlacktea-macos-${{ matrix.arch }}.dmg" "artifacts/LazyBlacktea-macos-${{ matrix.arch }}.dmg"
+            echo "✅ Copied arch-specific DMG"
+          elif [ -f "dist/LazyBlacktea.dmg" ]; then
+            cp "dist/LazyBlacktea.dmg" "artifacts/LazyBlacktea-macos-${{ matrix.arch }}.dmg"
+            echo "✅ Copied legacy DMG"
           else
             echo "⚠️  DMG not found"
           fi
 
           # Also create a zip of the app bundle as fallback
           if [ -d "dist/LazyBlacktea.app" ]; then
-            cd dist && zip -r "../artifacts/LazyBlacktea-${{ matrix.platform }}.zip" LazyBlacktea.app && cd ..
+            cd dist && zip -r "../artifacts/LazyBlacktea-macos-${{ matrix.arch }}.zip" LazyBlacktea.app && cd ..
             echo "✅ Created ZIP from app bundle"
           else
             echo "⚠️  App bundle not found"
@@ -354,7 +362,7 @@ jobs:
         ## 📦 Downloads
 
         ### macOS
-        - **macOS Intel (x86_64)**: \`LazyBlacktea-macos-intel.dmg\` or \`LazyBlacktea-macos-intel.zip\`
+        - **macOS Intel (x86_64)**: \`LazyBlacktea-macos-x86_64.dmg\` or \`LazyBlacktea-macos-x86_64.zip\`
         - **macOS Apple Silicon (ARM64)**: \`LazyBlacktea-macos-arm64.dmg\` or \`LazyBlacktea-macos-arm64.zip\`
 
         ### Linux

@@ -13,9 +13,10 @@
 - `CHANGELOG.md` 作為版本發佈紀錄。
 
 ## 最新版本
-最新版本：v0.0.52（2026-05-25）。近期重點：
+最新版本：v0.0.53（2026-05-25）。近期重點：
 - AppShell 現在提供 Devices、Tools、Logcat、Files、Apps 與 Tasks panes。
 - Desktop updater 會檢查 GitHub Releases，並要求 SHA256 manifest。
+- Release builds 會發佈 updater-compatible macOS DMG 與 ZIP assets，並附 SHA256 manifest。
 - Preferences 現在集中 Appearance、device、capture、APK install、scrcpy、output、updates 與 advanced settings。
 - Settings menu entries 與 command palette actions 現在會 deep-link 到 Preferences sections。
 - UI density 會持久化，並套用到 AppShell surfaces。
@@ -26,8 +27,9 @@
 - `SHA256SUMS.txt` 必須包含每個 desktop artifact 的完整檔名與 SHA256 digest。
 - 若 checksum manifest 缺失、平台 asset 缺失，或下載檔案 digest 不相符，updater 會阻擋 download/open action。
 - 支援的 updater artifacts：
-  - macOS：`LazyBlacktea-macos-arm64.dmg` 或 `LazyBlacktea-macos-x86_64.dmg`
-  - Linux：`LazyBlacktea-x86_64.AppImage`，fallback `lazyblacktea-linux.tar.gz`
+  - macOS：`LazyBlacktea-macos-arm64.dmg`、`LazyBlacktea-macos-arm64.zip`、`LazyBlacktea-macos-x86_64.dmg` 或 `LazyBlacktea-macos-x86_64.zip`
+  - macOS legacy fallback：`LazyBlacktea-macos-intel.dmg` 或 `LazyBlacktea-macos-intel.zip`
+  - Linux：`LazyBlacktea-linux-x86_64.AppImage`，fallback `lazyblacktea-linux-x86_64.tar.gz`
 
 ## Release/Deployment 檢查清單
 1. 執行 `uv run python tests/run_tests.py`。

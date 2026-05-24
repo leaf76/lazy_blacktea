@@ -13,9 +13,10 @@
 - `CHANGELOG.md` for release notes.
 
 ## Latest Release
-Latest release: v0.0.52 (2026-05-25). Highlights from recent commits:
+Latest release: v0.0.53 (2026-05-25). Highlights from recent commits:
 - AppShell now provides Devices, Tools, Logcat, Files, Apps, and Tasks panes.
 - The desktop updater checks GitHub Releases and requires SHA256 manifests.
+- Release builds publish updater-compatible macOS DMG and ZIP assets with SHA256 manifests.
 - Preferences now centralize Appearance, device, capture, APK install, scrcpy, output, updates, and advanced settings.
 - Settings menu entries and command palette actions now deep-link into Preferences sections.
 - UI density is persisted and applied to AppShell surfaces.
@@ -26,8 +27,9 @@ Latest release: v0.0.52 (2026-05-25). Highlights from recent commits:
 - `SHA256SUMS.txt` must include the exact package filename and SHA256 digest for each published desktop artifact.
 - The updater blocks download/open actions when the checksum manifest is missing, the platform asset is missing, or the downloaded file digest does not match.
 - Supported updater artifacts:
-  - macOS: `LazyBlacktea-macos-arm64.dmg` or `LazyBlacktea-macos-x86_64.dmg`
-  - Linux: `LazyBlacktea-x86_64.AppImage`, fallback `lazyblacktea-linux.tar.gz`
+  - macOS: `LazyBlacktea-macos-arm64.dmg`, `LazyBlacktea-macos-arm64.zip`, `LazyBlacktea-macos-x86_64.dmg`, or `LazyBlacktea-macos-x86_64.zip`
+  - macOS legacy fallback: `LazyBlacktea-macos-intel.dmg` or `LazyBlacktea-macos-intel.zip`
+  - Linux: `LazyBlacktea-linux-x86_64.AppImage`, fallback `lazyblacktea-linux-x86_64.tar.gz`
 
 ## Release/Deployment Checklist
 1. Run `uv run python tests/run_tests.py`.
