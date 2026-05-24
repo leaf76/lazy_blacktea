@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
-    QVBoxLayout,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -27,7 +26,14 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, pyqtSignal
-from PyQt6.QtGui import QTextCursor, QAction, QIcon, QGuiApplication
+from PyQt6.QtGui import (
+    QTextCursor,
+    QAction,
+    QIcon,
+    QGuiApplication,
+    QKeySequence,
+    QShortcut,
+)
 
 from utils import adb_models
 from utils import adb_tools
@@ -109,6 +115,11 @@ from ui.device_actions_facade import DeviceActionsFacade
 from ui.logcat_facade import LogcatFacade
 from ui.button_progress_overlay import ButtonProgressOverlay
 from ui.device_operation_status_manager import DeviceOperationStatusManager
+from ui.shell import AppShell, CommandPalette
+from ui.shell.palette_providers import (
+    StaticPaletteAction,
+    build_default_palette_providers,
+)
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -187,6 +198,9 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.show_console_panel = self._initial_ui_settings.show_console_panel
         self.console_panel_action: Optional[QAction] = None
         self.console_panel = None
+        self.app_shell: Optional[AppShell] = None
+        self.command_palette: Optional[CommandPalette] = None
+        self._command_palette_shortcut: Optional[QShortcut] = None
 
         # Background task dispatcher
         self._task_dispatcher = get_task_dispatcher()
@@ -467,20 +481,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Remove the problematic attribute setting as it's not needed for tooltip positioning
 
-        # Create central widget
-        central_widget = QWidget()
-        central_widget.setObjectName("mainCentralWidget")
-        self.setCentralWidget(central_widget)
-
-        # Create main layout container
-        main_layout = QVBoxLayout(central_widget)
-
         # Menu bar
         self.panels_manager.create_menu_bar(self)
 
         # Build a vertical splitter so the bottom console is resizable
         vertical_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_layout.addWidget(vertical_splitter)
+        vertical_splitter.setObjectName("mainWorkspaceSplitter")
+        self._install_app_shell(vertical_splitter)
 
         # Top: existing horizontal splitter for device list and tools
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -545,6 +552,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Create status bar
         self.create_status_bar()
+        self._setup_command_palette()
 
         # Apply persisted selection mode after UI is ready
         try:
@@ -569,6 +577,127 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to apply initial selection mode: %s", exc)
+
+    def _install_app_shell(self, workspace_widget: QWidget) -> AppShell:
+        """Install the compatibility-mode shell around the current workspace."""
+
+        shell = AppShell(self)
+        shell.add_pane(
+            "workspace",
+            "Workspace",
+            workspace_widget,
+            icon_name="terminal",
+        )
+        # Keep the existing QMainWindow status bar as the active status surface
+        # until status chips migrate pane-by-pane.
+        shell.status_bar().hide()
+        self.app_shell = shell
+        self.setCentralWidget(shell)
+        return shell
+
+    def _setup_command_palette(self) -> None:
+        """Create the command palette and register compatibility providers."""
+
+        palette = CommandPalette(self)
+        for provider in build_default_palette_providers(
+            app_shell=self.app_shell,
+            extra_actions=self._build_command_palette_actions(),
+            mod_label="Ctrl",
+        ):
+            palette.register_provider(provider)
+        palette.set_theme(getattr(self, "_current_theme", "light"))
+
+        shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut.activated.connect(palette.open_palette)
+
+        self.command_palette = palette
+        self._command_palette_shortcut = shortcut
+
+    def _build_command_palette_actions(self) -> List[StaticPaletteAction]:
+        """Return the default command palette actions for the legacy workspace."""
+
+        return [
+            StaticPaletteAction(
+                title="Open Logcat",
+                subtitle="Open logcat for the selected device",
+                section="Actions",
+                keywords=("logcat", "logs", "device"),
+                invoke=lambda: self.handle_tool_action("show_logcat"),
+            ),
+            StaticPaletteAction(
+                title="Take Screenshot",
+                subtitle="Capture screenshots from selected devices",
+                section="Actions",
+                keywords=("screenshot", "capture", "screen"),
+                invoke=lambda: self.handle_tool_action("take_screenshot"),
+            ),
+            StaticPaletteAction(
+                title="Generate Bug Report",
+                subtitle="Collect Android bug report artifacts",
+                section="Actions",
+                keywords=("bug", "report", "diagnostic"),
+                invoke=lambda: self.handle_tool_action("generate_android_bug_report"),
+            ),
+            StaticPaletteAction(
+                title="Install APK",
+                subtitle="Install an APK on selected devices",
+                section="Actions",
+                keywords=("apk", "install", "package"),
+                invoke=lambda: self.handle_tool_action("install_apk"),
+            ),
+            StaticPaletteAction(
+                title="Open Shell Commands",
+                subtitle="Focus the Shell Commands tab",
+                section="Navigate",
+                keywords=("shell", "commands", "terminal"),
+                invoke=lambda: self._focus_tools_tab_by_label(
+                    PanelText.TAB_SHELL_COMMANDS
+                ),
+            ),
+            StaticPaletteAction(
+                title="Open Device Files",
+                subtitle="Focus the Device Files tab",
+                section="Navigate",
+                keywords=("files", "device", "browser"),
+                invoke=lambda: self._focus_tools_tab_by_label(
+                    PanelText.TAB_DEVICE_FILES
+                ),
+            ),
+            StaticPaletteAction(
+                title="Open Apps",
+                subtitle="Focus the Apps tab",
+                section="Navigate",
+                keywords=("apps", "packages", "applications"),
+                invoke=lambda: self._focus_tools_tab_by_label(PanelText.TAB_APPS),
+            ),
+        ]
+
+    def _focus_tools_tab_by_label(self, label: str) -> bool:
+        """Focus a tab inside the existing tools panel by visible label."""
+
+        tab_widget = getattr(self, "tools_tab_widget", None) or getattr(
+            self, "logcat_tool_tabs", None
+        )
+        if tab_widget is None:
+            return False
+
+        count = tab_widget.count()
+        for index in range(count):
+            if tab_widget.tabText(index) == label:
+                tab_widget.setCurrentIndex(index)
+                if self.app_shell is not None:
+                    self.app_shell.set_active_pane("workspace")
+                return True
+        return False
+
+    def _sync_shell_theme(self, theme_name: str) -> None:
+        """Apply a theme to shell components when they exist."""
+
+        if self.app_shell is not None:
+            self.app_shell.set_theme(theme_name)
+        if self.command_palette is not None:
+            self.command_palette.set_theme(theme_name)
 
     # ------------------------------------------------------------------
     # Tools panel button registration & progress overlays
@@ -2902,6 +3031,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         StyleManager.apply_global_stylesheet(self)
         StyleManager.reapply_theme(self)
+        self._sync_shell_theme(resolved)
 
         if not initial:
             self._update_theme_actions()

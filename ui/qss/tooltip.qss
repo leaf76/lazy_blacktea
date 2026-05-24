@@ -1,0 +1,17 @@
+/*
+ * Tooltip stylesheet (Phase 1 — externalised from ui/style_manager.py).
+ *
+ * Tokens are substituted by ui.qss_loader. Keys must exist in the merged
+ * palette returned by ui.design_tokens.get_palette.
+ */
+
+QToolTip {
+    background-color: {tooltip_background};
+    color: {tooltip_text};
+    border: 1px solid {tooltip_border};
+    border-radius: 6px;
+    padding: 6px;
+    font-size: 11px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    max-width: 350px;
+}

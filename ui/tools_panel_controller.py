@@ -72,6 +72,7 @@ class ToolsPanelController:
         tools_layout = QVBoxLayout(tools_widget)
 
         tab_widget = QTabWidget()
+        self.window.tools_tab_widget = tab_widget  # type: ignore[attr-defined]
         tools_layout.addWidget(tab_widget)
 
         # Widgets reused across tabs live on the main window instance

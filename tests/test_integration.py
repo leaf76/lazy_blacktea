@@ -10,12 +10,14 @@ import time
 import subprocess
 import shutil
 from typing import List, Dict
+from unittest.mock import patch
 
 # Add the project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import adb_tools, adb_commands, common
 from utils.adb_models import DeviceInfo
+from config.config_manager import ScreenRecordSettings
 
 
 def test_adb_connectivity():
@@ -93,8 +95,15 @@ def test_recording_commands():
     test_output = "/tmp/test_output"
 
     try:
-        # Test start command
-        start_cmd = adb_commands.cmd_android_screen_record(test_serial, test_filename)
+        # Test start command with default settings. User config may add
+        # screenrecord args, so isolate this command-shape test.
+        with patch(
+            "config.config_manager.ConfigManager.get_screen_record_settings",
+            return_value=ScreenRecordSettings(),
+        ):
+            start_cmd = adb_commands.cmd_android_screen_record(
+                test_serial, test_filename
+            )
         expected_start = f"adb -s {test_serial} shell screenrecord /sdcard/screenrecord_{test_serial}_{test_filename}.mp4"
         assert start_cmd == expected_start, f"Start command incorrect: {start_cmd}"
         print(f"   ✅ Start command: {start_cmd}")

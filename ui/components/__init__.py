@@ -7,8 +7,19 @@ from ui.components.device_operation_status_panel import (
     DeviceOperationStatusPanel,
     OperationItemWidget,
 )
+from ui.components.icon import (
+    DEFAULT_COLOR_TOKEN,
+    DEFAULT_SIZE,
+    ICON_DIR,
+    available as available_icons,
+    clear_cache as clear_icon_cache,
+    load_icon,
+    load_pixmap,
+)
 
 __all__ = [
+    "DEFAULT_COLOR_TOKEN",
+    "DEFAULT_SIZE",
     "FilterChip",
     "DropdownFilterChip",
     "ToggleFilterChip",
@@ -17,4 +28,9 @@ __all__ = [
     "DeviceRowWidget",
     "DeviceOperationStatusPanel",
     "OperationItemWidget",
+    "ICON_DIR",
+    "available_icons",
+    "clear_icon_cache",
+    "load_icon",
+    "load_pixmap",
 ]

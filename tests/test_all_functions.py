@@ -20,7 +20,7 @@ from utils import adb_tools, adb_commands, common
 from utils.adb_models import DeviceInfo
 from ui.device_manager import DeviceManager, DeviceRefreshThread
 from utils.recording_utils import RecordingManager
-from config.config_manager import ConfigManager
+from config.config_manager import ConfigManager, ScreenRecordSettings
 from ui.command_executor import CommandExecutor
 from ui.file_operations_manager import CommandHistoryManager
 from PyQt6.QtCore import QObject
@@ -193,8 +193,15 @@ class TestRecordingFunctionality(unittest.TestCase):
         test_filename = "test_recording"
 
         try:
-            # Test start command
-            start_cmd = adb_commands.cmd_android_screen_record(test_serial, test_filename)
+            # Test start command with default settings. User config may add
+            # screenrecord args, so isolate this command-shape test.
+            with patch(
+                "config.config_manager.ConfigManager.get_screen_record_settings",
+                return_value=ScreenRecordSettings(),
+            ):
+                start_cmd = adb_commands.cmd_android_screen_record(
+                    test_serial, test_filename
+                )
             print(f"   📝 Start command: {start_cmd}")
             expected_start = f"adb -s {test_serial} shell screenrecord /sdcard/screenrecord_{test_serial}_{test_filename}.mp4"
             assert start_cmd == expected_start, f"Start command mismatch"

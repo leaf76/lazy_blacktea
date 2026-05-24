@@ -46,6 +46,7 @@ class DummyLabel:
         self.text = ''
         self.style = ''
         self.object_name = ''
+        self.tooltip = ''
 
     def setText(self, text):
         self.text = text
@@ -55,6 +56,9 @@ class DummyLabel:
 
     def setObjectName(self, name):
         self.object_name = name
+
+    def setToolTip(self, text):
+        self.tooltip = text
 
 
 class DummyWindow:
@@ -77,6 +81,7 @@ class StatusBarManagerTest(unittest.TestCase):
         self.window = DummyWindow()
         self.status_bar = DummyStatusBar()
         self.progress_bar = DummyProgressBar()
+        self.selection_label = DummyLabel()
         self.expected_version_text = f"{ApplicationConstants.APP_NAME} v{ApplicationConstants.APP_VERSION}"
 
         self.manager = StatusBarManager(
@@ -84,6 +89,7 @@ class StatusBarManagerTest(unittest.TestCase):
             status_bar_factory=lambda: self.status_bar,
             progress_bar_factory=lambda: self.progress_bar,
             version_label_factory=lambda: DummyLabel(),
+            selection_mode_label_factory=lambda: self.selection_label,
         )
 
     def test_create_status_bar_initialises_components(self):
@@ -94,8 +100,21 @@ class StatusBarManagerTest(unittest.TestCase):
         self.assertTrue(self.progress_bar.visible is False)
         self.assertIn(('Ready', 0), self.status_bar.message_calls)
         self.assertIsInstance(self.window.version_label, DummyLabel)
-        self.assertEqual(self.status_bar.widgets[0], self.window.version_label)
+        self.assertEqual(self.status_bar.widgets[0], self.selection_label)
+        self.assertEqual(self.status_bar.widgets[1], self.window.version_label)
         self.assertEqual(self.window.version_label.text, self.expected_version_text)
+        self.assertIs(self.window.selection_mode_status_label, self.selection_label)
+
+    def test_update_selection_mode_uses_injected_label(self):
+        self.manager.create_status_bar()
+
+        self.manager.update_selection_mode(single=True)
+        self.assertEqual(self.selection_label.text, 'Mode: Single')
+        self.assertIn('Single-select', self.selection_label.tooltip)
+
+        self.manager.update_selection_mode(single=False)
+        self.assertEqual(self.selection_label.text, 'Mode: Multi')
+        self.assertIn('Multi-select', self.selection_label.tooltip)
 
     def test_show_message_delegates(self):
         self.manager.create_status_bar()

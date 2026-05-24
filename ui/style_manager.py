@@ -18,8 +18,19 @@ import platform
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QSizePolicy
 
+from ui.design_tokens import (
+    THEME_ALIASES as _DESIGN_TOKEN_THEME_ALIASES,
+    get_palette as _design_tokens_get_palette,
+)
 
-_THEME_PRESETS: Dict[str, Dict[str, str]] = {
+
+# Theme presets are derived from ``ui.design_tokens`` so the module stays the
+# single source of truth (Phase 1 of the redesign). The legacy literal table
+# is intentionally kept below in ``_LEGACY_THEME_PRESETS`` for forensic
+# diff / rollback only — it must remain byte-equal to the values returned by
+# ``design_tokens.get_legacy_palette``; this is enforced by
+# ``tests/test_design_tokens.py``.
+_LEGACY_THEME_PRESETS: Dict[str, Dict[str, str]] = {
     "light": {
         "primary": "#4CAF50",
         "primary_hover": "#45A049",
@@ -142,8 +153,15 @@ _THEME_PRESETS: Dict[str, Dict[str, str]] = {
     },
 }
 
-_THEME_ALIASES = {
-    "default": "light",
+_THEME_ALIASES = dict(_DESIGN_TOKEN_THEME_ALIASES)
+
+
+# Active theme presets used at runtime. Built from ``design_tokens.get_palette``
+# so the dict contains both legacy keys (existing call sites) and the new
+# spec namespace (``bg_canvas``, ``accent_primary`` …) that Phase 2/3 widgets
+# will start consuming.
+_THEME_PRESETS: Dict[str, Dict[str, str]] = {
+    name: _design_tokens_get_palette(name) for name in ("light", "dark")
 }
 
 
@@ -1393,8 +1411,14 @@ class StyleManager:
 
     @classmethod
     def get_tooltip_style(cls) -> str:
-        """獲取工具提示樣式"""
-        return cls._get_static_style("tooltip")
+        """獲取工具提示樣式，優先讀取 ``ui/qss/tooltip.qss`` (Phase 1)。"""
+        try:
+            from ui import qss_loader
+
+            theme_name = "dark" if cls.COLORS is _THEME_PRESETS.get("dark") else "light"
+            return qss_loader.render("tooltip", theme_name, extra=cls.COLORS).strip()
+        except Exception:  # pragma: no cover - defensive fallback
+            return cls._get_static_style("tooltip")
 
     @classmethod
     def get_action_button_style(cls) -> str:

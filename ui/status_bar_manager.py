@@ -28,12 +28,13 @@ class StatusBarManager:
         status_bar_factory: Optional[StatusBarFactory] = None,
         progress_bar_factory: Optional[ProgressBarFactory] = None,
         version_label_factory: Optional[Callable[[], QLabel]] = None,
+        selection_mode_label_factory: Optional[Callable[[], QLabel]] = None,
     ) -> None:
         self.window = window
         self._status_bar_factory = status_bar_factory or QStatusBar
         self._progress_bar_factory = progress_bar_factory or QProgressBar
         self._version_label_factory = version_label_factory or QLabel
-        self._selection_mode_label_factory: Callable[[], QLabel] = QLabel
+        self._selection_mode_label_factory = selection_mode_label_factory or QLabel
 
     def create_status_bar(self) -> None:
         status_bar = self._status_bar_factory()
