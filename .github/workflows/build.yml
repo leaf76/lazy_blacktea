@@ -301,6 +301,14 @@ jobs:
         # Copy all build artifacts to release assets
         find artifacts/ -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" \) -exec cp {} release-assets/ \;
 
+        if ! find release-assets/ -type f | grep -q .; then
+          echo "No release assets were found."
+          exit 1
+        fi
+
+        # Generate updater checksum manifest for every published desktop artifact
+        (cd release-assets && sha256sum * > SHA256SUMS.txt)
+
         # List all release assets
         echo "Release assets:"
         ls -la release-assets/

@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "lazy-blacktea"
-version = "0.0.51"
+version = "0.0.52"
 source = { virtual = "." }
 dependencies = [
     { name = "pyqt6" },

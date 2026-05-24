@@ -7,6 +7,19 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 ## Unreleased
 - None.
 
+## 0.0.52 - 2026-05-25
+### Added
+- Wire the redesigned AppShell into the main window with Devices, Tools, Logcat, Files, Apps, and Tasks panes.
+- Add a verified GitHub Releases updater with SHA256 manifest enforcement.
+- Add the tabbed Preferences dialog with Appearance, device, capture, APK install, scrcpy, output, updates, and advanced sections.
+
+### Changed
+- Move Settings menu entries to Preferences deep links and add command palette settings actions.
+- Add UI density persistence and apply density styling to AppShell surfaces.
+
+### Fixed
+- Harden Phase 3 AppShell GUI startup, ADB integration, and shutdown behavior.
+
 ## 0.0.51 - 2026-03-06
 ### Fixed
 - Refresh the active device overview when detailed device data and battery snapshots update.

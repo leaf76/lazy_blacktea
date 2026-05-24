@@ -13,14 +13,12 @@
 - `CHANGELOG.md` 作為版本發佈紀錄。
 
 ## 最新版本
-最新版本：v0.0.51（2026-03-06）。近期重點：
-- APK 安裝顯示傳輸進度並支援取消。
-- APK 安裝時串流顯示 ADB push 進度。
-- Logcat 串流/過濾改為非 UI thread，整體更順暢。
-- Logcat 文字可選取，並修正預設檔覆寫行為。
-- 裝置列表可從快取刷新細節，加快更新速度。
-- WiFi/藍牙狀態值正規化以確保顯示一致。
-- Terminal 取消與歷史操作更穩定。
+最新版本：v0.0.52（2026-05-25）。近期重點：
+- AppShell 現在提供 Devices、Tools、Logcat、Files、Apps 與 Tasks panes。
+- Desktop updater 會檢查 GitHub Releases，並要求 SHA256 manifest。
+- Preferences 現在集中 Appearance、device、capture、APK install、scrcpy、output、updates 與 advanced settings。
+- Settings menu entries 與 command palette actions 現在會 deep-link 到 Preferences sections。
+- UI density 會持久化，並套用到 AppShell surfaces。
 
 ## Application Updater 需求
 - Desktop updater 會檢查 `leaf76/lazy_blacktea` 的 latest GitHub Release。

@@ -13,14 +13,12 @@
 - `CHANGELOG.md` for release notes.
 
 ## Latest Release
-Latest release: v0.0.51 (2026-03-06). Highlights from recent commits:
-- APK installs now show transfer progress with cancel support.
-- ADB push progress is streamed during APK installs.
-- Logcat streaming/filtering moved off the UI thread for smoother performance.
-- Logcat text selection is enabled, and preset overwrite behavior is fixed.
-- Device list details refresh from cached info for faster updates.
-- WiFi/Bluetooth status values are normalized for consistent display.
-- Terminal cancellation/history navigation is more reliable.
+Latest release: v0.0.52 (2026-05-25). Highlights from recent commits:
+- AppShell now provides Devices, Tools, Logcat, Files, Apps, and Tasks panes.
+- The desktop updater checks GitHub Releases and requires SHA256 manifests.
+- Preferences now centralize Appearance, device, capture, APK install, scrcpy, output, updates, and advanced settings.
+- Settings menu entries and command palette actions now deep-link into Preferences sections.
+- UI density is persisted and applied to AppShell surfaces.
 
 ## Application Updater Requirements
 - The desktop updater checks the latest GitHub Release at `leaf76/lazy_blacktea`.
