@@ -17,6 +17,12 @@ from utils import adb_tools, common
 from utils.adb_models import DeviceInfo
 
 
+def _command_output_text(result) -> str:
+    if isinstance(result, str):
+        return result.strip()
+    return "\n".join(str(line) for line in result).strip()
+
+
 def test_real_screenshot(device: DeviceInfo, output_dir: str) -> bool:
     """Test actual screenshot functionality with a real device."""
     print(f"📸 Testing screenshot with device {device.device_serial_num}...")
@@ -142,25 +148,25 @@ def test_device_control_functions(device: DeviceInfo) -> bool:
         print("   📡 Testing Bluetooth state reading...")
         bt_cmd = f"adb -s {device.device_serial_num} shell settings get global bluetooth_on"
         bt_result = common.run_command(bt_cmd)
-        print(f"   📋 Bluetooth state: {bt_result.strip()}")
+        print(f"   📋 Bluetooth state: {_command_output_text(bt_result)}")
 
         # Test WiFi state reading
         print("   📶 Testing WiFi state reading...")
         wifi_cmd = f"adb -s {device.device_serial_num} shell settings get global wifi_on"
         wifi_result = common.run_command(wifi_cmd)
-        print(f"   📋 WiFi state: {wifi_result.strip()}")
+        print(f"   📋 WiFi state: {_command_output_text(wifi_result)}")
 
         # Test getting Android version
         print("   🤖 Testing Android version...")
         version_cmd = f"adb -s {device.device_serial_num} shell getprop ro.build.version.release"
         version_result = common.run_command(version_cmd)
-        print(f"   📋 Android version: {version_result.strip()}")
+        print(f"   📋 Android version: {_command_output_text(version_result)}")
 
         # Test getting API level
         print("   🔢 Testing API level...")
         api_cmd = f"adb -s {device.device_serial_num} shell getprop ro.build.version.sdk"
         api_result = common.run_command(api_cmd)
-        print(f"   📋 API level: {api_result.strip()}")
+        print(f"   📋 API level: {_command_output_text(api_result)}")
 
         print("   ✅ Device control functions working")
         return True

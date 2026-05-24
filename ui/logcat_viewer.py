@@ -1052,6 +1052,7 @@ class LogcatViewerWidget(QWidget):
         self._stream_thread: Optional[QThread] = None
         self._stream_worker: Optional[_LogcatStreamWorker] = None
         self._filter_revision = 0
+        self._cleanup_done = False
 
         if self._viewer_settings:
             self._auto_scroll_enabled = self._viewer_settings.auto_scroll_enabled
@@ -1190,6 +1191,62 @@ class LogcatViewerWidget(QWidget):
 
         self._sync_stream_worker_settings()
         self._sync_stream_worker_filters()
+
+    def cleanup(self) -> None:
+        """Release streaming resources before this widget is destroyed."""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+
+        self._save_viewer_settings()
+
+        if self.logcat_process:
+            self.stop_logcat()
+
+        self._search_debounce_timer.stop()
+        self._search_scan_inflight = False
+        self._search_scan_pending = False
+        if self._search_task_handle is not None:
+            try:
+                self._search_task_handle.cancel()
+            except Exception as exc:
+                logger.debug("Search task cancellation failed during cleanup: %s", exc)
+            self._search_task_handle = None
+        if self._filter_rebuild_handle is not None:
+            try:
+                self._filter_rebuild_handle.cancel()
+            except Exception as exc:
+                logger.debug("Filter rebuild cancellation failed during cleanup: %s", exc)
+            self._filter_rebuild_handle = None
+
+        self._shutdown_stream_worker()
+
+        if self._device_watcher:
+            self._device_watcher.cleanup()
+            self._device_watcher = None
+
+        if hasattr(self, "_preview_panel") and self._preview_panel:
+            self._preview_panel.cleanup()
+
+    def _shutdown_stream_worker(self) -> None:
+        """Stop the background stream worker thread if it is still running."""
+        thread = self._stream_thread
+        if thread is None:
+            return
+
+        self._stream_thread = None
+        self._stream_worker = None
+
+        try:
+            if thread.isRunning():
+                self._stream_reset.emit()
+                thread.quit()
+                if not thread.wait(3000):
+                    logger.warning("Logcat stream worker did not stop cleanly; terminating.")
+                    thread.terminate()
+                    thread.wait(1000)
+        except RuntimeError as exc:
+            logger.debug("Logcat stream worker cleanup skipped: %s", exc)
 
     def _sync_stream_worker_settings(self) -> None:
         self._stream_perf_settings.emit(
@@ -2654,42 +2711,7 @@ class LogcatViewerWidget(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
         """Ensure the logcat process and device watcher are cleaned up."""
-        self._save_viewer_settings()
-
-        if self.logcat_process:
-            self.stop_logcat()
-        self._search_debounce_timer.stop()
-        self._search_scan_inflight = False
-        self._search_scan_pending = False
-        if self._search_task_handle is not None:
-            try:
-                self._search_task_handle.cancel()
-            except Exception:
-                pass
-            self._search_task_handle = None
-        if self._filter_rebuild_handle is not None:
-            try:
-                self._filter_rebuild_handle.cancel()
-            except Exception:
-                pass
-            self._filter_rebuild_handle = None
-
-        if self._stream_thread is not None:
-            self._stream_reset.emit()
-            self._stream_thread.quit()
-            self._stream_thread.wait(1500)
-            self._stream_thread = None
-            self._stream_worker = None
-
-        # Cleanup device watcher to prevent memory leaks
-        if self._device_watcher:
-            self._device_watcher.cleanup()
-            self._device_watcher = None
-
-        # Cleanup preview panel (scrcpy and recording)
-        if hasattr(self, "_preview_panel") and self._preview_panel:
-            self._preview_panel.cleanup()
-
+        self.cleanup()
         super().closeEvent(event)
 
     def open_performance_settings(self):

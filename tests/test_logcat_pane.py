@@ -17,6 +17,16 @@ class _Device:
         self.device_model = model
 
 
+class _Viewer(QLabel):
+    def __init__(self, device, parent=None):
+        super().__init__(f"viewer:{device.device_serial_num}", parent)
+        self.device = device
+        self.cleaned = False
+
+    def cleanup(self):
+        self.cleaned = True
+
+
 class LogcatPaneTests(unittest.TestCase):
     def setUp(self):
         from ui.shell import LogcatPane
@@ -24,8 +34,7 @@ class LogcatPaneTests(unittest.TestCase):
         self.created = []
 
         def viewer_factory(device, parent=None):
-            widget = QLabel(f"viewer:{device.device_serial_num}", parent)
-            widget.device = device
+            widget = _Viewer(device, parent)
             self.created.append(widget)
             return widget
 
@@ -49,6 +58,16 @@ class LogcatPaneTests(unittest.TestCase):
 
         self.assertEqual(len(self.created), 1)
         self.assertEqual(self.pane.current_viewer().device.device_serial_num, "SER1")
+
+    def test_cleanup_releases_embedded_viewer(self):
+        self.pane.set_devices([_Device("SER1", "Pixel 7")])
+        self.assertTrue(self.pane.open_active_device())
+        viewer = self.pane.current_viewer()
+
+        self.pane.cleanup()
+
+        self.assertTrue(viewer.cleaned)
+        self.assertIsNone(self.pane.current_viewer())
 
 
 if __name__ == "__main__":

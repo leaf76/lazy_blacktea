@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PyQt6.QtGui import QCloseEvent
 
 from ui.design_tokens import get_palette
 
@@ -95,6 +96,10 @@ class LogcatPane(QWidget):
         self._theme = theme if theme in ("light", "dark") else "light"
         self._apply_palette()
 
+    def cleanup(self) -> None:
+        """Release the embedded viewer before the pane is destroyed."""
+        self._clear_viewer()
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -150,10 +155,17 @@ class LogcatPane(QWidget):
     def _clear_viewer(self) -> None:
         if self._current_viewer is None:
             return
+        cleanup = getattr(self._current_viewer, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
         self._viewer_layout.removeWidget(self._current_viewer)
         self._current_viewer.setParent(None)
         self._current_viewer.deleteLater()
         self._current_viewer = None
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
+        self.cleanup()
+        super().closeEvent(event)
 
     def _default_viewer_factory(self, device: object, parent: Optional[QWidget]) -> QWidget:
         from ui.logcat_viewer import LogcatViewerWidget

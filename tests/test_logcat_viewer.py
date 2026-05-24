@@ -182,6 +182,16 @@ class LogcatWindowBehaviourTest(unittest.TestCase):
     def test_logcat_window_is_compatible_viewer_wrapper(self):
         self.assertIsInstance(self.window, LogcatViewerWidget)
 
+    def test_cleanup_stops_stream_worker_thread(self):
+        thread = self.window._stream_thread
+        self.assertIsNotNone(thread)
+        self.assertTrue(thread.isRunning())
+
+        self.window.cleanup()
+
+        self.assertIsNone(self.window._stream_thread)
+        self.assertFalse(thread.isRunning())
+
     def test_limit_log_lines_trims_model(self):
         self.window.history_multiplier = 1
         lines = [

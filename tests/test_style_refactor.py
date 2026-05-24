@@ -268,6 +268,18 @@ class StyleRefactorTest(unittest.TestCase):
 
             print(f"    ✅ {label_style.name} -> {len(css)} 個字符")
 
+    def test_subheader_label_uses_theme_text_color(self):
+        """Ensure subheaders use readable theme text in dark mode."""
+        theme_manager = ThemeManager()
+        try:
+            theme_manager.set_theme("dark")
+            css = StyleManager.get_label_style(LabelStyle.SUBHEADER)
+
+            self.assertIn(StyleManager.COLORS["text_primary"], css)
+            self.assertNotIn("#1b2533", css)
+        finally:
+            theme_manager.set_theme("light")
+
     def test_status_styles_dictionary(self):
         """測試狀態樣式字典"""
         print("\n📊 測試狀態樣式...")

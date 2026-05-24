@@ -382,7 +382,7 @@ class StyleManager:
                     ("font-size", "12px"),
                     ("font-weight", "bold"),
                     ("padding", "4px 0px"),
-                    ("color", "#1b2533"),
+                    ("color", "{text_primary}"),
                 ),
             ),
         ),

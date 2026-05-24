@@ -3426,6 +3426,19 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             # Stop any active recordings
             self.recording_manager.stop_recording()
 
+        logcat_pane = getattr(self, "logcat_pane", None)
+        if logcat_pane is not None and hasattr(logcat_pane, "cleanup"):
+            logcat_pane.cleanup()
+
+        for logcat_window in list(getattr(self, "logcat_windows", {}).values()):
+            try:
+                cleanup = getattr(logcat_window, "cleanup", None)
+                if callable(cleanup):
+                    cleanup()
+                logcat_window.close()
+            except Exception as exc:
+                logger.debug("Detached logcat window cleanup failed: %s", exc)
+
         if hasattr(self, "device_file_controller"):
             self.device_file_controller.shutdown()
 

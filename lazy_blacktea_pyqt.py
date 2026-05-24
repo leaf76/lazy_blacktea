@@ -7,6 +7,7 @@ configure_qt_plugin_path()
 from PyQt6.QtWidgets import QApplication
 
 from ui.main_window import WindowMain
+from ui.style_manager import ButtonStyle, LabelStyle, StyleManager
 from ui.constants import DEVICE_FILE_IS_DIR_ROLE, DEVICE_FILE_PATH_ROLE
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 from utils.font_loader import configure_application_fonts
@@ -16,6 +17,9 @@ import sys
 
 __all__ = [
     "WindowMain",
+    "StyleManager",
+    "ButtonStyle",
+    "LabelStyle",
     "DEVICE_FILE_PATH_ROLE",
     "DEVICE_FILE_IS_DIR_ROLE",
     "main",
