@@ -3,7 +3,11 @@
 import unittest
 import tempfile
 import json
+import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_manager import (
     ConfigManager,
@@ -12,6 +16,7 @@ from config.config_manager import (
     DeviceSettings,
     LogcatSettings,
     ScrcpySettings,
+    UpdateSettings,
 )
 
 
@@ -39,6 +44,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertIsInstance(config.device, DeviceSettings)
         self.assertIsInstance(config.logcat, LogcatSettings)
         self.assertIsInstance(config.scrcpy, ScrcpySettings)
+        self.assertIsInstance(config.update, UpdateSettings)
 
         # Check default values
         self.assertEqual(config.ui.window_width, 1200)
@@ -50,6 +56,9 @@ class TestConfigManager(unittest.TestCase):
         self.assertTrue(config.scrcpy.stay_awake)
         self.assertTrue(config.scrcpy.turn_screen_off)
         self.assertTrue(config.scrcpy.disable_screensaver)
+        self.assertTrue(config.update.auto_check_enabled)
+        self.assertEqual(config.update.check_interval_hours, 24)
+        self.assertEqual(config.update.channel, "stable")
 
     def test_save_and_load_config(self):
         """Test configuration saving and loading."""
@@ -154,6 +163,51 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.logcat.update_interval_ms, 150)
         self.assertEqual(config.logcat.max_lines_per_update, 80)
         self.assertEqual(config.logcat.max_buffer_size, 250)
+
+    def test_update_settings_section_persists(self):
+        """Test application updater settings update and persistence."""
+        self.config_manager.update_update_settings(
+            auto_check_enabled=False,
+            check_interval_hours=48,
+            last_check_at="2026-05-24T00:00:00+00:00",
+            skipped_version="0.0.52",
+            download_dir="/tmp/lazy-blacktea",
+        )
+
+        new_manager = ConfigManager(str(self.config_path))
+        config = new_manager.load_config()
+
+        self.assertFalse(config.update.auto_check_enabled)
+        self.assertEqual(config.update.check_interval_hours, 48)
+        self.assertEqual(config.update.last_check_at, "2026-05-24T00:00:00+00:00")
+        self.assertEqual(config.update.skipped_version, "0.0.52")
+        self.assertEqual(config.update.download_dir, "/tmp/lazy-blacktea")
+        self.assertEqual(config.update.channel, "stable")
+
+    def test_invalid_update_settings_fall_back_to_safe_defaults(self):
+        """Invalid updater settings should not persist unsafe or noisy behavior."""
+        invalid_config = {
+            "update": {
+                "auto_check_enabled": "yes",
+                "check_interval_hours": 0,
+                "last_check_at": 123,
+                "skipped_version": None,
+                "download_dir": None,
+                "channel": "beta",
+            }
+        }
+
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(invalid_config, f)
+
+        config = self.config_manager.load_config()
+
+        self.assertTrue(config.update.auto_check_enabled)
+        self.assertEqual(config.update.check_interval_hours, 24)
+        self.assertEqual(config.update.last_check_at, "")
+        self.assertEqual(config.update.skipped_version, "")
+        self.assertEqual(config.update.download_dir, "")
+        self.assertEqual(config.update.channel, "stable")
 
     def test_load_legacy_ui_scale_from_flat_config(self):
         """Ensure legacy flat ui_scale values are respected."""

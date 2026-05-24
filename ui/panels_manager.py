@@ -491,6 +491,14 @@ class PanelsManager(QObject):
 
         # Help menu
         help_menu = menubar.addMenu('Help')
+        check_updates_action = QAction('Check for Updates...', main_window)
+        if hasattr(main_window, 'show_update_dialog'):
+            check_updates_action.triggered.connect(main_window.show_update_dialog)
+        else:  # pragma: no cover
+            check_updates_action.setEnabled(False)
+        help_menu.addAction(check_updates_action)
+        main_window.check_updates_action = check_updates_action
+
         about_action = QAction('About', main_window)
         about_action.triggered.connect(main_window.show_about_dialog)
         help_menu.addAction(about_action)

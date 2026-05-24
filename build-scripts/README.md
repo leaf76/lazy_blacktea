@@ -76,6 +76,20 @@ dist/
 └── LazyBlacktea-x86_64.AppImage          # AppImage (if appimagetool is available)
 ```
 
+## 🔐 Release Checksum Manifest
+
+Official releases that should be installable through the in-app updater must
+upload a `SHA256SUMS.txt` asset to the GitHub Release. The manifest must include
+each desktop artifact filename exactly as published:
+
+```bash
+cd dist
+shasum -a 256 LazyBlacktea-macos-arm64.dmg LazyBlacktea-x86_64.AppImage lazyblacktea-linux.tar.gz > SHA256SUMS.txt
+```
+
+The updater refuses to open downloaded artifacts when the manifest is missing
+or the downloaded file digest does not match.
+
 ## 🔧 Dependencies
 
 ### Python Dependencies (automatically installed)

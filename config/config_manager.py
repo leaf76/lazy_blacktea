@@ -145,6 +145,18 @@ class LogcatViewerSettings:
 
 
 @dataclass
+class UpdateSettings:
+    """Application update check preferences."""
+
+    auto_check_enabled: bool = True
+    check_interval_hours: int = 24
+    last_check_at: str = ""
+    skipped_version: str = ""
+    download_dir: str = ""
+    channel: str = "stable"
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
 
@@ -158,6 +170,7 @@ class AppConfig:
     screenshot: ScreenshotSettings
     screen_record: ScreenRecordSettings
     logcat_viewer: LogcatViewerSettings
+    update: UpdateSettings
     command_history: list = None
     version: str = "1.0.0"
 
@@ -195,6 +208,7 @@ class ConfigManager:
             screenshot=ScreenshotSettings(),
             screen_record=ScreenRecordSettings(),
             logcat_viewer=LogcatViewerSettings(),
+            update=UpdateSettings(),
         )
 
     def _validate_config(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,6 +360,24 @@ class ConfigManager:
             rid = -1
         record_settings["display_id"] = rid
 
+        # Validate application update settings
+        update_settings = validated.setdefault("update", {})
+        if not isinstance(update_settings.get("auto_check_enabled", True), bool):
+            update_settings["auto_check_enabled"] = True
+            logger.warning("Update auto-check flag invalid, reset to True")
+        try:
+            interval = int(update_settings.get("check_interval_hours", 24))
+        except (TypeError, ValueError):
+            interval = 24
+        if interval < 1:
+            interval = 24
+        update_settings["check_interval_hours"] = interval
+        for field in ("last_check_at", "skipped_version", "download_dir"):
+            value = update_settings.get(field, "")
+            update_settings[field] = value if isinstance(value, str) else ""
+        if update_settings.get("channel") != "stable":
+            update_settings["channel"] = "stable"
+
         return validated
 
     def load_config(self) -> AppConfig:
@@ -376,6 +408,7 @@ class ConfigManager:
                     logcat_viewer=LogcatViewerSettings(
                         **validated_dict.get("logcat_viewer", {})
                     ),
+                    update=UpdateSettings(**validated_dict.get("update", {})),
                     command_history=validated_dict.get("command_history", []),
                     version=validated_dict.get("version", "1.0.0"),
                 )
@@ -409,6 +442,7 @@ class ConfigManager:
                         logcat_viewer=LogcatViewerSettings(
                             **validated_dict.get("logcat_viewer", {})
                         ),
+                        update=UpdateSettings(**validated_dict.get("update", {})),
                         command_history=validated_dict.get("command_history", []),
                         version=validated_dict.get("version", "1.0.0"),
                     )
@@ -491,6 +525,10 @@ class ConfigManager:
     def get_logcat_viewer_settings(self) -> LogcatViewerSettings:
         """Get logcat viewer UI settings."""
         return self.load_config().logcat_viewer
+
+    def get_update_settings(self) -> UpdateSettings:
+        """Get application update settings."""
+        return self.load_config().update
 
     def update_ui_settings(self, **kwargs):
         """Update UI settings."""
@@ -594,6 +632,20 @@ class ConfigManager:
         config.logcat_viewer = settings
         self.save_config(config)
 
+    def update_update_settings(self, **kwargs):
+        """Update application update settings."""
+        config = self.load_config()
+        for key, value in kwargs.items():
+            if hasattr(config.update, key):
+                setattr(config.update, key, value)
+        self.save_config(config)
+
+    def set_update_settings(self, settings: UpdateSettings):
+        """Replace application update settings with provided dataclass."""
+        config = self.load_config()
+        config.update = settings
+        self.save_config(config)
+
     def reset_to_defaults(self):
         """Reset configuration to defaults."""
         self._config = self._create_default_config()
@@ -635,6 +687,7 @@ class ConfigManager:
                 logcat_viewer=LogcatViewerSettings(
                     **validated_dict.get("logcat_viewer", {})
                 ),
+                update=UpdateSettings(**validated_dict.get("update", {})),
                 command_history=validated_dict.get("command_history", []),
                 version=validated_dict.get("version", "1.0.0"),
             )

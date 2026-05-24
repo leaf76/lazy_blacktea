@@ -137,6 +137,7 @@ class AppStatusBar(QWidget):
         *,
         intent: Optional[StatusChipIntent] = None,
         tooltip: Optional[str] = None,
+        on_click: Optional[Callable[[], None]] = None,
     ) -> bool:
         """Update an existing chip. Returns ``False`` if it doesn't exist."""
 
@@ -150,6 +151,8 @@ class AppStatusBar(QWidget):
         if intent is not None:
             chip.intent = intent
             chip.button.setProperty("statusChipIntent", intent.value)
+        if on_click is not None:
+            chip.on_click = on_click
         # Always re-render: the label / intent change requires re-styling so
         # the bullet glyph stays in sync with the new label.
         self._style_button(chip.button, chip.intent)

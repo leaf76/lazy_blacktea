@@ -9,6 +9,7 @@ import platform
 import sys
 import threading
 import webbrowser
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Iterable, Optional, Set, Callable, Any
 
 from utils.qt_plugin_loader import configure_qt_plugin_path
@@ -108,6 +109,7 @@ from ui.scrcpy_settings_dialog import ScrcpySettingsDialog
 from ui.apk_install_settings_dialog import ApkInstallSettingsDialog
 from ui.capture_settings_dialog import CaptureSettingsDialog
 from ui.output_settings_dialog import OutputSettingsDialog
+from ui.update_dialog import UpdateDialog
 from ui.device_files_facade import DeviceFilesFacade
 from ui.device_groups_facade import DeviceGroupsFacade
 from ui.commands_facade import CommandsFacade
@@ -130,6 +132,7 @@ from utils.ui_inspector_utils import check_ui_inspector_prerequisites
 from utils.qt_dependency_checker import check_and_fix_qt_dependencies
 from utils.icon_resolver import iter_icon_paths
 from utils.task_dispatcher import TaskContext, TaskHandle, get_task_dispatcher
+from utils.update_service import UpdateInfo, UpdateService
 
 logger = common.get_logger("lazy_blacktea")
 
@@ -171,6 +174,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Initialize new modular components
         self.config_manager = ConfigManager()
+        self.update_service = UpdateService(
+            current_version=ApplicationConstants.APP_VERSION
+        )
+        self.update_dialog = None
+        self._update_dialog_factory = UpdateDialog
         self.theme_manager = ThemeManager()
         self.theme_actions: Dict[str, QAction] = {}
         self._current_theme = "light"
@@ -434,6 +442,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Start periodic battery info refresh
         self.battery_info_manager.start()
         QTimer.singleShot(2000, self.battery_info_manager.refresh_all)
+        QTimer.singleShot(3000, self.check_for_updates_if_due)
 
     def _apply_window_geometry(self, ui_settings: Optional[UISettings]) -> None:
         """Apply initial window geometry derived from configuration and screen bounds."""
@@ -752,6 +761,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             "version",
             f"v{ApplicationConstants.APP_VERSION}",
             intent=StatusChipIntent.NEUTRAL,
+            on_click=self.show_update_dialog,
             align="right",
         )
         self._upsert_shell_chip(
@@ -780,7 +790,12 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             return
         status_bar = self.app_shell.status_bar()
         if status_bar.has_chip(name):
-            status_bar.update_chip(name, label, intent=intent)
+            status_bar.update_chip(
+                name,
+                label,
+                intent=intent,
+                on_click=on_click,
+            )
             return
         status_bar.add_chip(
             name,
@@ -890,6 +905,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 invoke=lambda: self.app_shell.set_active_pane(self.PANE_TASKS)
                 if self.app_shell is not None
                 else None,
+            ),
+            StaticPaletteAction(
+                title="Check for Updates",
+                subtitle="Check GitHub Releases for a verified app update",
+                section="Actions",
+                keywords=("update", "version", "release"),
+                invoke=lambda: self.show_update_dialog(),
             ),
         ]
 
@@ -1334,6 +1356,125 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 "Output Settings Updated",
                 f"Output path set to: {new_path or '(default)'}",
             )
+
+    def show_update_dialog(self) -> None:
+        """Open the application update dialog and run a manual check."""
+
+        dialog = self._update_dialog_factory(
+            update_service=self.update_service,
+            config_manager=self.config_manager,
+            parent=self,
+        )
+        self.update_dialog = dialog
+        if hasattr(dialog, "version_skipped"):
+            dialog.version_skipped.connect(lambda _version: self._remove_shell_chip("update"))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        dialog.start_check()
+
+    def check_for_updates_if_due(self) -> None:
+        """Start a silent background update check when settings allow it."""
+
+        if not self._should_check_for_updates():
+            return
+
+        now_iso = self._current_update_timestamp()
+        try:
+            self.config_manager.update_update_settings(last_check_at=now_iso)
+        except Exception as exc:
+            logger.debug("Failed to persist update check timestamp: %s", exc)
+
+        handle = self._task_dispatcher.submit(
+            self.update_service.check_for_updates,
+            context=TaskContext(name="auto_check_for_updates", category="updates"),
+        )
+        self._background_task_handles.append(handle)
+        handle.completed.connect(self._on_background_update_check_completed)
+        handle.failed.connect(self._on_background_update_check_failed)
+        handle.finished.connect(lambda: self._forget_background_handle(handle))
+
+    def _should_check_for_updates(self, now_iso: Optional[str] = None) -> bool:
+        """Return True when the configured auto-check interval has elapsed."""
+
+        try:
+            settings = self.config_manager.get_update_settings()
+        except Exception as exc:
+            logger.debug("Could not load update settings: %s", exc)
+            return False
+
+        if not getattr(settings, "auto_check_enabled", True):
+            return False
+
+        try:
+            interval_hours = int(getattr(settings, "check_interval_hours", 24) or 24)
+        except (TypeError, ValueError):
+            interval_hours = 24
+        if interval_hours < 1:
+            interval_hours = 24
+
+        now = self._parse_update_timestamp(now_iso) if now_iso else datetime.now(timezone.utc)
+        last_check_at = str(getattr(settings, "last_check_at", "") or "").strip()
+        if not last_check_at:
+            return True
+        last_check = self._parse_update_timestamp(last_check_at)
+        if last_check is None or now is None:
+            return True
+        return now - last_check >= timedelta(hours=interval_hours)
+
+    @staticmethod
+    def _current_update_timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _parse_update_timestamp(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            normalized = str(value).replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    def _on_background_update_check_completed(self, update_info: UpdateInfo) -> None:
+        if not update_info.is_update_available:
+            self._remove_shell_chip("update")
+            return
+
+        try:
+            settings = self.config_manager.get_update_settings()
+            if getattr(settings, "skipped_version", "") == update_info.latest_version:
+                return
+        except Exception as exc:
+            logger.debug("Could not inspect skipped update version: %s", exc)
+
+        self._upsert_shell_chip(
+            "update",
+            f"Update v{update_info.latest_version}",
+            intent=StatusChipIntent.WARNING,
+            on_click=self.show_update_dialog,
+            align="right",
+        )
+        if hasattr(self, "status_bar_manager"):
+            self.status_bar_manager.show_message(
+                f"Update v{update_info.latest_version} is available.",
+                timeout=5000,
+            )
+
+    def _on_background_update_check_failed(self, exc: Exception) -> None:
+        logger.debug("Silent update check failed: %s", exc)
+
+    def _forget_background_handle(self, handle: TaskHandle) -> None:
+        if handle in self._background_task_handles:
+            self._background_task_handles.remove(handle)
+
+    def _remove_shell_chip(self, name: str) -> None:
+        if self.app_shell is None:
+            return
+        self.app_shell.status_bar().remove_chip(name)
 
     # Operation logging helpers moved to OperationLoggingMixin
 

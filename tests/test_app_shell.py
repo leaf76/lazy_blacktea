@@ -58,6 +58,18 @@ class AppShellTests(unittest.TestCase):
         self.assertTrue(status_bar.remove_chip("devices"))
         self.assertFalse(status_bar.has_chip("devices"))
 
+    def test_status_bar_chip_callback_can_be_updated(self):
+        status_bar = self.shell.status_bar()
+        calls = []
+        status_bar.add_chip("version", "v1", on_click=lambda: calls.append("old"))
+
+        self.assertTrue(
+            status_bar.update_chip("version", "v2", on_click=lambda: calls.append("new"))
+        )
+
+        status_bar._on_chip_clicked("version")
+        self.assertEqual(calls, ["new"])
+
     def test_theme_switch_restores_valid_stylesheet(self):
         self.shell.add_pane("workspace", "Workspace", QLabel("Workspace"))
 
