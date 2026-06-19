@@ -5,7 +5,32 @@ All notable changes to Lazy Blacktea are documented here.
 This project follows [Conventional Commits](https://www.conventionalcommits.org/) for release notes.
 
 ## Unreleased
-- None.
+### Added
+- Command palette now searches connected devices and recent tasks.
+- Sticky batch-action bar (Screenshot / Record / Run Shell / Clear) appears in the Devices pane when devices are selected.
+- Keyboard-first navigation: `/` focuses the device search, `?` opens a shortcuts overlay, and the device list supports ↑/↓ move, Space toggle, and Ctrl+A / Ctrl+Shift+A.
+- Inspector pane shows a summary of the active device.
+- Rich empty / first-run device states with USB-debugging guidance, an "Open ADB guide" link, and a "Clear filters" action.
+- Device Groups promoted to a top-level sidebar pane.
+
+### Changed
+- Routine batch-operation success now shows a non-blocking toast instead of a blocking dialog (failures still use a dialog).
+- Quick-filter chips (WiFi / BT / API / …) now actually filter the device list.
+- Toast, unauthorized banner, and checkbox colours follow the active light/dark theme, and the theme is re-applied live on switch (no stale colours until restart).
+- `accent_primary` design token is now the documented blue (`#2D6CDF` light / `#5B9DFF` dark).
+- Error dialogs show a concise summary instead of a raw Python traceback.
+
+### Fixed
+- Screenshot, shell command, and file-download operations now report real per-device success/failure instead of always reporting success.
+- Screen recording no longer fails to finalize on completion (devices could get stuck showing "recording").
+- Reboot now requires confirmation from every entry point, including the device-list right-click.
+- ADB commands now time out instead of hanging the app indefinitely on an offline/stuck device; large APK installs use a longer timeout.
+- Device groups persist immediately when created or deleted (no longer lost on crash/force-quit).
+- Devices reporting a dotted Android release (e.g. `13.0`) no longer show as "Android 0".
+- Per-device checkboxes expose accessible names; the search field shows a visible focus ring.
+
+### Internal
+- Extracted pure logcat parsing helpers to `ui/logcat/log_parsing.py` and began decomposing `adb_tools.py` (`utils/adb/_base.py` + screenshot domain) behind re-export shims; removed dead `optimized_device_list.py`.
 
 ## 0.0.55 - 2026-05-25
 ### Fixed
