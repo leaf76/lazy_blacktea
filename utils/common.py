@@ -19,6 +19,8 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Iterator, List, Optional, Sequence, Union
 
+from config.constants import ADBConstants
+
 
 _TRACE_ID_DEFAULT = "-"
 _TRACE_ID_VAR: ContextVar[str] = ContextVar("lazy_blacktea_trace_id", default=_TRACE_ID_DEFAULT)
@@ -313,21 +315,57 @@ def validate_and_create_output_path(output_path: str) -> Optional[str]:
     return output_path
 
 
-def run_command(command: CommandType, ignore_index: int = 0) -> List[str]:
-    """Backwards compatible alias that delegates to mp_run_command."""
+def run_command(
+    command: CommandType,
+    ignore_index: int = 0,
+    timeout: Optional[float] = ADBConstants.DEFAULT_COMMAND_TIMEOUT,
+) -> List[str]:
+    """Backwards compatible alias that delegates to mp_run_command.
+
+    ``timeout`` (seconds) bounds how long the command may run; a stuck/offline
+    device can no longer block the worker forever. Long operations (install,
+    pull, recording) should pass a larger explicit value.
+    """
     _LOGGER.debug("Run command (alias)", extra={"command": command})
-    return mp_run_command(command, ignore_index)
+    return mp_run_command(command, ignore_index, timeout=timeout)
 
 
-def mp_run_command(cmd: CommandType, ignore_index: int = 0) -> List[str]:
-    """Run the command using subprocess.Popen and return its output lines."""
+def mp_run_command(
+    cmd: CommandType,
+    ignore_index: int = 0,
+    timeout: Optional[float] = ADBConstants.DEFAULT_COMMAND_TIMEOUT,
+) -> List[str]:
+    """Run the command and return its stdout lines (empty on failure/timeout).
+
+    Delegates to :func:`run_command_with_status` so timeout handling (kill the
+    process and reclaim the worker on ``TimeoutExpired``) lives in one place.
+    """
     _LOGGER.debug("Execute command asynchronously", extra={"command": cmd})
-    listing_result: List[str] = []
+    returncode, stdout_lines, stderr_lines = run_command_with_status(cmd, timeout=timeout)
 
-    if isinstance(cmd, str):
-        command_list: Sequence[str] = shlex.split(cmd)
+    if returncode == 0:
+        return stdout_lines[ignore_index:]
+
+    if returncode != -1 and stderr_lines:
+        # Non-zero exit (not a spawn failure/timeout, which are already logged).
+        _LOGGER.error("Command error", extra={"stderr": "\n".join(stderr_lines)})
+    return []
+
+
+def run_command_with_status(
+    command: CommandType, timeout: Optional[float] = None
+) -> tuple[int, List[str], List[str]]:
+    """Run a command and return ``(returncode, stdout_lines, stderr_lines)``.
+
+    Unlike :func:`run_command`, this surfaces the exit code and stderr so callers
+    can distinguish "succeeded with no output" from "failed" (``run_command``
+    returns an empty list in both cases). ``returncode`` is ``-1`` when the
+    process could not be created or timed out.
+    """
+    if isinstance(command, str):
+        command_list: Sequence[str] = shlex.split(command)
     else:
-        command_list = cmd
+        command_list = command
 
     try:
         process = subprocess.Popen(
@@ -338,19 +376,21 @@ def mp_run_command(cmd: CommandType, ignore_index: int = 0) -> List[str]:
             text=True,
             encoding="utf-8",
         )
-        stdout, stderr = process.communicate()
-        _LOGGER.debug("Command stdout", extra={"stdout": stdout})
-        _LOGGER.debug("Command stderr", extra={"stderr": stderr})
-        if process.returncode == 0:
-            output = stdout.splitlines()
-            listing_result.extend(output[ignore_index:])
-        elif stderr and stderr.strip():
-            _LOGGER.error("Command error", extra={"stderr": stderr})
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            _LOGGER.error("Command timed out", extra={"command": command_list})
+            return -1, (stdout or "").splitlines(), (stderr or "").splitlines()
+        return (
+            process.returncode,
+            (stdout or "").splitlines(),
+            (stderr or "").splitlines(),
+        )
     except Exception:  # pragma: no cover - defensive path
         _LOGGER.exception("Command process error", extra={"command": command_list})
-
-    _LOGGER.debug("Command result", extra={"result": listing_result})
-    return listing_result
+        return -1, [], []
 
 
 def create_cancellable_process(cmd: CommandType) -> Optional[subprocess.Popen]:

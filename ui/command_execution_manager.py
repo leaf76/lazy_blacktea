@@ -27,7 +27,8 @@ class CommandExecutionManager(QObject):
 
     # 信號定義
     console_output_signal = pyqtSignal(str)
-    command_results_ready = pyqtSignal(str, object, object)
+    # command, serials, results, returncodes (returncodes optional: None = legacy)
+    command_results_ready = pyqtSignal(str, object, object, object)
 
     def __init__(self, parent_window):
         super().__init__()
@@ -208,14 +209,18 @@ class CommandExecutionManager(QObject):
             )
             self._track_handle(handle)
 
-    def log_command_results(self, command: str, serials: List[str], results):
+    def log_command_results(self, command: str, serials: List[str], results, returncodes=None):
         """Record command execution results in the console."""
         normalized_results = self._normalize_results(results, len(serials))
         delegate = getattr(self.parent_window, 'log_command_results', None)
         handled = False
         if callable(delegate):
             try:
-                delegate(command, serials, normalized_results)
+                try:
+                    delegate(command, serials, normalized_results, returncodes)
+                except TypeError:
+                    # Fall back to a delegate that predates the returncodes arg.
+                    delegate(command, serials, normalized_results)
                 handled = True
             except Exception as exc:
                 self._log_error(f'Error delegating command results: {exc}')
@@ -228,7 +233,8 @@ class CommandExecutionManager(QObject):
             self.write_to_console(f'❌ No results: {command}')
             return
 
-        for serial, result in zip(serials, normalized_results):
+        codes = list(returncodes) if returncodes else []
+        for index, (serial, result) in enumerate(zip(serials, normalized_results)):
             device_name = serial
             self.write_to_console(f'📱 [{device_name}] {command}')
 
@@ -238,13 +244,24 @@ class CommandExecutionManager(QObject):
                 for line in output_lines:
                     if line and str(line).strip():
                         self.write_to_console(f'  {str(line).strip()}')
+
+            rc = codes[index] if index < len(codes) else None
+            if rc is None and not codes:
+                # Legacy path: no exit codes available, classify by output presence.
+                if output_lines:
+                    self.write_to_console(f'✅ [{device_name}] Completed')
+                else:
+                    self.write_to_console(f'❌ [{device_name}] No output')
+            elif rc == 0:
                 self.write_to_console(f'✅ [{device_name}] Completed')
+            elif rc is None:
+                self.write_to_console(f'❌ [{device_name}] Failed to start')
             else:
-                self.write_to_console(f'❌ [{device_name}] No output')
+                self.write_to_console(f'❌ [{device_name}] Failed (exit {rc})')
 
         self.write_to_console('─' * 30)
 
-    def _process_command_results(self, command, serials, results):
+    def _process_command_results(self, command, serials, results, returncodes=None):
         if isinstance(serials, (list, tuple)):
             serials_list = list(serials)
         else:
@@ -257,11 +274,11 @@ class CommandExecutionManager(QObject):
         else:
             results_payload = [results]
 
-        self._emit_command_results(command, serials_list, results_payload)
+        self._emit_command_results(command, serials_list, results_payload, returncodes)
 
-    def _emit_command_results(self, command: str, serials: List[str], results):
+    def _emit_command_results(self, command: str, serials: List[str], results, returncodes=None):
         """Normalize and forward command results."""
-        self.log_command_results(command, serials, results)
+        self.log_command_results(command, serials, results, returncodes)
 
     def write_to_console(self, message: str):
         """Write message to console (delegates to parent_window.write_to_console)."""
@@ -345,20 +362,48 @@ class CommandExecutionManager(QObject):
         except Exception:
             pass
 
+    @staticmethod
+    def _summarize_returncodes(returncodes) -> Optional[tuple[int, int]]:
+        """Return ``(success_count, failed_count)`` or ``None`` when unavailable.
+
+        Returns ``None`` for legacy payloads that do not carry per-device exit
+        codes so completion messaging falls back to the original wording.
+        """
+        if not returncodes:
+            return None
+        success = sum(1 for rc in returncodes if rc == 0)
+        return success, len(returncodes) - success
+
+    def _completion_message(self, command: str, serials: List[str], returncodes) -> str:
+        """Build a completion message that reflects per-device failures."""
+        summary = self._summarize_returncodes(returncodes)
+        if summary is None:
+            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            return f'Command "{command}" completed on {device_count} device(s).'
+        success_count, failed_count = summary
+        if failed_count:
+            return (
+                f'Command "{command}" completed on {success_count} device(s), '
+                f'failed on {failed_count} device(s).'
+            )
+        return f'Command "{command}" completed on {success_count} device(s).'
+
     def _on_shell_command_completed(self, command: str, serials: List[str], payload: Any) -> None:
         results = []
+        returncodes = None
         if isinstance(payload, dict):
             results = payload.get('results', [])
-        self.command_results_ready.emit(command, serials, results)
+            returncodes = payload.get('returncodes')
+        self.command_results_ready.emit(command, serials, results, returncodes)
         # Log and notify completion via UI dialog
         QTimer.singleShot(0, lambda: self._log_completion(f'Shell command "{command}" completed on all devices'))
         try:
-            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            message = self._completion_message(command, serials, returncodes)
             QTimer.singleShot(
                 0,
                 lambda: getattr(self.parent_window, 'show_info', lambda *_: None)(
                     'Shell Command Completed',
-                    f'Command "{command}" completed on {device_count} device(s).'
+                    message,
                 ),
             )
         except Exception:
@@ -367,24 +412,28 @@ class CommandExecutionManager(QObject):
 
     def _on_cancellable_command_completed(self, command: str, serials: List[str], payload: Any, is_batch: bool = False, batch_id: Optional[str] = None) -> None:
         results = []
+        returncodes = None
         if isinstance(payload, dict):
             results = payload.get('results', [])
-        self.command_results_ready.emit(command, serials, results)
+            returncodes = payload.get('returncodes')
+        self.command_results_ready.emit(command, serials, results, returncodes)
         QTimer.singleShot(0, lambda: self._log_completion(f'Command "{command}" completed on {len(serials)} device(s)'))
 
         if is_batch and batch_id:
-            # Update batch state and maybe show one summary dialog
-            self._increment_batch_done(batch_id, success=True, command=command)
+            # Treat any non-zero exit as a batch failure for accurate summaries.
+            summary = self._summarize_returncodes(returncodes)
+            batch_success = summary is None or summary[1] == 0
+            self._increment_batch_done(batch_id, success=batch_success, command=command)
             return
 
         # Non-batch single command: show completion dialog
         try:
-            device_count = len(serials) if isinstance(serials, (list, tuple)) else 1
+            message = self._completion_message(command, serials, returncodes)
             QTimer.singleShot(
                 0,
                 lambda: getattr(self.parent_window, 'show_info', lambda *_: None)(
                     'Command Completed',
-                    f'Command "{command}" completed on {device_count} device(s).'
+                    message,
                 ),
             )
         except Exception:
@@ -481,10 +530,16 @@ class CommandExecutionManager(QObject):
         self._register_processes_for_handle(task_handle, started_processes)
 
         results: List[List[str]] = []
+        # Per-serial exit codes aligned with ``serials``/``results``:
+        #   None  -> the adb process never started
+        #   0     -> success
+        #   != 0  -> the command failed on that device
+        returncodes: List[Optional[int]] = []
         for serial in serials:
             process = processes_by_serial.get(serial)
             if process is None:
                 results.append(["Failed to start adb process"])
+                returncodes.append(None)
                 continue
 
             stdout, stderr = self._collect_process_output(process, task_handle)
@@ -500,10 +555,12 @@ class CommandExecutionManager(QObject):
                 else:
                     lines.extend(str(stderr).splitlines())
             results.append(lines)
+            returncodes.append(process.returncode)
 
         return {
-            'success': True,
+            'success': all(rc == 0 for rc in returncodes),
             'results': results,
+            'returncodes': returncodes,
         }
 
     def _collect_process_output(

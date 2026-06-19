@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import (
     QFrame,
@@ -110,13 +110,22 @@ class OperationItemWidget(QFrame):
             self._progress_bar.setValue(int(ev.progress * 100))
             self._progress_bar.show()
             self._status_label.setText(f"{int(ev.progress * 100)}%")
+            self._status_label.setToolTip("")
         elif ev.status == OperationStatus.RUNNING:
             self._progress_bar.setRange(0, 0)
             self._progress_bar.show()
             self._status_label.setText(ev.message or "Running...")
+            self._status_label.setToolTip("")
         else:
             self._progress_bar.hide()
             self._status_label.setText(ev.display_status)
+            # The visible status truncates failures; expose the full error in a
+            # tooltip so the real cause is recoverable (#16). Clear it otherwise
+            # because this widget is reused across statuses.
+            if ev.status == OperationStatus.FAILED and ev.error_message:
+                self._status_label.setToolTip(ev.error_message)
+            else:
+                self._status_label.setToolTip("")
 
         self._cancel_btn.setVisible(ev.can_cancel and ev.is_active)
 
@@ -155,6 +164,11 @@ class DeviceOperationStatusPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("device_operation_status_panel")
         self._items: Dict[str, OperationItemWidget] = {}
+        # Per-op timers that auto-dismiss *completed* rows from this panel only;
+        # the operation stays in the manager registry (for the Tasks pane and the
+        # Recent-tasks command-palette provider) (#20).
+        self._dismiss_timers: Dict[str, QTimer] = {}
+        self.AUTO_DISMISS_MS = 5000
         self._is_collapsed = False
         self._setup_ui()
 
@@ -172,6 +186,8 @@ class DeviceOperationStatusPanel(QFrame):
         self._collapse_btn = QToolButton()
         self._collapse_btn.setObjectName("operation_collapse_btn")
         self._collapse_btn.setText("\u25bc")
+        self._collapse_btn.setToolTip("Toggle device operations panel")
+        self._collapse_btn.setAccessibleName("Toggle device operations")
         self._collapse_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._collapse_btn.clicked.connect(self._toggle_collapse)
         header_layout.addWidget(self._collapse_btn)
@@ -253,7 +269,35 @@ class DeviceOperationStatusPanel(QFrame):
             item.update_event(event)
         self._update_counts()
 
+        # Auto-dismiss completed rows after a short delay so the panel reflects
+        # current activity; keep FAILED rows until the user clears them (#20).
+        if event.status == OperationStatus.COMPLETED:
+            self._schedule_panel_dismiss(event.operation_id)
+        else:
+            self._cancel_panel_dismiss(event.operation_id)
+
+    def _schedule_panel_dismiss(self, operation_id: str) -> None:
+        if operation_id in self._dismiss_timers or operation_id not in self._items:
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._panel_auto_dismiss(operation_id))
+        timer.start(self.AUTO_DISMISS_MS)
+        self._dismiss_timers[operation_id] = timer
+
+    def _cancel_panel_dismiss(self, operation_id: str) -> None:
+        timer = self._dismiss_timers.pop(operation_id, None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+
+    def _panel_auto_dismiss(self, operation_id: str) -> None:
+        # Remove the widget from this panel only; the manager keeps the record.
+        self._dismiss_timers.pop(operation_id, None)
+        self.remove_operation(operation_id)
+
     def remove_operation(self, operation_id: str) -> None:
+        self._cancel_panel_dismiss(operation_id)
         item = self._items.pop(operation_id, None)
         if item:
             self._content_layout.removeWidget(item)

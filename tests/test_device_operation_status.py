@@ -222,6 +222,26 @@ class TestDeviceOperationEvent(unittest.TestCase):
         )
         self.assertIn("Failed:", event_failed.display_status)
 
+    def test_display_status_truncates_long_error_with_ellipsis(self):
+        from ui.signal_payloads import (
+            DeviceOperationEvent,
+            OperationStatus,
+            OperationType,
+        )
+
+        long_error = "INSTALL_FAILED_INSUFFICIENT_STORAGE: " + ("x" * 120)
+        event = DeviceOperationEvent(
+            device_serial="d1",
+            operation_type=OperationType.SCREENSHOT,
+            status=OperationStatus.FAILED,
+            error_message=long_error,
+        )
+        status = event.display_status
+        self.assertTrue(status.startswith("Failed: "))
+        self.assertTrue(status.endswith("…"))
+        # Visible label stays compact (prefix + 60 chars + ellipsis).
+        self.assertLessEqual(len(status), len("Failed: ") + 61)
+
     def test_with_status_preserves_fields(self):
         from ui.signal_payloads import (
             DeviceOperationEvent,

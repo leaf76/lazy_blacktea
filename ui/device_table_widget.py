@@ -103,7 +103,7 @@ class DeviceTableWidget(QTableWidget):
                 row = self.rowCount()
                 self.insertRow(row)
                 self._serial_to_row[serial] = row
-                self._set_checkbox_item(row, serial)
+                self._set_checkbox_item(row, serial, device.device_model or 'Unknown')
                 self._set_text_item(row, 1, device.device_model or 'Unknown')
                 self._set_text_item(row, 2, serial)
                 self._set_text_item(row, 3, device.android_ver or 'Unknown')
@@ -205,12 +205,17 @@ class DeviceTableWidget(QTableWidget):
             if index < len(widths):
                 self.setColumnWidth(index, width)
 
-    def _set_checkbox_item(self, row: int, serial: str) -> None:
+    def _set_checkbox_item(self, row: int, serial: str, model: str = '') -> None:
         item = _CheckboxSortItem('')
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked if serial in self._checked_serials else Qt.CheckState.Unchecked)
         item.setData(self._SERIAL_ROLE, serial)
         item.setToolTip('Toggle to include this device in multi-device actions')
+        # Per-device accessible label so screen readers can tell rows apart (#8).
+        item.setData(
+            Qt.ItemDataRole.AccessibleTextRole,
+            f"Select {model or 'Unknown'} {serial}",
+        )
         self.setItem(row, 0, item)
 
     def _set_text_item(self, row: int, column: int, value) -> None:

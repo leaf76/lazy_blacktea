@@ -490,7 +490,9 @@ class DeviceListController:
         if list_widget is None:
             return
 
-        show_placeholder = total_count == 0
+        # Show the placeholder whenever nothing is visible — including the case
+        # where devices exist but a search/filter hides them all (#37).
+        show_placeholder = visible_count == 0
         device_stack = getattr(self.window, "device_panel_stack", None)
         handled_by_stack = isinstance(device_stack, QStackedWidget)
 
@@ -502,14 +504,34 @@ class DeviceListController:
         else:
             list_widget.setHidden(show_placeholder)
 
-        if no_devices_label is not None and hasattr(no_devices_label, "setText"):
-            if show_placeholder:
-                if self.window.device_search_manager.get_search_text():
-                    no_devices_label.setText("No devices match the current search")
-                else:
-                    no_devices_label.setText("No devices found")
-            if not handled_by_stack and hasattr(no_devices_label, "setVisible"):
-                no_devices_label.setVisible(show_placeholder)
+        if no_devices_label is not None and show_placeholder:
+            search_active = bool(self.window.device_search_manager.get_search_text())
+            try:
+                filters_active = bool(
+                    self.window.device_search_manager.get_active_filters()
+                )
+            except Exception:
+                filters_active = False
+            no_match = total_count > 0 or search_active or filters_active
+
+            if no_match and hasattr(no_devices_label, "show_no_match"):
+                no_devices_label.show_no_match()
+            elif hasattr(no_devices_label, "show_no_devices"):
+                no_devices_label.show_no_devices()
+            elif hasattr(no_devices_label, "setText"):
+                # Plain-label fallback (older builds).
+                no_devices_label.setText(
+                    "No devices match the current search"
+                    if no_match
+                    else "No devices found"
+                )
+
+        if (
+            no_devices_label is not None
+            and not handled_by_stack
+            and hasattr(no_devices_label, "setVisible")
+        ):
+            no_devices_label.setVisible(show_placeholder)
 
         logger.debug(
             "Empty state updated (total=%s, visible=%s)", total_count, visible_count
@@ -526,7 +548,9 @@ class DeviceListController:
         self, device_dict: Optional[Dict[str, adb_models.DeviceInfo]] = None
     ) -> List[adb_models.DeviceInfo]:
         source = list((device_dict or self.window.device_dict).values())
-        return self.window.device_search_manager.search_and_sort_devices(
+        # Use the filter-aware variant so quick-filter chips (WiFi/BT/API/…) take
+        # effect; set_filters() populates active_filters consumed by apply_filters.
+        return self.window.device_search_manager.search_filter_and_sort_devices(
             source,
             self.window.device_search_manager.get_search_text(),
             self.window.device_search_manager.get_sort_mode(),

@@ -299,6 +299,33 @@ class TestDeviceSearch(unittest.TestCase):
                 self.assertLess(min_score, max_score, f"Query '{query}' should have varying match scores")
 
 
+class TestQuickFilterChips(unittest.TestCase):
+    """Quick-filter chips must actually filter the device list (finding #7)."""
+
+    def setUp(self):
+        from ui.device_search_manager import DeviceSearchManager
+        self.manager = DeviceSearchManager(main_window=None)
+        self.devices = [
+            create_mock_device("WiFi On", "S1", api_level="35", wifi_on=True),
+            create_mock_device("WiFi Off", "S2", api_level="33", wifi_on=False),
+        ]
+
+    def test_wifi_filter_reduces_devices(self):
+        self.manager.set_filters({'wifi': True})
+        result = self.manager.search_filter_and_sort_devices(self.devices)
+        self.assertEqual([d.device_serial_num for d in result], ['S1'])
+
+    def test_api_filter_reduces_devices(self):
+        self.manager.set_filters({'api': 34})
+        result = self.manager.search_filter_and_sort_devices(self.devices)
+        self.assertEqual([d.device_serial_num for d in result], ['S1'])
+
+    def test_no_filters_returns_all(self):
+        self.manager.set_filters({})
+        result = self.manager.search_filter_and_sort_devices(self.devices)
+        self.assertEqual({d.device_serial_num for d in result}, {'S1', 'S2'})
+
+
 def run_search_tests():
     """Run the search functionality tests."""
     print("🧪 Running Device Search Tests...")

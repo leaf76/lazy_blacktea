@@ -195,9 +195,12 @@ LIGHT_TOKENS: Dict[str, str] = {
     "fg_link": LIGHT_LEGACY["secondary"],
 
     # Accents
-    "accent_primary": LIGHT_LEGACY["primary"],
-    "accent_primary_hover": LIGHT_LEGACY["primary_hover"],
-    "accent_primary_press": "#3D8B40",
+    # Blue brand CTA per docs/design/tokens.md §1.4 (WCAG 6.0:1 target). The
+    # legacy "primary" key stays green so existing legacy-styled buttons are
+    # unaffected; only spec-token consumers adopt the blue (#28).
+    "accent_primary": "#2D6CDF",
+    "accent_primary_hover": "#245AC0",
+    "accent_primary_press": "#1D4DA3",
     "accent_secondary": LIGHT_LEGACY["secondary"],
     "accent_secondary_hover": LIGHT_LEGACY["secondary_hover"],
     "accent_success": LIGHT_LEGACY["success"],
@@ -206,7 +209,7 @@ LIGHT_TOKENS: Dict[str, str] = {
     "accent_info": LIGHT_LEGACY["info"],
 
     # Tints (12 % alpha overlays; mirror ``success_background`` / ``error_background``)
-    "tint_primary": "rgba(76, 175, 80, 0.10)",
+    "tint_primary": "rgba(45, 108, 223, 0.10)",
     "tint_success": LIGHT_LEGACY["success_background"],
     "tint_warning": "rgba(255, 152, 0, 0.10)",
     "tint_danger": LIGHT_LEGACY["error_background"],
@@ -236,10 +239,10 @@ DARK_TOKENS: Dict[str, str] = {
     "fg_inverse": DARK_LEGACY["background"],
     "fg_link": DARK_LEGACY["secondary"],
 
-    # Accents
-    "accent_primary": DARK_LEGACY["primary"],
-    "accent_primary_hover": DARK_LEGACY["primary_hover"],
-    "accent_primary_press": "#4A9D4F",
+    # Accents (blue brand CTA per docs/design/tokens.md §1.4; see light note)
+    "accent_primary": "#5B9DFF",
+    "accent_primary_hover": "#7AB1FF",
+    "accent_primary_press": "#3F86E8",
     "accent_secondary": DARK_LEGACY["secondary"],
     "accent_secondary_hover": DARK_LEGACY["secondary_hover"],
     "accent_success": DARK_LEGACY["success"],
@@ -248,7 +251,7 @@ DARK_TOKENS: Dict[str, str] = {
     "accent_info": DARK_LEGACY["info"],
 
     # Tints
-    "tint_primary": "rgba(102, 187, 106, 0.16)",
+    "tint_primary": "rgba(91, 157, 255, 0.16)",
     "tint_success": DARK_LEGACY["success_background"],
     "tint_warning": "rgba(255, 183, 77, 0.18)",
     "tint_danger": DARK_LEGACY["error_background"],

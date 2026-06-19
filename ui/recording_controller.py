@@ -96,7 +96,6 @@ class RecordingController(QObject):
         from ui.signal_payloads import (
             DeviceOperationEvent,
             OperationType,
-            OperationStatus,
         )
 
         operation_events = {}
@@ -124,18 +123,14 @@ class RecordingController(QObject):
         def recording_callback(
             device_name, device_serial, duration, filename, output_path
         ):
-            if device_serial in operation_events:
-                event = operation_events[device_serial]
-                completed_event = event.with_status(
-                    OperationStatus.COMPLETED,
-                    message=f"Recording saved ({duration:.1f}s)",
-                )
-                self.window._on_operation_finished(completed_event)
-
-            self.window.recording_stopped_signal.emit(
-                device_name, device_serial, duration, filename, output_path
+            self._handle_recording_completed(
+                operation_events,
+                device_name,
+                device_serial,
+                duration,
+                filename,
+                output_path,
             )
-            self.window.recording_state_cleared_signal.emit(device_serial)
 
         def recording_progress(event_payload: dict):
             try:
@@ -165,6 +160,50 @@ class RecordingController(QObject):
             lambda exc: self._on_start_screen_record_task_failed(exc, operation_events)
         )
         self.window._register_background_handle(handle)
+
+    def _handle_recording_completed(
+        self,
+        operation_events,
+        device_name,
+        device_serial,
+        duration,
+        filename,
+        output_path,
+    ) -> None:
+        """Handle a per-device recording completion from a worker thread.
+
+        ``duration`` is a preformatted string (e.g. ``"00:00:45"``) produced by
+        ``RecordingManager._format_duration``; applying numeric formatting such
+        as ``{duration:.1f}`` raises ``ValueError`` and would silently abort the
+        completion handling, leaving the device stuck in the recording state.
+        """
+        from ui.signal_payloads import OperationStatus
+
+        if device_serial in operation_events:
+            event = operation_events[device_serial]
+            completed_event = event.with_status(
+                OperationStatus.COMPLETED,
+                message=f"Recording saved ({duration})",
+            )
+            self._emit_operation_finished(completed_event)
+
+        self.window.recording_stopped_signal.emit(
+            device_name, device_serial, duration, filename, output_path
+        )
+        self.window.recording_state_cleared_signal.emit(device_serial)
+
+    def _emit_operation_finished(self, event) -> None:
+        """Marshal operation-finished handling onto the GUI thread.
+
+        The recording completion callback runs on a recording worker thread, so
+        we emit a Qt signal (queued to the GUI thread) rather than mutating Qt
+        widgets directly from the worker thread.
+        """
+        signal = getattr(self.window, "operation_finished_signal", None)
+        if signal is not None:
+            signal.emit(event)
+        else:  # pragma: no cover - fallback for windows without the signal
+            self.window._on_operation_finished(event)
 
     def enqueue_stop(self, serials: Optional[List[str]]) -> None:
         context = TaskContext(name="stop_screen_record", category="recording")

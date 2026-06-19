@@ -94,14 +94,6 @@ class DeviceOverviewWidget(QWidget):
         # Unauthorized warning banner (hidden by default)
         self._unauthorized_banner = QFrame()
         self._unauthorized_banner.setObjectName('unauthorized_warning_banner')
-        self._unauthorized_banner.setStyleSheet("""
-            QFrame#unauthorized_warning_banner {
-                background-color: #fef3c7;
-                border: 1px solid #f59e0b;
-                border-radius: 6px;
-                padding: 8px;
-            }
-        """)
         banner_layout = QHBoxLayout(self._unauthorized_banner)
         banner_layout.setContentsMargins(8, 6, 8, 6)
         banner_layout.setSpacing(8)
@@ -110,17 +102,15 @@ class DeviceOverviewWidget(QWidget):
         warning_icon.setStyleSheet('font-size: 14px;')
         banner_layout.addWidget(warning_icon)
 
-        warning_text = QLabel('Device unauthorized. Please allow USB debugging on the device.')
-        warning_text.setObjectName('unauthorized_warning_text')
-        warning_text.setStyleSheet("""
-            QLabel#unauthorized_warning_text {
-                color: #92400e;
-                font-size: 11px;
-                font-weight: 500;
-            }
-        """)
-        warning_text.setWordWrap(True)
-        banner_layout.addWidget(warning_text, 1)
+        self._unauthorized_warning_text = QLabel(
+            'Device unauthorized. Please allow USB debugging on the device.'
+        )
+        self._unauthorized_warning_text.setObjectName('unauthorized_warning_text')
+        self._unauthorized_warning_text.setWordWrap(True)
+        banner_layout.addWidget(self._unauthorized_warning_text, 1)
+
+        # Build the banner style from the active theme palette (finding #27).
+        self._apply_unauthorized_banner_style()
 
         self._unauthorized_banner.hide()
         layout.addWidget(self._unauthorized_banner)
@@ -256,6 +246,38 @@ class DeviceOverviewWidget(QWidget):
             'input_border': colors.get('input_border', tile_primary_border),
             'accent': colors.get('secondary', colors.get('text_primary', '#EAEAEA')),
         }
+
+    def refresh_theme(self) -> None:
+        """Re-apply theme-derived styles after a light/dark switch (#9).
+
+        Collapsible panels inside the overview re-style themselves through the
+        same theme sweep, so here we only refresh this widget's own surfaces.
+        """
+        self._apply_unauthorized_banner_style()
+        if hasattr(self, "_device_header_label"):
+            self._apply_device_header_style(self._device_header_label)
+
+    def _apply_unauthorized_banner_style(self) -> None:
+        """Style the unauthorized banner from the active theme (finding #27)."""
+        colors = StyleManager.COLORS
+        bg = colors.get('tint_warning', 'rgba(255, 152, 0, 0.12)')
+        border = colors.get('warning', '#f59e0b')
+        text = colors.get('text_primary', '#92400e')
+        self._unauthorized_banner.setStyleSheet(f"""
+            QFrame#unauthorized_warning_banner {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+        """)
+        self._unauthorized_warning_text.setStyleSheet(f"""
+            QLabel#unauthorized_warning_text {{
+                color: {text};
+                font-size: 11px;
+                font-weight: 500;
+            }}
+        """)
 
     def _apply_header_label_palette(self, label: QLabel) -> None:
         palette = self._palette()

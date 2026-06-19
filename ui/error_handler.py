@@ -240,10 +240,23 @@ class ErrorHandler(QObject):
         msg_box.setWindowTitle(title)
         msg_box.setText(message)
 
-        if error_info.technical_info:
-            msg_box.setDetailedText(error_info.technical_info)
+        detail = self._dialog_detail(error_info.technical_info)
+        if detail:
+            msg_box.setDetailedText(detail)
 
         msg_box.exec()
+
+    @staticmethod
+    def _dialog_detail(technical_info: Optional[str]) -> str:
+        """Concise detail for the user-facing dialog.
+
+        Only the leading ``Type: message`` summary is shown; the full Python
+        traceback is kept in the log (see ``_log_error``) rather than exposed to
+        end users (finding #10).
+        """
+        if not technical_info:
+            return ""
+        return technical_info.splitlines()[0]
 
     def register_error_handler(self, error_code: ErrorCode, handler: Callable):
         """Register custom error handler for specific error code."""

@@ -25,7 +25,7 @@ class PullDeviceDcimFoldersWithDeviceFolderTest(unittest.TestCase):
         output_path = '/tmp/dcim-output'
         expected = ['ok-device-1', 'ok-device-2']
 
-        with patch('utils.adb_tools.pull_device_dcim', return_value=expected) as mock_pull:
+        with patch('utils.adb.files.pull_device_dcim', return_value=expected) as mock_pull:
             result = adb_tools.pull_device_dcim_folders_with_device_folder(serials, output_path)
 
         mock_pull.assert_called_once_with(serials, output_path)

@@ -144,7 +144,10 @@ class DeviceFileBrowserManagerTests(unittest.TestCase):
 
     def test_download_paths_emits_completion(self):
         """Downloading selected entries should delegate to adb_tools and emit results."""
-        with patch('utils.adb_tools.pull_device_paths', return_value=['ok']) as mock_pull:
+        structured = [
+            {'remote_path': '/sdcard/file.txt', 'success': True, 'output': '1 file pulled'}
+        ]
+        with patch('utils.adb_tools.pull_device_paths', return_value=structured) as mock_pull:
             self.manager.download_paths('ABC123', ['/sdcard/file.txt'], '/tmp/output', use_thread=False)
 
         mock_pull.assert_called_once_with('ABC123', ['/sdcard/file.txt'], '/tmp/output')
@@ -153,7 +156,7 @@ class DeviceFileBrowserManagerTests(unittest.TestCase):
         self.assertEqual(serial, 'ABC123')
         self.assertEqual(output_path, '/tmp/output')
         self.assertEqual(remote_paths, ['/sdcard/file.txt'])
-        self.assertEqual(results, ['ok'])
+        self.assertEqual(results, structured)
 
     def test_preview_file_emits_preview_ready(self):
         """Previewing a file should pull it to a temp path and emit the preview signal."""
@@ -218,10 +221,14 @@ class AdbToolsDeviceFileTests(unittest.TestCase):
         with patch('utils.common.make_gen_dir_path', side_effect=lambda p: p), \
              patch('utils.common.make_full_path', side_effect=lambda root, name: f"{root}/{name}"), \
              patch('utils.adb_commands.cmd_pull_device_file', side_effect=lambda serial, remote, local: f'pull {serial} {remote} {local}') as mock_cmd, \
-             patch('utils.adb_tools._execute_commands_parallel_native', return_value=[['ok-a'], ['ok-b']]) as mock_native:
+             patch('utils.adb.files._execute_commands_parallel_native', return_value=[['ok-a'], ['ok-b']]) as mock_native:
             results = adb_tools.pull_device_paths('SER123', ['/a/b', '/c/d'], '/tmp/out')
 
-        self.assertEqual(results, ['ok-a', 'ok-b'])
+        # Output text is preserved; success is verified by local existence, and
+        # since the native pull is mocked (no real files), every path is a miss.
+        self.assertEqual([r['output'] for r in results], ['ok-a', 'ok-b'])
+        self.assertEqual([r['remote_path'] for r in results], ['/a/b', '/c/d'])
+        self.assertTrue(all(r['success'] is False for r in results))
         mock_cmd.assert_any_call('SER123', '/a/b', '/tmp/out/device_SER123')
         mock_cmd.assert_any_call('SER123', '/c/d', '/tmp/out/device_SER123')
         mock_native.assert_called_once()

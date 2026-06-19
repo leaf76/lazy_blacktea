@@ -1,5 +1,6 @@
 """Adb objects models."""
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -104,15 +105,29 @@ class ApkInstallErrorCode(Enum):
 
   @classmethod
   def from_output(cls, output: str) -> 'ApkInstallErrorCode':
-    """Parse error code from ADB output."""
+    """Parse the install result from adb output.
+
+    Success is detected only from a standalone ``Success`` line
+    (case-insensitive), never from a substring, so a path or failure message
+    that merely contains the word cannot be misread as success. Specific
+    failures are mapped from an exact ``INSTALL_FAILED_*`` /
+    ``INSTALL_PARSE_FAILED_*`` token; anything else is ``UNKNOWN_ERROR``.
+    """
     if not output:
       return cls.UNKNOWN_ERROR
-    output_upper = output.upper()
-    if 'SUCCESS' in output_upper:
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    has_failure = any('Failure' in line or line.startswith('Error') for line in lines)
+    if not has_failure and any(line.lower() == 'success' for line in lines):
       return cls.SUCCESS
-    for member in cls:
-      if member.code in output_upper:
-        return member
+
+    match = re.search(r'INSTALL_(?:PARSE_)?FAILED_[A-Z0-9_]+', output)
+    if match:
+      token = match.group(0)
+      for member in cls:
+        if member.code == token:
+          return member
+
     return cls.UNKNOWN_ERROR
 
 

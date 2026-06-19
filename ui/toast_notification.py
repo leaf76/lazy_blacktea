@@ -98,14 +98,25 @@ class ToastNotification(QWidget):
         self._timer.start(timeout)
 
     def _apply_style(self, style: str) -> None:
-        """Apply visual style to the toast."""
-        colors = {
-            self.STYLE_INFO: ("#1f618d", "#d4e6f1"),
-            self.STYLE_WARNING: ("#9a7d0a", "#fcf3cf"),
-            self.STYLE_ERROR: ("#922b21", "#f5b7b1"),
-            self.STYLE_SUCCESS: ("#1d8348", "#d4efdf"),
+        """Apply a theme-aware visual style to the toast.
+
+        Colors are pulled from the active theme palette each time the toast is
+        shown so it matches light/dark mode (finding #26). An opaque panel
+        background + accent border keeps the toast readable under the widget's
+        translucent window, unlike the near-transparent ``tint_*`` overlays.
+        """
+        from ui.style_manager import StyleManager
+
+        colors = StyleManager.COLORS
+        accent_keys = {
+            self.STYLE_INFO: "info",
+            self.STYLE_WARNING: "warning",
+            self.STYLE_ERROR: "error",
+            self.STYLE_SUCCESS: "success",
         }
-        fg, bg = colors.get(style, colors[self.STYLE_INFO])
+        accent = colors.get(accent_keys.get(style, "info"), "#1976D2")
+        bg = colors.get("panel_background", "#FFFFFF")
+        fg = colors.get("text_primary", "#212121")
 
         self._label.setStyleSheet(f"""
             QLabel {{
@@ -113,8 +124,9 @@ class ToastNotification(QWidget):
                 color: {fg};
                 padding: 12px 20px;
                 border-radius: 8px;
+                border: 2px solid {accent};
                 font-size: 13px;
-                font-weight: 500;
+                font-weight: 600;
             }}
         """)
 
