@@ -30,7 +30,8 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 - Per-device checkboxes expose accessible names; the search field shows a visible focus ring.
 
 ### Internal
-- Extracted pure logcat parsing helpers to `ui/logcat/log_parsing.py` and began decomposing `adb_tools.py` (`utils/adb/_base.py` + screenshot domain) behind re-export shims; removed dead `optimized_device_list.py`.
+- Extracted pure logcat parsing helpers to `ui/logcat/log_parsing.py`; removed dead `optimized_device_list.py`.
+- Decomposed `adb_tools.py` (~2940 → ~1620 lines) into a `utils/adb/` package (`_base`, `screenshot`, `recording`, `package`, `install`, `files`) behind re-export shims, preserving all existing imports.
 
 ## 0.0.55 - 2026-05-25
 ### Fixed

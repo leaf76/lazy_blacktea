@@ -105,23 +105,31 @@ implemented changes are covered by tests and keep `tests/run_tests.py` green.
 - **#57 (D7)** Device Groups promoted to a first-class sidebar pane
   (`PANE_GROUPS`), removed from the Tools workspace; the duplicate palette entry
   was dropped (NavigationPaletteProvider now covers it).
-- **#63 (D8)** `utils/adb/` package established: shared decorators + parallel-exec
-  primitives + `_determine_worker_count` → `utils/adb/_base.py`; the **screenshot
-  domain** (`_capture_screenshot_for_device`, `start_to_screen_shot`,
-  `take_screenshot_single_device`) → `utils/adb/screenshot.py`. Both re-exported
-  from `adb_tools.py`; full suite green. Remaining domains (recording, apk-install,
-  package/app, device-info, file-transfer) follow the same proven pattern.
+- **#63 (D8)** `adb_tools.py` decomposed from **2941 → ~1620 lines (−45%)** into the
+  `utils/adb/` package, each module re-exported from `adb_tools.py` so all 321
+  references keep resolving (full suite green at every step):
+  - `_base.py` — shared decorators + parallel-exec primitives + worker count
+  - `screenshot.py` — screenshot capture
+  - `recording.py` — screen recording (+ `_active_recordings` state)
+  - `package.py` — package/app listing, permissions, uninstall, force-stop, open-info
+  - `install.py` — APK info/validate/split/install
+  - `files.py` — pull / list-directory / DCIM / HSV
+  - Residual in `adb_tools.py` = device discovery/info core + bug-report + core
+    utilities. These are intentionally kept together: device-info is the module's
+    central responsibility (scattered across many call sites) and bug-report is
+    coupled to it via `_check_bug_report_permissions`/`_get_device_manufacturer_info`,
+    so splitting them risks the most-used path for little gain. Further extraction
+    can continue on the same `_base` foundation if desired.
 - **#53** `ExpandableDeviceList.update_devices` keeps rows in the incoming sorted
   order (fixed while implementing keyboard navigation).
 
-## 🎨 Remaining
+## 🎨 Remaining (optional)
 
-- **D8 (#63), continued** Per-domain `adb_tools.py` extraction. The shared base
-  (`utils/adb/_base.py`) is done; the next increments move cohesive domains
-  (device-info, package/app, apk-install, media, file-transfer) into
-  `utils/adb/*.py` importing `_base`, each behind the `adb_tools` re-export shim
-  and verified with the full suite. Best done as small, separately-reviewed
-  increments given the 321-reference blast radius.
+- **D8 (#63), optional further split** Five domains are already extracted (see
+  above). If desired, the device-info core and bug-report could be pulled into
+  `utils/adb/device_info.py` + `utils/adb/bugreport.py` (they must move together
+  due to their coupling). Lower value: this is the module's central, most-used
+  code, so it carries the most regression risk for the least structural gain.
 
 ## Deferred non-D items (rationale above)
 
