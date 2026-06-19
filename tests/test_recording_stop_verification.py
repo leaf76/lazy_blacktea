@@ -21,7 +21,7 @@ class VerifyRecordingStoppedTests(unittest.TestCase):
             return []
 
         with patch('utils.adb_tools.common.run_command', side_effect=fake_run), \
-             patch('utils.adb_tools._is_screenrecord_running', side_effect=[True, False]) as mock_running:
+             patch('utils.adb.recording._is_screenrecord_running', side_effect=[True, False]) as mock_running:
             result = adb_tools._verify_recording_stopped('SERIAL123')
 
         self.assertTrue(result)
@@ -36,7 +36,7 @@ class VerifyRecordingStoppedTests(unittest.TestCase):
             return []
 
         with patch('utils.adb_tools.common.run_command', side_effect=fake_run), \
-             patch('utils.adb_tools._is_screenrecord_running', return_value=True) as mock_running:
+             patch('utils.adb.recording._is_screenrecord_running', return_value=True) as mock_running:
             result = adb_tools._verify_recording_stopped('SERIAL999')
 
         self.assertFalse(result)
