@@ -5,6 +5,9 @@ All notable changes to Lazy Blacktea are documented here.
 This project follows [Conventional Commits](https://www.conventionalcommits.org/) for release notes.
 
 ## Unreleased
+- None.
+
+## 0.0.56 - 2026-06-20
 ### Added
 - Command palette now searches connected devices and recent tasks.
 - Sticky batch-action bar (Screenshot / Record / Run Shell / Clear) appears in the Devices pane when devices are selected.
