@@ -14,27 +14,13 @@ import time
 import traceback
 from typing import List, Callable, Any, Optional
 
-from config.constants import ADBConstants
-
 from utils import adb_commands
 from utils import adb_models
 from utils import common
 from utils import native_bridge
 
 
-## GMS app package name
-gms_package_name = 'com.google.android.gms'
-
 logger = common.get_logger('adb_tools')
-
-ACCEPTED_DEVICE_STATUSES = {
-    ADBConstants.DEVICE_STATE_DEVICE,
-    ADBConstants.DEVICE_STATE_UNAUTHORIZED,
-    ADBConstants.DEVICE_STATE_RECOVERY,
-    ADBConstants.DEVICE_STATE_BOOTLOADER,
-    getattr(ADBConstants, 'DEVICE_STATE_SIDELOAD', 'sideload'),
-    '',
-}
 
 
 # Error-handling decorators and parallel-execution primitives moved to
@@ -47,6 +33,38 @@ from utils.adb._base import (  # noqa: E402
     _execute_commands_parallel_native,
     _execute_functions_parallel,
     _normalize_parallel_results,
+)
+
+# Device discovery/info core moved to a dedicated module; re-exported here so all
+# existing ``adb_tools.<fn>`` references (and gms_package_name /
+# ACCEPTED_DEVICE_STATUSES) keep resolving (#63). Bug-report functions stay in this
+# module on purpose: they call the device-info helpers below (_is_device_available,
+# _get_device_manufacturer_info, get_gms_version) by bare name, so co-locating them
+# keeps those calls resolving through this module's globals — which preserves the
+# existing test mock surface (e.g. ``patch('utils.adb_tools._is_device_available')``
+# still intercepts the bug-report path).
+from utils.adb.device_info import (  # noqa: E402
+    gms_package_name,
+    ACCEPTED_DEVICE_STATUSES,
+    get_device_serial_num_list,
+    get_devices_list,
+    get_devices_list_fast,
+    device_basic_info_entry,
+    get_device_detailed_info,
+    device_info_entry,
+    _is_device_available,
+    _get_device_manufacturer_info,
+    check_wifi_is_on,
+    check_bluetooth_is_on,
+    get_audio_state_summary,
+    get_bluetooth_manager_state_summary,
+    get_android_version,
+    get_android_api_level,
+    get_gms_version,
+    get_build_fingerprint,
+    get_device_properties,
+    _get_device_property,
+    get_additional_device_info,
 )
 
 
@@ -158,233 +176,383 @@ _adb_command_prefix = 'adb'
 _scrcpy_command_path = 'scrcpy'
 
 
-def get_device_serial_num_list():
-  return [l.device_serial_num for l in get_devices_list()]
+# ---------------------------------------------------------------------------
+# App/package helpers
+# ---------------------------------------------------------------------------
+# Package/app management moved to utils.adb.package; re-exported so existing
+# ``adb_tools.<fn>`` references keep resolving (#63).
+from utils.adb.package import (  # noqa: E402
+    parse_pm_list_packages_output,
+    parse_dumpsys_package_permissions,
+    list_installed_packages,
+    get_app_version_name,
+    get_package_permissions,
+    uninstall_app,
+    force_stop_app,
+    clear_app_data,
+    set_app_enabled,
+    _am_start_reported_error,
+    open_app_info,
+)
 
 
-def get_devices_list() -> list[adb_models.DeviceInfo]:
-  """Get devices list and use the device info to set object.
-
-  Returns:
-    device_infos: the device info list.
-  """
-  result = []
-  init_devices = common.run_command(adb_commands.cmd_get_adb_devices(), 1)
-  logger.info('Get init devices: %s', init_devices)
-
-  parsed_devices: list[list[str]] = []
-  for raw_line in init_devices:
-    if not raw_line:
-      continue
-
-    parts = [x for x in raw_line.split() if x]
-    if not parts:
-      continue
-
-    status = parts[1].lower() if len(parts) > 1 else ''
-    if status and status not in ACCEPTED_DEVICE_STATUSES:
-      logger.debug('Skipping device %s due to status %s', parts[0], status)
-      continue
-
-    parsed_devices.append(parts)
-
-  if not parsed_devices:
-    logger.warning('Not found device')
-    return result
-
-  # Prepare function calls for parallel execution
-  functions = [device_info_entry] * len(parsed_devices)
-  # Each device_info_entry expects a single list argument, not multiple args
-  args_list = [(parts,) for parts in parsed_devices]
-
-  # Execute device info collection in parallel
-  results = _execute_functions_parallel(functions, args_list, 'get_devices_list')
-
-  # Filter out None results and return
-  result = [device_info for device_info in results if device_info is not None]
-  return result
+def clear_device_logcat(serial_num) -> bool:
+  logger.info('Start to clear logcat')
+  if not serial_num:
+    logger.warning('Serial number cannot be empty')
+    return False
+  common.run_command(adb_commands.cmd_clear_device_logcat(serial_num))
+  logger.info('Clear logcat Ok.')
+  return True
 
 
-def get_devices_list_fast() -> list[adb_models.DeviceInfo]:
-  """Get devices list with basic info only (fast version for immediate UI display).
+@adb_device_operation(default_return=[])
+def get_package_pids(serial_num: str, package_name: str) -> List[str]:
+  """Return running process IDs for the given package."""
+  if not package_name:
+    return []
 
-  Returns:
-    device_infos: the device info list with basic information only.
-  """
-  result = []
-  init_devices = common.run_command(adb_commands.cmd_get_adb_devices(), 1)
-  logger.info('Get init devices (fast): %s', init_devices)
-  filtered_devices: list[list[str]] = []
-  for raw_line in init_devices:
-    if not raw_line:
-      continue
+  command = adb_commands.cmd_adb_shell(serial_num, f'pidof {package_name}')
+  output_lines = common.run_command(command)
 
-    parts = [x for x in raw_line.split() if x]
-    if not parts:
-      continue
+  if not output_lines:
+    return []
 
-    status = parts[1].lower() if len(parts) > 1 else ''
-    if status and status not in ACCEPTED_DEVICE_STATUSES:
-      logger.debug('Skipping device %s due to status %s', parts[0], status)
-      continue
-
-    filtered_devices.append(parts)
-
-  if not filtered_devices:
-    logger.warning('Not found device')
-    return result
-
-  # Prepare function calls for parallel execution (basic info only)
-  functions = [device_basic_info_entry] * len(filtered_devices)
-  args_list = [(info,) for info in filtered_devices]
-
-  # Execute basic device info collection in parallel
-  results = _execute_functions_parallel(functions, args_list, 'get_devices_list_fast')
-
-  # Filter out None results and return
-  result = [device_info for device_info in results if device_info is not None]
-  logger.info(f'Fast device discovery completed: {len(result)} devices')
-  return result
+  pids: List[str] = []
+  for line in output_lines:
+    pids.extend(pid.strip() for pid in line.split() if pid.strip())
+  return pids
 
 
-def device_basic_info_entry(info: List[str]) -> Optional[adb_models.DeviceInfo]:
-  """Organize basic device info only (fast version without detailed checks).
+def run_adb_shell_command(
+    serial_nums: list[str],
+    command_str: str,
+    callback=None,
+) -> None:
+  """Run adb custom command."""
+  commands = []
+  for s in serial_nums:
+    cmd = adb_commands.cmd_adb_shell(s, command_str)
+    commands.append(cmd)
 
-  Args:
-    info: device info from the adb
+  # Execute per-device shell commands in parallel with accurate operation label
+  results = _execute_commands_parallel(commands, 'run_adb_shell_command')
 
-  Returns:
-    Basic device info with placeholders for detailed information.
-  """
-  logger.info(f'Getting basic info for: {info}')
-  serial_num = info[0]
+  # Log detailed results for each device
+  for i, (serial, cmd, result) in enumerate(zip(serial_nums, commands, results)):
+    logger.info(f'[{serial}] Command: {command_str}')
+    if result:
+      # Show first few lines of output
+      output_lines = result[:5] if len(result) > 5 else result
+      for line in output_lines:
+        logger.info(f'[{serial}] Output: {line}')
+      if len(result) > 5:
+        logger.info(f'[{serial}] ... and {len(result) - 5} more lines')
+    else:
+      logger.info(f'[{serial}] No output or command failed')
 
-  if len(info) > 1:
-    device_status = info[1].lower()
-    if device_status and device_status not in ACCEPTED_DEVICE_STATUSES:
-      logger.debug('Filtered out %s during basic device entry (status=%s)', serial_num, device_status)
-      return None
-
-  # usb: ?#
-  device_usb = 'None'
-  if len(info) > 2 and ':' in info[2]:
-    device_usb = info[2].split(':')[1]
-
-  # product: ?#
-  device_prod = 'None'
-  if len(info) > 3 and ':' in info[3]:
-    device_prod = info[3].split(':')[1]
-
-  # model: ?#
-  device_model = 'None'
-  if len(info) > 4 and ':' in info[4]:
-    device_model = info[4].split(':')[1]
-
-  logger.info(f'Basic phone info: {serial_num}, {device_usb}, {device_prod}, {device_model}')
-
-  # 創建基本設備信息，詳細信息初始為 None，稍後根據加載結果更新
-  return adb_models.DeviceInfo(
-      serial_num,
-      device_usb,
-      device_prod,
-      device_model,
-      None,  # WiFi狀態稍後加載
-      None,  # 藍牙狀態稍後加載
-      None,  # Android版本稍後加載，加載失敗時設為Unknown
-      None,  # API等級稍後加載，加載失敗時設為Unknown
-      None,  # GMS版本稍後加載，加載失敗時設為Unknown
-      None,  # Build fingerprint稍後加載，加載失敗時設為Unknown
-  )
+  logger.info(f'Run adb custom command completed on {len(serial_nums)} device(s)')
+  if callback:
+    callback(results)
 
 
-def get_device_detailed_info(serial_num: str) -> dict:
-  """Get detailed information for a specific device (async operation).
+def run_cancellable_adb_shell_command(
+    serial_nums: list[str],
+    command_str: str,
+) -> dict[str, Optional[subprocess.Popen]]:
+    """Run adb shell command on multiple devices and return process objects by serial."""
+    processes: dict[str, Optional[subprocess.Popen]] = {}
+    for s in serial_nums:
+        cmd = adb_commands.cmd_adb_shell(s, command_str)
+        processes[s] = common.create_cancellable_process(cmd)
+    return processes
+
+
+def extract_all_discovery_service_info(
+    root_folder: str,
+    serial_nums: list[str],
+    callback=None,
+):
+  """Extract the discovery service info from the device.
 
   Args:
-    serial_num: Device serial number
-
-  Returns:
-    Dictionary with detailed device information
+    root_folder: the root folder to store the extracted info.
+    serial_nums: list of device serial numbers.
+    callback: Call back foreach result.
   """
-  logger.info('Fetching detailed information for device %s', serial_num)
 
-  try:
-    detailed_info = {
-      'wifi_status': check_wifi_is_on(serial_num),
-      'bluetooth_status': check_bluetooth_is_on(serial_num),
-      'android_version': get_android_version(serial_num),
-      'android_api_level': get_android_api_level(serial_num),
-      'gms_version': get_gms_version(serial_num),
-      'build_fingerprint': get_build_fingerprint(serial_num),
-      'audio_state': get_audio_state_summary(serial_num),
-      'bluetooth_manager_state': get_bluetooth_manager_state_summary(serial_num),
-    }
-    logger.info('Detailed information retrieved for device %s', serial_num)
-    return detailed_info
-  except Exception as e:
-    logger.error('Failed to retrieve detailed information for device %s: %s', serial_num, e)
-    return {
-      'wifi_status': None,
-      'bluetooth_status': None,
-      'android_version': 'Unknown',
-      'android_api_level': 'Unknown',
-      'gms_version': 'Unknown',
-      'build_fingerprint': 'Unknown',
-      'audio_state': 'Unknown',
-      'bluetooth_manager_state': 'Unknown',
-    }
+  logger.info('Start to extract discovery info.')
+  root_folder = common.make_gen_dir_path(root_folder)
+  commands = []
+  for s in serial_nums:
+    cmd = adb_commands.cmd_extract_discovery_service_info(s, root_folder)
+    commands.append(cmd)
+
+  results = _execute_commands_parallel(commands, 'extract_to_android_device')
+  for r in results:
+    logger.info('Get extract result %s', r)
+    callback(results)
+
+  logger.info('Extract done.')
 
 
-def device_info_entry(info: List[str]) -> adb_models.DeviceInfo:
-  """Organize device info.
+def extract_single_discovery_service_info(root_folder: str, serial_num: str):
+  """Extract the discovery service info from the device.
 
   Args:
-    info: device info from the adb
+    root_folder: the root folder to store the extracted info.
+    serial_num: device serial numbers.
+  """
+  logger.info('Start to extract discovery info.')
+
+  root_folder = common.get_full_path(root_folder)
+  cmd = adb_commands.cmd_extract_discovery_service_info(serial_num, root_folder)
+  common.run_command(cmd)
+  logger.info('Extract done.')
+
+
+def run_as_root(serial_nums: list[str]):
+  """Run as root.
+
+  Args:
+    serial_nums: Device serial numbers
+  """
+  commands: list[str] = []
+  for s in serial_nums:
+    cmd = adb_commands.cmd_adb_root(s)
+    commands.append(cmd)
+
+  results = _execute_commands_parallel(commands, 'root_android_devices')
+  logger.info('Run root results: %s', results)
+
+
+def start_reboot(serial_nums: list[str]):
+  commands = []
+  for s in serial_nums:
+    cmd = adb_commands.cmd_adb_reboot(s)
+    commands.append(cmd)
+
+  results = _execute_commands_parallel(commands, 'start_reboot')
+  logger.info('Start reboot results: %s', results)
+
+
+def kill_adb_server():
+  result = common.run_command(adb_commands.cmd_kill_adb_server())
+  logger.info('Kill adb service result: %s', result)
+
+
+def start_adb_server():
+  result = common.run_command(adb_commands.cmd_start_adb_server())
+  logger.info('Start adb service result: %s', result)
+
+
+# =============================================================================
+# APK Installation - Enhanced API
+# =============================================================================
+# APK install domain moved to utils.adb.install; re-exported so existing
+# ``adb_tools.install_apk`` / ``get_apk_info`` etc. references keep resolving (#63).
+from utils.adb.install import (  # noqa: E402
+    get_apk_info,
+    _find_aapt_command,
+    _parse_aapt_output,
+    validate_apk_for_device,
+    extract_split_apks,
+    install_split_apk,
+    install_apk,
+    install_the_apk,
+)
+
+
+def copy_file(source: str, destination: str):
+  # copy file to destination
+  logger.info('Start to copy file')
+  common.run_command(adb_commands.cmd_cp_file(source, destination))
+  logger.info('Copy file finished')
+
+
+def switch_bluetooth_enable(serial_nums: list[str], enable: bool) -> list[str]:
+  """Switch bluetooth enable.
+
+  Args:
+    serial_nums: Phones serial numbers.
+    enable: Enable the bluetooth.
 
   Returns:
-    Organize new device info.
+    result the results.
   """
-  logger.info(info)
-  serial_num = info[0]
-  # usb: ?#
-  device_usb = 'None'
-  if len(info) > 2 and ':' in info[2]:
-    device_usb = info[2].split(':')[1]
-  # product: ?#
-  device_prod = 'None'
-  if len(info) > 3 and ':' in info[3]:
-    device_prod = info[3].split(':')[1]
-  # model: ?#
-  device_model = 'None'
-  if len(info) > 4 and ':' in info[4]:
-    device_model = info[4].split(':')[1]
-  logger.info(
-      'Get phone info %s, %s, %s, %s',
-      serial_num,
-      device_usb,
-      device_prod,
-      device_model,
-  )
-  check_wifi = check_wifi_is_on(serial_num)
-  check_bt = check_bluetooth_is_on(serial_num)
-  android_ver = get_android_version(serial_num)
-  android_api_level = get_android_api_level(serial_num)
-  gms_version_str = get_gms_version(serial_num)
-  build_fingerprint = get_build_fingerprint(serial_num)
-  return adb_models.DeviceInfo(
-      serial_num,
-      device_usb,
-      device_prod,
-      device_model,
-      check_wifi,
-      check_bt,
-      android_ver,
-      android_api_level,
-      gms_version_str,
-      build_fingerprint,
-  )
+
+  commands = []
+  for s in serial_nums:
+    cmd = adb_commands.cmd_switch_enable_bluetooth(s, enable)
+    commands.append(cmd)
+
+  results = _execute_commands_parallel(commands, 'switch_bluetooth_enable')
+  logger.info('Switch bluetooth enable results: %s', results)
+  return results
 
 
+# File-transfer / pull domain moved to utils.adb.files; re-exported (#63).
+from utils.adb.files import (  # noqa: E402
+    pull_device_dcim,
+    _normalize_remote_path,
+    list_device_directory,
+    pull_device_paths,
+    pull_device_file_preview,
+    pull_device_dcim_folders_with_device_folder,
+    pull_devices_hsv,
+)
+
+
+# Screenshot capture domain moved to utils.adb.screenshot; re-exported so all
+# existing ``adb_tools.start_to_screen_shot`` / ``take_screenshot_single_device``
+# references keep resolving (#63).
+from utils.adb.screenshot import (  # noqa: E402
+    _capture_screenshot_for_device,
+    start_to_screen_shot,
+    take_screenshot_single_device,
+)
+
+
+# Screen-recording domain moved to utils.adb.recording; re-exported so all
+# existing ``adb_tools.start_screen_record_device`` / ``stop_*`` / verify helpers
+# keep resolving (#63).
+from utils.adb.recording import (  # noqa: E402
+    _active_recordings,
+    start_to_record_android_devices,
+    stop_to_screen_record_android_devices,
+    stop_to_screen_record_android_device,
+    start_screen_record_device,
+    stop_screen_record_device,
+    _verify_recording_started,
+    _is_screenrecord_running,
+    _verify_recording_stopped,
+    _verify_file_pulled,
+)
+
+
+def _run_multiple_adb_commands(serial_nums: list[str], command_func) -> None:
+  """Runs multiple ADB commands across multiple devices.
+
+  Args:
+    serial_nums: List of device serial numbers.
+    command_func: A function from adb_commands.py that returns a list of
+      commands for a single serial number.
+  """
+  if not serial_nums:
+    logger.warning('No devices provided to run commands.')
+    return
+
+  all_commands = []
+  for s in serial_nums:
+    all_commands.extend(command_func(s))
+
+  results = _execute_commands_parallel(all_commands, 'run_enlarge_log_buffer')
+  logger.info('Command execution results: %s', results)
+
+
+def run_enlarge_log_buffer(serial_nums: list[str], size: str = '16M') -> None:
+  """Enlarges the log buffer on selected devices.
+
+  Args:
+    serial_nums: List of device serial numbers.
+    size: The size of the log buffer (e.g., "1M", "16M").
+  """
+  run_as_root(serial_nums)
+  _run_multiple_adb_commands(
+      serial_nums, lambda s: adb_commands.cmd_enlarge_log_buffer(s, size)
+  )
+  logger.info(f'Enlarged log buffer to {size}.')
+
+
+def check_tool_availability(tool_name: str) -> tuple[bool, str]:
+  """Check if a tool is available in the system with smart path detection.
+
+  Args:
+    tool_name: Name of the tool to check.
+
+  Returns:
+    Tuple of (is_available, version_info)
+  """
+  global _scrcpy_command_path
+  import platform
+  import shutil
+
+  # First try to find tool in PATH
+  if shutil.which(tool_name):
+    try:
+      result = subprocess.run([tool_name, '--version'],
+                            capture_output=True, text=True, timeout=5)
+      if result.returncode == 0:
+        return True, result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+      pass
+
+  # If not in PATH, try common locations based on platform
+  system = platform.system().lower()
+  common_paths = []
+
+  if tool_name == 'scrcpy':
+    if system == 'darwin':  # macOS
+      common_paths = [
+        '/opt/homebrew/bin/scrcpy',
+        '/usr/local/bin/scrcpy',
+        '/opt/homebrew/Caskroom/scrcpy/*/scrcpy',
+        os.path.expanduser('~/Applications/scrcpy.app/Contents/MacOS/scrcpy')
+      ]
+    elif system == 'linux':  # Linux
+      common_paths = [
+        '/usr/bin/scrcpy',
+        '/usr/local/bin/scrcpy',
+        '/snap/bin/scrcpy',
+        '/flatpak/exports/bin/scrcpy',
+        os.path.expanduser('~/snap/scrcpy/current/bin/scrcpy'),
+        os.path.expanduser('~/.local/bin/scrcpy'),
+        '/opt/scrcpy/scrcpy'
+      ]
+
+    for scrcpy_path in common_paths:
+      # Handle wildcard paths
+      if '*' in scrcpy_path:
+        matches = glob.glob(scrcpy_path)
+        for match in matches:
+          if os.path.isfile(match) and os.access(match, os.X_OK):
+            try:
+              result = subprocess.run([match, '--version'],
+                                    capture_output=True, text=True, timeout=5)
+              if result.returncode == 0:
+                # Update global scrcpy path for future use
+                _scrcpy_command_path = match
+                return True, result.stdout.strip()
+            except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+              logger.debug(f'Failed to check scrcpy version at {match}: {e}')
+              continue
+      else:
+        if os.path.isfile(scrcpy_path) and os.access(scrcpy_path, os.X_OK):
+          try:
+            result = subprocess.run([scrcpy_path, '--version'],
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+              # Update global scrcpy path for future use
+              _scrcpy_command_path = scrcpy_path
+              return True, result.stdout.strip()
+          except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
+            logger.debug(f'Failed to check scrcpy version at {scrcpy_path}: {e}')
+            continue
+
+  return False, ""
+
+
+def get_scrcpy_command() -> str:
+  """Get the appropriate scrcpy command path."""
+  global _scrcpy_command_path
+  return _scrcpy_command_path
+
+
+# ---------------------------------------------------------------------------
+# Bug-report domain (#63). Kept in this module (not split into utils/adb/) because
+# these functions call the re-exported device-info helpers by bare name; co-locating
+# preserves the established test mock surface (``patch('utils.adb_tools.<helper>')``).
+# ---------------------------------------------------------------------------
 def generate_the_android_bug_report(
     root_folder: str,
     device_infos: list[adb_models.DeviceInfo],
@@ -430,7 +598,6 @@ def generate_the_android_bug_report(
     callback(results)
 
   logger.info('----------End generate bug report finished.----------')
-
 
 @adb_device_operation(default_return=None)
 def generate_bug_report_device(
@@ -633,27 +800,6 @@ def generate_bug_report_device(
 
   return result
 
-
-# ---------------------------------------------------------------------------
-# App/package helpers
-# ---------------------------------------------------------------------------
-# Package/app management moved to utils.adb.package; re-exported so existing
-# ``adb_tools.<fn>`` references keep resolving (#63).
-from utils.adb.package import (  # noqa: E402
-    parse_pm_list_packages_output,
-    parse_dumpsys_package_permissions,
-    list_installed_packages,
-    get_app_version_name,
-    get_package_permissions,
-    uninstall_app,
-    force_stop_app,
-    clear_app_data,
-    set_app_enabled,
-    _am_start_reported_error,
-    open_app_info,
-)
-
-
 def generate_bug_report_device_streaming(
     serial_num: str,
     output_path: str,
@@ -815,66 +961,6 @@ def generate_bug_report_device_streaming(
     result['error'] = str(exc)
     return result
 
-def _is_device_available(serial_num: str) -> bool:
-  """Check if device is available and responding.
-
-  Args:
-    serial_num: Device serial number
-
-  Returns:
-    bool: True if device is available
-  """
-  try:
-    cmd = f'adb -s {serial_num} get-state'
-    result = common.run_command(cmd)
-
-    if isinstance(result, list):
-      normalized = ' '.join(str(item).lower() for item in result)
-    else:
-      normalized = str(result).lower()
-
-    return 'device' in normalized
-  except (subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
-    logger.debug(f'Device {serial_num} availability check failed: {e}')
-    return False
-  except Exception as e:
-    logger.warning(f'Unexpected error checking device {serial_num}: {e}')
-    return False
-
-
-def _get_device_manufacturer_info(serial_num: str) -> dict:
-  """Get device manufacturer information.
-
-  Args:
-    serial_num: Device serial number
-
-  Returns:
-    dict: Device manufacturer info
-  """
-  try:
-    # Get manufacturer property
-    manufacturer_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.manufacturer')
-    manufacturer_result = common.run_command(manufacturer_cmd, timeout=10)
-    manufacturer = ''
-    if manufacturer_result and isinstance(manufacturer_result, list):
-      manufacturer = ' '.join(str(item) for item in manufacturer_result).strip()
-
-    # Get model property for additional context
-    model_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.model')
-    model_result = common.run_command(model_cmd, timeout=10)
-    model = ''
-    if model_result and isinstance(model_result, list):
-      model = ' '.join(str(item) for item in model_result).strip()
-
-    return {
-      'manufacturer': manufacturer,
-      'model': model
-    }
-  except Exception as e:
-    logger.debug(f'Could not get manufacturer info for {serial_num}: {e}')
-    return {'manufacturer': '', 'model': ''}
-
-
 def _check_bug_report_permissions(serial_num: str) -> bool:
   """Check if device has permissions for bug report generation.
 
@@ -901,665 +987,6 @@ def _check_bug_report_permissions(serial_num: str) -> bool:
   except Exception as e:
     logger.debug(f'Permission check failed for {serial_num}: {e}')
     return False
-
-
-def clear_device_logcat(serial_num) -> bool:
-  logger.info('Start to clear logcat')
-  if not serial_num:
-    logger.warning('Serial number cannot be empty')
-    return False
-  common.run_command(adb_commands.cmd_clear_device_logcat(serial_num))
-  logger.info('Clear logcat Ok.')
-  return True
-
-
-@adb_device_operation(default_return=[])
-def get_package_pids(serial_num: str, package_name: str) -> List[str]:
-  """Return running process IDs for the given package."""
-  if not package_name:
-    return []
-
-  command = adb_commands.cmd_adb_shell(serial_num, f'pidof {package_name}')
-  output_lines = common.run_command(command)
-
-  if not output_lines:
-    return []
-
-  pids: List[str] = []
-  for line in output_lines:
-    pids.extend(pid.strip() for pid in line.split() if pid.strip())
-  return pids
-
-
-def run_adb_shell_command(
-    serial_nums: list[str],
-    command_str: str,
-    callback=None,
-) -> None:
-  """Run adb custom command."""
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_adb_shell(s, command_str)
-    commands.append(cmd)
-
-  # Execute per-device shell commands in parallel with accurate operation label
-  results = _execute_commands_parallel(commands, 'run_adb_shell_command')
-
-  # Log detailed results for each device
-  for i, (serial, cmd, result) in enumerate(zip(serial_nums, commands, results)):
-    logger.info(f'[{serial}] Command: {command_str}')
-    if result:
-      # Show first few lines of output
-      output_lines = result[:5] if len(result) > 5 else result
-      for line in output_lines:
-        logger.info(f'[{serial}] Output: {line}')
-      if len(result) > 5:
-        logger.info(f'[{serial}] ... and {len(result) - 5} more lines')
-    else:
-      logger.info(f'[{serial}] No output or command failed')
-
-  logger.info(f'Run adb custom command completed on {len(serial_nums)} device(s)')
-  if callback:
-    callback(results)
-
-
-def run_cancellable_adb_shell_command(
-    serial_nums: list[str],
-    command_str: str,
-) -> dict[str, Optional[subprocess.Popen]]:
-    """Run adb shell command on multiple devices and return process objects by serial."""
-    processes: dict[str, Optional[subprocess.Popen]] = {}
-    for s in serial_nums:
-        cmd = adb_commands.cmd_adb_shell(s, command_str)
-        processes[s] = common.create_cancellable_process(cmd)
-    return processes
-
-
-def extract_all_discovery_service_info(
-    root_folder: str,
-    serial_nums: list[str],
-    callback=None,
-):
-  """Extract the discovery service info from the device.
-
-  Args:
-    root_folder: the root folder to store the extracted info.
-    serial_nums: list of device serial numbers.
-    callback: Call back foreach result.
-  """
-
-  logger.info('Start to extract discovery info.')
-  root_folder = common.make_gen_dir_path(root_folder)
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_extract_discovery_service_info(s, root_folder)
-    commands.append(cmd)
-
-  results = _execute_commands_parallel(commands, 'extract_to_android_device')
-  for r in results:
-    logger.info('Get extract result %s', r)
-    callback(results)
-
-  logger.info('Extract done.')
-
-
-def extract_single_discovery_service_info(root_folder: str, serial_num: str):
-  """Extract the discovery service info from the device.
-
-  Args:
-    root_folder: the root folder to store the extracted info.
-    serial_num: device serial numbers.
-  """
-  logger.info('Start to extract discovery info.')
-
-  root_folder = common.get_full_path(root_folder)
-  cmd = adb_commands.cmd_extract_discovery_service_info(serial_num, root_folder)
-  common.run_command(cmd)
-  logger.info('Extract done.')
-
-
-def check_wifi_is_on(serial_num):
-  cmd = adb_commands.cmd_get_device_wifi(serial_num)
-  result = common.run_command(cmd)
-  if result:
-    data = str(result[0])
-    if data.isnumeric():
-      return int(data)
-  return 0
-
-
-def check_bluetooth_is_on(serial_num):
-  cmd = adb_commands.cmd_get_device_bluetooth(serial_num)
-  result = common.run_command(cmd)
-  if result:
-    data = str(result[0])
-    if data.isnumeric():
-      return int(data)
-  return 0
-
-
-def get_audio_state_summary(serial_num: str) -> str:
-  """Return a concise summary for dumpsys audio."""
-  lines = common.run_command(adb_commands.cmd_get_audio_dump(serial_num))
-  if not lines:
-    return 'Unknown'
-
-  mode_pattern = re.compile(r'\bmode\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
-  ringer_pattern = re.compile(r'\bringer\s+mode\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
-  music_pattern = re.compile(r'music\s+active\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
-  device_pattern = re.compile(r'device\s+(?:current\s+)?state\s*[:=]\s*(.+)', re.IGNORECASE)
-  sco_pattern = re.compile(r'sco\s+state\s*[:=]\s*(.+)', re.IGNORECASE)
-
-  summary: dict[str, str] = {}
-  for raw_line in lines:
-    stripped = raw_line.strip()
-    if not stripped:
-      continue
-
-    if 'mode' not in summary:
-      match = mode_pattern.search(stripped)
-      if match:
-        summary['mode'] = match.group(1).upper()
-        continue
-
-    if 'ringer' not in summary:
-      match = ringer_pattern.search(stripped)
-      if match:
-        summary['ringer'] = match.group(1).upper()
-        continue
-
-    if 'music_active' not in summary:
-      match = music_pattern.search(stripped)
-      if match:
-        summary['music_active'] = match.group(1).lower()
-        continue
-
-    if 'device_state' not in summary:
-      match = device_pattern.search(stripped)
-      if match:
-        summary['device_state'] = match.group(1).strip()
-        continue
-
-    if 'sco_state' not in summary:
-      match = sco_pattern.search(stripped)
-      if match:
-        summary['sco_state'] = match.group(1).strip()
-
-    if len(summary) >= 5:
-      break
-
-  parts = []
-  if 'mode' in summary:
-    parts.append(f"mode={summary['mode']}")
-  if 'ringer' in summary:
-    parts.append(f"ringer={summary['ringer']}")
-  if 'music_active' in summary:
-    parts.append(f"music_active={summary['music_active']}")
-  if 'device_state' in summary:
-    parts.append(f"device_state={summary['device_state']}")
-  if 'sco_state' in summary:
-    parts.append(f"sco_state={summary['sco_state']}")
-
-  if parts:
-    return ' | '.join(parts)
-
-  snippet = ' '.join(line.strip() for line in lines[:5] if line.strip())
-  return snippet[:200] if snippet else 'Unknown'
-
-
-def get_bluetooth_manager_state_summary(serial_num: str) -> str:
-  """Return bluetooth manager high-level state."""
-  lines = common.run_command(adb_commands.cmd_get_bluetooth_manager_state(serial_num))
-  if not lines:
-    return 'Unknown'
-
-  state_pattern = re.compile(r'state\s*[:=]\s*([A-Za-z_]+)', re.IGNORECASE)
-  for raw_line in lines:
-    stripped = raw_line.strip()
-    if not stripped:
-      continue
-    match = state_pattern.search(stripped)
-    if match:
-      return match.group(1).upper()
-
-  first_line = lines[0].strip()
-  return first_line if first_line else 'Unknown'
-
-
-def get_android_version(serial_num):
-  """Return ro.build.version.release verbatim (e.g. '13', '13.0', '12L').
-
-  Previously only integer releases were kept and everything else became 0
-  ('Android 0'); the release is a free-form string, so return it as-is and fall
-  back to 'Unknown' when unavailable (finding #34).
-  """
-  cmd = adb_commands.cmd_get_android_version(serial_num)
-  result = common.run_command(cmd)
-  if result:
-    data = str(result[0]).strip()
-    if data:
-      return data
-  return 'Unknown'
-
-
-def get_android_api_level(serial_num):
-  cmd = adb_commands.cmd_get_android_api_level(serial_num)
-  result = common.run_command(cmd)
-  if result:
-    data = str(result[0])
-    if data.isnumeric():
-      return int(data)
-  return 0
-
-
-def get_gms_version(serial_num):
-  data = common.run_command(
-      adb_commands.cmd_get_app_version(serial_num, gms_package_name)
-  )
-  version_list = [item.strip() for item in data]
-  logger.info(version_list)
-  result = 'None'
-  if len(version_list) > 1:
-    result = version_list[0].split('=')[1].split()[0]
-  logger.info('Get gms app version is %s', result)
-  return result
-
-
-def get_build_fingerprint(serial_num):
-  cmd = adb_commands.cmd_get_android_build_fingerprint(serial_num)
-  result = common.run_command(cmd)
-  if result:
-    data = str(result[0])
-    return data
-  return 'None'
-
-
-@adb_device_operation(default_return={})
-def get_device_properties(serial_num: str) -> dict[str, str]:
-  """Retrieve device properties via `adb shell getprop`.
-
-  Args:
-    serial_num: Device serial number.
-
-  Returns:
-    Dictionary mapping property keys to values.
-  """
-  cmd = adb_commands.cmd_adb_shell(serial_num, 'getprop')
-  lines = common.run_command(cmd)
-  if not lines:
-    return {}
-
-  properties: dict[str, str] = {}
-  pattern = re.compile(r'^\[(?P<key>[^\]]+)\]\s*:\s*\[(?P<value>[^\]]*)\]')
-  for line in lines:
-    if not line:
-      continue
-    match = pattern.match(str(line).strip())
-    if not match:
-      continue
-    key = match.group('key').strip()
-    value = match.group('value').strip()
-    properties[key] = value
-
-  return properties
-
-
-def run_as_root(serial_nums: list[str]):
-  """Run as root.
-
-  Args:
-    serial_nums: Device serial numbers
-  """
-  commands: list[str] = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_adb_root(s)
-    commands.append(cmd)
-
-  results = _execute_commands_parallel(commands, 'root_android_devices')
-  logger.info('Run root results: %s', results)
-
-
-def start_reboot(serial_nums: list[str]):
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_adb_reboot(s)
-    commands.append(cmd)
-
-  results = _execute_commands_parallel(commands, 'start_reboot')
-  logger.info('Start reboot results: %s', results)
-
-
-def kill_adb_server():
-  result = common.run_command(adb_commands.cmd_kill_adb_server())
-  logger.info('Kill adb service result: %s', result)
-
-
-def start_adb_server():
-  result = common.run_command(adb_commands.cmd_start_adb_server())
-  logger.info('Start adb service result: %s', result)
-
-
-# =============================================================================
-# APK Installation - Enhanced API
-# =============================================================================
-# APK install domain moved to utils.adb.install; re-exported so existing
-# ``adb_tools.install_apk`` / ``get_apk_info`` etc. references keep resolving (#63).
-from utils.adb.install import (  # noqa: E402
-    get_apk_info,
-    _find_aapt_command,
-    _parse_aapt_output,
-    validate_apk_for_device,
-    extract_split_apks,
-    install_split_apk,
-    install_apk,
-    install_the_apk,
-)
-
-
-def copy_file(source: str, destination: str):
-  # copy file to destination
-  logger.info('Start to copy file')
-  common.run_command(adb_commands.cmd_cp_file(source, destination))
-  logger.info('Copy file finished')
-
-
-def switch_bluetooth_enable(serial_nums: list[str], enable: bool) -> list[str]:
-  """Switch bluetooth enable.
-
-  Args:
-    serial_nums: Phones serial numbers.
-    enable: Enable the bluetooth.
-
-  Returns:
-    result the results.
-  """
-
-  commands = []
-  for s in serial_nums:
-    cmd = adb_commands.cmd_switch_enable_bluetooth(s, enable)
-    commands.append(cmd)
-
-  results = _execute_commands_parallel(commands, 'switch_bluetooth_enable')
-  logger.info('Switch bluetooth enable results: %s', results)
-  return results
-
-
-# File-transfer / pull domain moved to utils.adb.files; re-exported (#63).
-from utils.adb.files import (  # noqa: E402
-    pull_device_dcim,
-    _normalize_remote_path,
-    list_device_directory,
-    pull_device_paths,
-    pull_device_file_preview,
-    pull_device_dcim_folders_with_device_folder,
-    pull_devices_hsv,
-)
-
-
-# Screenshot capture domain moved to utils.adb.screenshot; re-exported so all
-# existing ``adb_tools.start_to_screen_shot`` / ``take_screenshot_single_device``
-# references keep resolving (#63).
-from utils.adb.screenshot import (  # noqa: E402
-    _capture_screenshot_for_device,
-    start_to_screen_shot,
-    take_screenshot_single_device,
-)
-
-
-# Screen-recording domain moved to utils.adb.recording; re-exported so all
-# existing ``adb_tools.start_screen_record_device`` / ``stop_*`` / verify helpers
-# keep resolving (#63).
-from utils.adb.recording import (  # noqa: E402
-    _active_recordings,
-    start_to_record_android_devices,
-    stop_to_screen_record_android_devices,
-    stop_to_screen_record_android_device,
-    start_screen_record_device,
-    stop_screen_record_device,
-    _verify_recording_started,
-    _is_screenrecord_running,
-    _verify_recording_stopped,
-    _verify_file_pulled,
-)
-
-
-def _run_multiple_adb_commands(serial_nums: list[str], command_func) -> None:
-  """Runs multiple ADB commands across multiple devices.
-
-  Args:
-    serial_nums: List of device serial numbers.
-    command_func: A function from adb_commands.py that returns a list of
-      commands for a single serial number.
-  """
-  if not serial_nums:
-    logger.warning('No devices provided to run commands.')
-    return
-
-  all_commands = []
-  for s in serial_nums:
-    all_commands.extend(command_func(s))
-
-  results = _execute_commands_parallel(all_commands, 'run_enlarge_log_buffer')
-  logger.info('Command execution results: %s', results)
-
-
-
-
-def run_enlarge_log_buffer(serial_nums: list[str], size: str = '16M') -> None:
-  """Enlarges the log buffer on selected devices.
-
-  Args:
-    serial_nums: List of device serial numbers.
-    size: The size of the log buffer (e.g., "1M", "16M").
-  """
-  run_as_root(serial_nums)
-  _run_multiple_adb_commands(
-      serial_nums, lambda s: adb_commands.cmd_enlarge_log_buffer(s, size)
-  )
-  logger.info(f'Enlarged log buffer to {size}.')
-
-
-def _get_device_property(serial_num: str, shell_command: str, default_value: str = 'Unknown') -> str:
-  """Get a single device property via ADB shell command.
-
-  Args:
-    serial_num: Device serial number
-    shell_command: Shell command to execute
-    default_value: Value to return on error
-
-  Returns:
-    Property value or default_value on error
-  """
-  try:
-    cmd = adb_commands.cmd_adb_shell(serial_num, shell_command)
-    result = common.run_command(cmd)
-    if result and result[0]:
-      return result[0].strip()
-  except Exception:
-    pass
-  return default_value
-
-
-@adb_device_operation(default_return={})
-def get_additional_device_info(serial_num: str) -> dict:
-  """Get additional device information for enhanced display.
-
-  Args:
-    serial_num: Device serial number.
-
-  Returns:
-    Dictionary containing additional device information.
-  """
-  additional_info = {}
-
-  # Screen density and size using unified property getter
-  additional_info['screen_density'] = _get_device_property(serial_num, 'wm density')
-  additional_info['screen_size'] = _get_device_property(serial_num, 'wm size')
-
-  # Battery information - comprehensive battery data
-  try:
-    # Get full battery information
-    cmd = adb_commands.cmd_adb_shell(serial_num, 'dumpsys battery')
-    result = common.run_command(cmd)
-    if result:
-      # result is a list of lines, not a single string
-      # Parse battery level (specifically look for "level:" but not "Capacity level:")
-      for line in result:
-        line = line.strip()
-        if line.startswith('level:') and 'Capacity level' not in line:
-          battery_level = line.split(':')[-1].strip()
-          if battery_level.isdigit():
-            additional_info['battery_level'] = f'{battery_level}%'
-            break  # Stop after finding the first (correct) battery level
-        elif 'scale:' in line and 'level:' not in line:
-          # Battery capacity in mAh (sometimes available in scale)
-          scale_value = line.split(':')[-1].strip()
-          if scale_value.isdigit() and int(scale_value) > 100:
-            additional_info['battery_capacity_mah'] = f'{scale_value} mAh'
-
-      # Try to get battery capacity from other sources
-      if 'battery_capacity_mah' not in additional_info:
-        try:
-          capacity_cmd = adb_commands.cmd_adb_shell(serial_num, 'cat /sys/class/power_supply/battery/capacity')
-          capacity_result = common.run_command(capacity_cmd)
-          if capacity_result and capacity_result[0]:
-            # Try to get actual mAh capacity
-            mah_cmd = adb_commands.cmd_adb_shell(serial_num, 'cat /sys/class/power_supply/battery/charge_full_design')
-            mah_result = common.run_command(mah_cmd)
-            if mah_result and mah_result[0]:
-              mah_value = int(mah_result[0].strip()) // 1000  # Convert from μAh to mAh
-              additional_info['battery_capacity_mah'] = f'{mah_value} mAh'
-        except (ValueError, IndexError, subprocess.SubprocessError) as e:
-          logger.debug(f'Failed to get battery capacity: {e}')
-
-      # Calculate Battery mAs (milliamp seconds) - theoretical
-      try:
-        if 'battery_capacity_mah' in additional_info:
-          mah_str = additional_info['battery_capacity_mah'].replace(' mAh', '')
-          if mah_str.isdigit():
-            mah = int(mah_str)
-            mas = mah * 3600  # Convert mAh to mAs (1 hour = 3600 seconds)
-            additional_info['battery_mas'] = f'{mas:,} mAs'
-      except (ValueError, KeyError) as e:
-        logger.debug(f'Failed to calculate battery mAs: {e}')
-
-      # Calculate DOU (Days Of Use) hours - estimated based on typical usage
-      try:
-        if 'battery_capacity_mah' in additional_info and additional_info['battery_level'] != 'Unknown':
-          mah_str = additional_info['battery_capacity_mah'].replace(' mAh', '')
-          level_str = additional_info['battery_level'].replace('%', '')
-          if mah_str.isdigit() and level_str.isdigit():
-            mah = int(mah_str)
-            level = int(level_str)
-            current_charge = (mah * level) / 100
-            # Estimate usage time based on average 200mA consumption (typical smartphone usage)
-            estimated_hours = current_charge / 200
-            additional_info['battery_dou_hours'] = f'{estimated_hours:.1f} hours'
-      except (ValueError, KeyError, ZeroDivisionError) as e:
-        logger.debug(f'Failed to calculate battery DOU hours: {e}')
-
-  except Exception:
-    additional_info['battery_level'] = 'Unknown'
-
-  # Set defaults for missing battery info
-  if 'battery_level' not in additional_info:
-    additional_info['battery_level'] = 'Unknown'
-  if 'battery_capacity_mah' not in additional_info:
-    additional_info['battery_capacity_mah'] = 'Unknown'
-  if 'battery_mas' not in additional_info:
-    additional_info['battery_mas'] = 'Unknown'
-  if 'battery_dou_hours' not in additional_info:
-    additional_info['battery_dou_hours'] = 'Unknown'
-
-  # CPU architecture using unified property getter
-  additional_info['cpu_arch'] = _get_device_property(serial_num, 'getprop ro.product.cpu.abi')
-
-  return additional_info
-
-
-def check_tool_availability(tool_name: str) -> tuple[bool, str]:
-  """Check if a tool is available in the system with smart path detection.
-
-  Args:
-    tool_name: Name of the tool to check.
-
-  Returns:
-    Tuple of (is_available, version_info)
-  """
-  global _scrcpy_command_path
-  import platform
-  import shutil
-
-  # First try to find tool in PATH
-  if shutil.which(tool_name):
-    try:
-      result = subprocess.run([tool_name, '--version'],
-                            capture_output=True, text=True, timeout=5)
-      if result.returncode == 0:
-        return True, result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
-      pass
-
-  # If not in PATH, try common locations based on platform
-  system = platform.system().lower()
-  common_paths = []
-
-  if tool_name == 'scrcpy':
-    if system == 'darwin':  # macOS
-      common_paths = [
-        '/opt/homebrew/bin/scrcpy',
-        '/usr/local/bin/scrcpy',
-        '/opt/homebrew/Caskroom/scrcpy/*/scrcpy',
-        os.path.expanduser('~/Applications/scrcpy.app/Contents/MacOS/scrcpy')
-      ]
-    elif system == 'linux':  # Linux
-      common_paths = [
-        '/usr/bin/scrcpy',
-        '/usr/local/bin/scrcpy',
-        '/snap/bin/scrcpy',
-        '/flatpak/exports/bin/scrcpy',
-        os.path.expanduser('~/snap/scrcpy/current/bin/scrcpy'),
-        os.path.expanduser('~/.local/bin/scrcpy'),
-        '/opt/scrcpy/scrcpy'
-      ]
-
-    for scrcpy_path in common_paths:
-      # Handle wildcard paths
-      if '*' in scrcpy_path:
-        matches = glob.glob(scrcpy_path)
-        for match in matches:
-          if os.path.isfile(match) and os.access(match, os.X_OK):
-            try:
-              result = subprocess.run([match, '--version'],
-                                    capture_output=True, text=True, timeout=5)
-              if result.returncode == 0:
-                # Update global scrcpy path for future use
-                _scrcpy_command_path = match
-                return True, result.stdout.strip()
-            except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
-              logger.debug(f'Failed to check scrcpy version at {match}: {e}')
-              continue
-      else:
-        if os.path.isfile(scrcpy_path) and os.access(scrcpy_path, os.X_OK):
-          try:
-            result = subprocess.run([scrcpy_path, '--version'],
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-              # Update global scrcpy path for future use
-              _scrcpy_command_path = scrcpy_path
-              return True, result.stdout.strip()
-          except (subprocess.SubprocessError, subprocess.TimeoutExpired, OSError) as e:
-            logger.debug(f'Failed to check scrcpy version at {scrcpy_path}: {e}')
-            continue
-
-  return False, ""
-
-
-def get_scrcpy_command() -> str:
-  """Get the appropriate scrcpy command path."""
-  global _scrcpy_command_path
-  return _scrcpy_command_path
-
 
 def parse_bugreportz_line(line: str) -> dict:
   """Parse a single bugreportz output line into a structured payload.
@@ -1621,3 +1048,5 @@ def parse_bugreportz_line(line: str) -> dict:
     return {'type': 'unknown', 'raw': line}
   except Exception:
     return {'type': 'unknown', 'raw': line}
+
+

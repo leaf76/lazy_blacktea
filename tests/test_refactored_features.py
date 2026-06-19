@@ -208,7 +208,7 @@ class TestDevicePropertyExtraction(unittest.TestCase):
 
         self.assertEqual(result, "error_default")
 
-    @patch('utils.adb_tools._get_device_property')
+    @patch('utils.adb.device_info._get_device_property')
     def test_get_additional_device_info_success(self, mock_get_property):
         """Test get_additional_device_info with successful property extraction."""
         # Mock property responses
@@ -356,7 +356,7 @@ class TestIntegrationRefactoredFeatures(unittest.TestCase):
         """Set up test fixtures."""
         self.test_serial = "integration_test_device"
 
-    @patch('utils.adb_tools._get_device_property')
+    @patch('utils.adb.device_info._get_device_property')
     def test_device_info_extraction_integration(self, mock_get_property):
         """Test integration of device info extraction with new architecture."""
         # Mock the property getter calls

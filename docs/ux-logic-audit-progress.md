@@ -105,7 +105,7 @@ implemented changes are covered by tests and keep `tests/run_tests.py` green.
 - **#57 (D7)** Device Groups promoted to a first-class sidebar pane
   (`PANE_GROUPS`), removed from the Tools workspace; the duplicate palette entry
   was dropped (NavigationPaletteProvider now covers it).
-- **#63 (D8)** `adb_tools.py` decomposed from **2941 → ~1620 lines (−45%)** into the
+- **#63 (D8)** `adb_tools.py` decomposed from **2941 → ~1050 lines (−64%)** into the
   `utils/adb/` package, each module re-exported from `adb_tools.py` so all 321
   references keep resolving (full suite green at every step):
   - `_base.py` — shared decorators + parallel-exec primitives + worker count
@@ -114,22 +114,29 @@ implemented changes are covered by tests and keep `tests/run_tests.py` green.
   - `package.py` — package/app listing, permissions, uninstall, force-stop, open-info
   - `install.py` — APK info/validate/split/install
   - `files.py` — pull / list-directory / DCIM / HSV
-  - Residual in `adb_tools.py` = device discovery/info core + bug-report + core
-    utilities. These are intentionally kept together: device-info is the module's
-    central responsibility (scattered across many call sites) and bug-report is
-    coupled to it via `_check_bug_report_permissions`/`_get_device_manufacturer_info`,
-    so splitting them risks the most-used path for little gain. Further extraction
-    can continue on the same `_base` foundation if desired.
+  - `device_info.py` — device discovery/enumeration + DeviceInfo build, property
+    reads, version/api/gms/fingerprint, wifi/bt/audio state (19 functions +
+    `gms_package_name` / `ACCEPTED_DEVICE_STATUSES`).
+  - Residual in `adb_tools.py` = ADB-server/path management, shell command exec,
+    reboot/root/bluetooth, discovery-service parsing, scrcpy, tool-availability,
+    and the **bug-report** functions. Bug-report is intentionally kept in
+    `adb_tools.py` (not split into `utils/adb/`): it calls the device-info helpers
+    (`_is_device_available`, `_get_device_manufacturer_info`, `get_gms_version`) by
+    bare name, so co-locating keeps those calls resolving through `adb_tools`'
+    globals — which preserves the established test mock surface
+    (`patch('utils.adb_tools._is_device_available')` still intercepts the
+    bug-report path; ~5 bug-report smoke/workflow suites depend on this).
 - **#53** `ExpandableDeviceList.update_devices` keeps rows in the incoming sorted
   order (fixed while implementing keyboard navigation).
 
 ## 🎨 Remaining (optional)
 
-- **D8 (#63), optional further split** Five domains are already extracted (see
-  above). If desired, the device-info core and bug-report could be pulled into
-  `utils/adb/device_info.py` + `utils/adb/bugreport.py` (they must move together
-  due to their coupling). Lower value: this is the module's central, most-used
-  code, so it carries the most regression risk for the least structural gain.
+- **D8 (#63)** Complete. Six domains are extracted (`_base`, `screenshot`,
+  `recording`, `package`, `install`, `files`, `device_info`); `adb_tools.py` is
+  down to ~1050 lines (core utilities + bug-report). Bug-report deliberately stays
+  in `adb_tools.py` to preserve the established `patch('utils.adb_tools.<helper>')`
+  test mock surface (see #63 note above) — extracting it would silently break ~5
+  CI-only bug-report smoke/workflow suites for no structural gain.
 
 ## Deferred non-D items (rationale above)
 

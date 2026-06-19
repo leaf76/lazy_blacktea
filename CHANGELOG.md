@@ -31,7 +31,7 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 
 ### Internal
 - Extracted pure logcat parsing helpers to `ui/logcat/log_parsing.py`; removed dead `optimized_device_list.py`.
-- Decomposed `adb_tools.py` (~2940 → ~1620 lines) into a `utils/adb/` package (`_base`, `screenshot`, `recording`, `package`, `install`, `files`) behind re-export shims, preserving all existing imports.
+- Decomposed `adb_tools.py` (~2940 → ~1050 lines, −64%) into a `utils/adb/` package (`_base`, `screenshot`, `recording`, `package`, `install`, `files`, `device_info`) behind re-export shims, preserving all existing imports. Bug-report functions stay in `adb_tools.py` to keep the existing test mock surface intact.
 
 ## 0.0.55 - 2026-05-25
 ### Fixed
