@@ -199,7 +199,9 @@ def cmd_adb_install(serial_num: str, apk_path: str):
       # If parsing fails, append raw extra args to preserve behavior
       parts.append(extra.strip())
 
-  parts.append(f'"{apk_path}"')
+  # shlex.quote so the path survives run_command's shlex.split tokenisation,
+  # consistent with the rest of the module (finding #51).
+  parts.append(shlex.quote(apk_path))
   return _build_adb_command(serial_num, *parts)
 
 
@@ -243,7 +245,7 @@ def cmd_adb_install_multiple(serial_num: str, apk_paths: list[str]):
       parts.append(extra.strip())
 
   for apk_path in apk_paths:
-    parts.append(f'"{apk_path}"')
+    parts.append(shlex.quote(apk_path))
 
   return _build_adb_command(serial_num, *parts)
 

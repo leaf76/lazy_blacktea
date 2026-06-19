@@ -343,11 +343,44 @@ class DeviceFileController:
     ) -> None:
         if serial != self.current_serial:
             return
-        success_count = sum(1 for item in results if item == 'OK')
-        self._set_status(f'Downloaded {success_count}/{len(remote_paths)} item(s) to {output_path}.')
-        self.window.show_info('Download Complete', f'Downloaded {len(remote_paths)} item(s) to:\n{output_path}')
+
+        total = len(remote_paths)
+        failed_paths = self._failed_download_paths(remote_paths, results)
+        success_count = total - len(failed_paths)
+        self._set_status(
+            f'Downloaded {success_count}/{total} item(s) to {output_path}.'
+        )
+
+        if failed_paths:
+            preview = '\n'.join(f'• {path}' for path in failed_paths[:8])
+            if len(failed_paths) > 8:
+                preview += f'\n… and {len(failed_paths) - 8} more'
+            self.window.show_warning(
+                'Download Incomplete',
+                f'Downloaded {success_count} of {total} item(s) to:\n{output_path}\n\n'
+                f'Failed:\n{preview}',
+            )
+        else:
+            self.window.show_info(
+                'Download Complete',
+                f'Downloaded {success_count} item(s) to:\n{output_path}',
+            )
         if self.current_path:
             self.window.refresh_device_file_browser(self.current_path)
+
+    @staticmethod
+    def _failed_download_paths(remote_paths, results) -> List[str]:
+        """Return the remote paths that did not download successfully.
+
+        ``results`` is the structured list from ``adb_tools.pull_device_paths``
+        (dicts with ``remote_path``/``success``). A legacy ``'OK'``-style entry or
+        a missing result is treated as failure so we never over-report success.
+        """
+        success_by_path = {}
+        for item in results or []:
+            if isinstance(item, dict):
+                success_by_path[item.get('remote_path')] = bool(item.get('success'))
+        return [path for path in remote_paths if not success_by_path.get(path, False)]
 
     def on_operation_failed(self, message: str) -> None:
         self._set_status(message)

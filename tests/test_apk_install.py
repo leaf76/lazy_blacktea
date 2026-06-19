@@ -53,6 +53,25 @@ class ApkInstallErrorCodeTests(unittest.TestCase):
         code = adb_models.ApkInstallErrorCode.from_output(output)
         self.assertEqual(code, adb_models.ApkInstallErrorCode.UNKNOWN_ERROR)
 
+    def test_failure_message_containing_success_word_is_not_success(self):
+        """A failure whose text contains 'success' must not be read as success."""
+        output = "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: install was not successful]"
+        code = adb_models.ApkInstallErrorCode.from_output(output)
+        self.assertNotEqual(code, adb_models.ApkInstallErrorCode.SUCCESS)
+        self.assertEqual(code, adb_models.ApkInstallErrorCode.INSTALL_FAILED_INSUFFICIENT_STORAGE)
+
+    def test_path_substring_not_success(self):
+        """A path that merely contains 'success' is not a success result."""
+        output = "/data/app/SuccessfulCorp.apk: 1 file pushed"
+        code = adb_models.ApkInstallErrorCode.from_output(output)
+        self.assertNotEqual(code, adb_models.ApkInstallErrorCode.SUCCESS)
+
+    def test_list_repr_no_longer_misparsed(self):
+        """Output joined with newlines (not list repr) still resolves correctly."""
+        output = "\n".join(["Performing Streamed Install", "Success"])
+        code = adb_models.ApkInstallErrorCode.from_output(output)
+        self.assertEqual(code, adb_models.ApkInstallErrorCode.SUCCESS)
+
     def test_error_code_has_description(self):
         """Test error codes have descriptions."""
         for member in adb_models.ApkInstallErrorCode:

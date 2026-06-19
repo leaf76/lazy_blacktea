@@ -14,7 +14,10 @@ def take_screenshots_batch(devices: List[adb_models.DeviceInfo],
     Args:
         devices: List of device info objects
         output_path: Directory to save screenshots
-        callback: Optional callback function called when complete
+        callback: Optional callback invoked when complete with
+            ``(output_path, device_count, device_models, results)`` where
+            ``results`` maps ``device_serial -> bool`` indicating whether each
+            device actually produced a screenshot.
     """
 
     def screenshot_worker():
@@ -29,16 +32,17 @@ def take_screenshots_batch(devices: List[adb_models.DeviceInfo],
             # Call the original working function directly instead of the wrapper
             logger = common.get_logger('screenshot')
             logger.info(f'🔧 [SCREENSHOT] About to call start_to_screen_shot with serials={serials}, filename={filename}, output_path={output_path}')
-            adb_tools.start_to_screen_shot(serials, filename, output_path)
-            logger.info(f'🔧 [SCREENSHOT] start_to_screen_shot completed successfully')
+            results = adb_tools.start_to_screen_shot(serials, filename, output_path)
+            logger.info(f'🔧 [SCREENSHOT] start_to_screen_shot completed: {results}')
 
-            # Call callback if provided
+            # Call callback if provided. The results map (serial -> bool) lets the
+            # callback report which devices actually produced a screenshot.
             logger.info(f'🔧 [CALLBACK] About to call callback, callback exists: {callback is not None}, callback type: {type(callback)}')
             if callback:
                 logger.info(f'🔧 [CALLBACK] Calling callback with params: output_path={output_path}, device_count={device_count}, device_models={device_models}')
                 logger.info(f'🔧 [CALLBACK] Callback object: {callback}')
                 try:
-                    result = callback(output_path, device_count, device_models)
+                    result = callback(output_path, device_count, device_models, results)
                     logger.info(f'🔧 [CALLBACK] Callback execution completed successfully, result: {result}')
                 except Exception as callback_error:
                     logger.error(f'🔧 [CALLBACK] Callback execution failed: {callback_error}')

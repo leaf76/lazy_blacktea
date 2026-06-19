@@ -135,6 +135,11 @@ class SelectedDevicesBar(QWidget):
             }}
         """)
 
+    def refresh_theme(self) -> None:
+        """Re-apply theme-derived styles + rebuild chips on a theme switch (#9)."""
+        self._apply_style()
+        self._rebuild_chips()
+
     def update_devices(self, devices: List["DeviceInfo"]) -> None:
         """Update the bar with the current list of selected devices."""
         self._devices = devices

@@ -18,6 +18,15 @@ def update_recording_status_view(window: "WindowMain") -> None:
     if not hasattr(window, "recording_status_label"):
         return
 
+    # When nothing is recording and the label is already in its cleared state,
+    # skip the per-tick rebuild (status scan + stylesheet re-apply) the 500ms
+    # timer would otherwise repeat forever while idle (finding #48).
+    if (
+        window.recording_manager.get_active_recordings_count() == 0
+        and getattr(window, "_recording_view_idle", False)
+    ):
+        return
+
     all_statuses = window.recording_manager.get_all_recording_statuses()
     active_records_text: list[str] = []
     now = datetime.datetime.now()
@@ -89,6 +98,7 @@ def _collect_untracked_records(
 def _apply_status_labels(window: "WindowMain", active_records_text: list[str]) -> None:
     active_count = window.recording_manager.get_active_recordings_count()
     if active_count > 0:
+        window._recording_view_idle = False
         status_text = PanelText.LABEL_RECORDING_PREFIX.format(count=active_count)
         window.recording_status_label.setText(status_text)
         StyleManager.apply_status_style(window.recording_status_label, "recording_active")
@@ -108,6 +118,9 @@ def _apply_status_labels(window: "WindowMain", active_records_text: list[str]) -
         StyleManager.apply_status_style(window.recording_status_label, "recording_inactive")
         StyleManager.apply_status_style(window.recording_timer_label, "recording_inactive")
         window.recording_timer_label.setText("")
+        # Mark idle so subsequent idle ticks short-circuit (see top of
+        # update_recording_status_view).
+        window._recording_view_idle = True
 
 
 __all__ = ["update_recording_status_view"]

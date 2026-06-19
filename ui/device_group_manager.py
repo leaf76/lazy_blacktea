@@ -56,6 +56,7 @@ class DeviceGroupManager:
 
         serial_numbers = [device.device_serial_num for device in checked_devices]
         self.window.device_groups[group_name] = serial_numbers
+        self._persist_groups()
 
         self.window.show_info(
             "Success",
@@ -83,9 +84,16 @@ class DeviceGroupManager:
 
         if group_name in self.window.device_groups:
             del self.window.device_groups[group_name]
+            self._persist_groups()
             logger.info("Group '%s' deleted.", group_name)
             self.update_groups_listbox()
             self.window.group_name_edit.clear()
+
+    def _persist_groups(self) -> None:
+        """Persist device groups immediately if the window supports it."""
+        persist = getattr(self.window, "persist_device_groups", None)
+        if callable(persist):
+            persist()
 
     def select_devices_in_group(self) -> None:
         current_item = self.window.groups_listbox.currentItem()

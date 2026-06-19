@@ -103,13 +103,15 @@ class ToolsPanelController:
             PanelText.TAB_SHELL_COMMANDS,
             self._create_shell_commands_page(),
         )
-        workspace.add_page(
-            "device_groups",
-            PanelText.TAB_DEVICE_GROUPS,
-            self._create_device_groups_page(),
-        )
+        # Device Groups was promoted to a top-level sidebar pane (#57); see
+        # create_device_groups_pane().
         self.window.tools_workspace = workspace  # type: ignore[attr-defined]
         return workspace
+
+    def create_device_groups_pane(self) -> QWidget:
+        """Create the Device Groups page as a standalone top-level pane (#57)."""
+        self._ensure_shared_widgets()
+        return self._create_device_groups_page()
 
     def create_files_pane(self) -> QWidget:
         """Create the top-level Files pane."""
@@ -271,12 +273,9 @@ class ToolsPanelController:
         parent_layout.addWidget(self.window.operation_status_panel)
 
     def _handle_tool_action(self, action_key: str) -> None:
-        dangerous_actions = {"reboot_device"}
-
-        if action_key in dangerous_actions:
-            if not self._confirm_dangerous_action(action_key):
-                return
-
+        # Confirmation for destructive actions (e.g. reboot) is enforced inside
+        # the window handler itself (see WindowMain.reboot_device) so that every
+        # entry point is covered, not just this panel.
         action_handlers = {
             "show_logcat": lambda: self.window.show_logcat(),
             "take_screenshot": lambda: self.window.take_screenshot(),
@@ -297,34 +296,6 @@ class ToolsPanelController:
         handler = action_handlers.get(action_key)
         if handler:
             handler()
-
-    def _confirm_dangerous_action(self, action_key: str) -> bool:
-        from PyQt6.QtWidgets import QMessageBox
-
-        messages = {
-            "reboot_device": (
-                PanelText.CONFIRM_REBOOT_TITLE,
-                PanelText.CONFIRM_REBOOT_MESSAGE,
-            ),
-        }
-
-        title, message = messages.get(
-            action_key,
-            (PanelText.CONFIRM_DEFAULT_TITLE, PanelText.CONFIRM_DEFAULT_MESSAGE),
-        )
-
-        serials = self.window.device_selection_manager.get_selected_serials()
-        if len(serials) > 1:
-            message += PanelText.CONFIRM_REBOOT_MULTI.format(count=len(serials))
-
-        reply = QMessageBox.question(
-            self.window,
-            title,
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return reply == QMessageBox.StandardButton.Yes
 
     def update_selected_devices(self, devices) -> None:
         if hasattr(self, "_selected_devices_bar"):

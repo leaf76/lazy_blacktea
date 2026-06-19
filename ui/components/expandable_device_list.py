@@ -172,6 +172,11 @@ class DeviceRowWidget(QFrame):
     def is_checked(self) -> bool:
         return self._checkbox.isChecked()
 
+    def _accessible_checkbox_name(self) -> str:
+        """Screen-reader label identifying which device this checkbox selects."""
+        model = self._device.device_model or "Unknown"
+        return f"Select {model} {self._serial}"
+
     def _setup_ui(self) -> None:
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -187,6 +192,9 @@ class DeviceRowWidget(QFrame):
         # Checkbox
         self._checkbox = QCheckBox()
         self._checkbox.setToolTip("Select device for batch operations")
+        # Give each checkbox a per-device accessible name so screen readers can
+        # distinguish which device a checkbox toggles (finding #8).
+        self._checkbox.setAccessibleName(self._accessible_checkbox_name())
         self._checkbox.stateChanged.connect(self._on_checkbox_changed)
         row_layout.addWidget(self._checkbox)
 
@@ -297,6 +305,7 @@ class DeviceRowWidget(QFrame):
         self._model_label.setText(device.device_model or "Unknown")
         android_ver = device.android_ver or "Unknown"
         self._android_label.setText(f"Android {android_ver}")
+        self._checkbox.setAccessibleName(self._accessible_checkbox_name())
 
         if self._is_expanded:
             self._detail_panel.update_details(device, self._additional_info)
@@ -385,6 +394,8 @@ class ExpandableDeviceList(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setObjectName("expandable_device_list")
+        # Allow keyboard navigation of rows when the list has focus (#31).
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # Container widget
         self._container = QWidget()
@@ -444,6 +455,18 @@ class ExpandableDeviceList(QScrollArea):
             device = device_dict[serial]
             self._rows[serial].update_device(device)
 
+        # Reorder rows to match the incoming (sorted/filtered) order so the
+        # visible order tracks the sort mode and keyboard navigation is
+        # predictable (#53). Only touch the layout if the order actually differs.
+        target_order = [d.device_serial_num for d in devices if d.device_serial_num in self._rows]
+        if self._ordered_serials() != target_order:
+            for index, serial in enumerate(target_order):
+                row = self._rows[serial]
+                self._layout.removeWidget(row)
+                self._layout.insertWidget(index, row)
+            # Keep _rows iteration order aligned with the visible order.
+            self._rows = {serial: self._rows[serial] for serial in target_order}
+
         # Prune selection to only include existing rows
         self._selected_serials = [s for s in self._selected_serials if s in self._rows]
         if self._active_serial not in self._rows:
@@ -453,6 +476,67 @@ class ExpandableDeviceList(QScrollArea):
 
         # Sync selection state
         self._sync_selection_ui()
+
+    def _ordered_serials(self) -> List[str]:
+        """Device serials in their current visible (layout) order."""
+        order: List[str] = []
+        for index in range(self._layout.count()):
+            widget = self._layout.itemAt(index).widget()
+            if isinstance(widget, DeviceRowWidget):
+                order.append(widget.serial)
+        return order
+
+    def keyPressEvent(self, event):  # noqa: N802 (Qt API)
+        """Keyboard navigation for the device rows (findings #30/#31).
+
+        ↑/↓ move the active device, Space toggles its selection, Ctrl+A selects
+        all and Ctrl+Shift+A clears. Scoped to this widget's focus so it never
+        hijacks text inputs elsewhere.
+        """
+        serials = self._ordered_serials()
+        if not serials:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+
+        if key == Qt.Key.Key_Down:
+            self._move_active(serials, 1)
+        elif key == Qt.Key.Key_Up:
+            self._move_active(serials, -1)
+        elif key == Qt.Key.Key_Space and self._active_serial in self._rows:
+            row = self._rows[self._active_serial]
+            self._on_row_selection_toggled(self._active_serial, not row.is_checked)
+        elif key == Qt.Key.Key_A and ctrl and shift:
+            self._set_all_selected([])
+        elif key == Qt.Key.Key_A and ctrl:
+            self._set_all_selected(serials)
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+
+    def _move_active(self, serials: List[str], delta: int) -> None:
+        if self._active_serial in serials:
+            index = serials.index(self._active_serial) + delta
+        else:
+            index = 0 if delta > 0 else len(serials) - 1
+        index = max(0, min(len(serials) - 1, index))
+        self._active_serial = serials[index]
+        self._sync_selection_ui()
+        row = self._rows.get(self._active_serial)
+        if row is not None:
+            self.ensureWidgetVisible(row)
+
+    def _set_all_selected(self, serials: List[str]) -> None:
+        self._selected_serials = list(serials)
+        if serials:
+            self._active_serial = serials[-1]
+        self._sync_selection_ui()
+        self.selection_changed.emit(list(self._selected_serials))
 
     def _on_row_selection_toggled(self, serial: str, is_checked: bool) -> None:
         """Handle row checkbox toggle."""

@@ -17,7 +17,6 @@ import time
 import traceback
 import zipfile
 from typing import List, Callable, Any, Optional
-from functools import wraps
 
 from config.constants import ADBConstants
 
@@ -43,137 +42,17 @@ ACCEPTED_DEVICE_STATUSES = {
 }
 
 
-def adb_operation(operation_name: str = None, default_return=None, log_errors: bool = True):
-  """Decorator for ADB operations with standardized error handling.
-
-  Args:
-    operation_name: Name of the operation for logging (defaults to function name)
-    default_return: Value to return on error
-    log_errors: Whether to log errors or suppress them
-
-  Returns:
-    Decorated function with error handling
-  """
-  def decorator(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-      op_name = operation_name or func.__name__
-      try:
-        return func(*args, **kwargs)
-      except Exception as e:
-        if log_errors:
-          logger.error(f'Error in {op_name}: {e}')
-          logger.debug(f'Traceback for {op_name}: {traceback.format_exc()}')
-        return default_return
-    return wrapper
-  return decorator
-
-
-def adb_device_operation(default_return=None, log_errors: bool = True):
-  """Decorator specifically for device operations that take serial_num as first arg.
-
-  Args:
-    default_return: Value to return on error
-    log_errors: Whether to log errors
-
-  Returns:
-    Decorated function with device-specific error handling
-  """
-  def decorator(func):
-    @wraps(func)
-    def wrapper(serial_num, *args, **kwargs):
-      try:
-        return func(serial_num, *args, **kwargs)
-      except Exception as e:
-        if log_errors:
-          logger.error(f'Error in {func.__name__} for device {serial_num}: {e}')
-          logger.debug(f'Traceback for {func.__name__} (device {serial_num}): {traceback.format_exc()}')
-        return default_return
-    return wrapper
-  return decorator
-
-
-def _execute_commands_parallel(commands: List[str], operation_name: str) -> List[str]:
-  """Execute multiple ADB commands in parallel.
-
-  Args:
-    commands: List of command strings to execute
-    operation_name: Name of the operation for logging
-
-  Returns:
-    List of command results
-  """
-  if not commands:
-    return []
-
-  with concurrent.futures.ThreadPoolExecutor(max_workers=len(commands)) as executor:
-    results = list(executor.map(common.run_command, commands))
-    logger.info(f'{operation_name} completed - executed {len(commands)} commands')
-    return results
-
-
-def _normalize_parallel_results(raw_results: List[Any]) -> List[List[str]]:
-  normalized: List[List[str]] = []
-  for item in raw_results:
-    if isinstance(item, list):
-      normalized.append([str(line) for line in item])
-    elif isinstance(item, tuple):
-      normalized.append([str(line) for line in item])
-    elif item is None:
-      normalized.append([])
-    else:
-      normalized.append([str(item)])
-  return normalized
-
-
-def _execute_commands_parallel_native(commands: List[str], operation_name: str) -> List[List[str]]:
-  """Execute commands in parallel using the native runner when available."""
-  if not commands:
-    return []
-
-  if not native_bridge.is_available():
-    fallback = _execute_commands_parallel(commands, operation_name)
-    return _normalize_parallel_results(fallback)
-
-  try:
-    return native_bridge.run_commands_parallel(commands)
-  except native_bridge.NativeBridgeError as exc:
-    logger.warning('Native command runner failed for %s: %s', operation_name, exc)
-    fallback = _execute_commands_parallel(commands, operation_name)
-    return _normalize_parallel_results(fallback)
-
-
-def _execute_functions_parallel(functions: List[Callable], args_list: List[Any], operation_name: str) -> List[Any]:
-  """Execute multiple functions in parallel.
-
-  Args:
-    functions: List of functions to execute
-    args_list: List of arguments for each function
-    operation_name: Name of the operation for logging
-
-  Returns:
-    List of function results
-  """
-  if not functions or not args_list:
-    return []
-
-  with concurrent.futures.ThreadPoolExecutor(max_workers=len(functions)) as executor:
-    futures = []
-    for func, args in zip(functions, args_list):
-      future = executor.submit(func, *args if isinstance(args, (list, tuple)) else [args])
-      futures.append(future)
-
-    results = []
-    for future in concurrent.futures.as_completed(futures):
-      try:
-        result = future.result()
-        results.append(result)
-      except Exception as e:
-        logger.error(f'Error in {operation_name}: {e}')
-        results.append(None)
-
-    logger.info(f'{operation_name} completed - executed {len(functions)} functions')
-    return results
+# Error-handling decorators and parallel-execution primitives moved to
+# utils.adb._base and re-exported here so all existing references resolve (#63).
+from utils.adb._base import (  # noqa: E402
+    adb_device_operation,
+    adb_operation,
+    _determine_worker_count,
+    _execute_commands_parallel,
+    _execute_commands_parallel_native,
+    _execute_functions_parallel,
+    _normalize_parallel_results,
+)
 
 
 def is_adb_installed() -> bool:
@@ -282,21 +161,6 @@ _adb_command_prefix = 'adb'
 
 # Global variable to store custom scrcpy path
 _scrcpy_command_path = 'scrcpy'
-
-
-def _determine_worker_count(task_count: int) -> int:
-  """Select a sensible worker count for per-device parallelism.
-
-  Args:
-    task_count: Number of tasks to execute.
-
-  Returns:
-    Number of threads to schedule.
-  """
-  if task_count <= 0:
-    return 0
-  cpu_count = os.cpu_count() or 1
-  return max(1, min(task_count, cpu_count))
 
 
 def get_device_serial_num_list():
@@ -928,10 +792,23 @@ def uninstall_app(serial_num: str, package_name: str, *, keep_data: bool = False
 
 
 def force_stop_app(serial_num: str, package_name: str) -> bool:
-  """Force stop a running app. Returns True if command executed without error."""
+  """Force stop a running app. Returns True only if adb exited successfully.
+
+  ``am force-stop`` produces no stdout on success, so we rely on the exit code
+  (via run_command_with_status) instead of output presence to avoid reporting
+  success when the device is offline or the package is invalid.
+  """
   cmd = adb_commands.cmd_am_force_stop(serial_num, package_name)
-  _ = common.run_command(cmd)
-  # If the command executed (return code 0), treat as success
+  returncode, _stdout, stderr = common.run_command_with_status(cmd)
+  if returncode != 0:
+    logger.error(
+        'force_stop_app failed for %s/%s (exit %s): %s',
+        serial_num,
+        package_name,
+        returncode,
+        ' '.join(stderr).strip(),
+    )
+    return False
   return True
 
 
@@ -956,18 +833,35 @@ def set_app_enabled(serial_num: str, package_name: str, enable: bool, *, user_id
   return 'disabled' in text or text.strip() == ''
 
 
+def _am_start_reported_error(returncode: int, stdout: list[str], stderr: list[str]) -> bool:
+  """Heuristic for whether an ``am start`` invocation failed.
+
+  ``am start`` exit codes are unreliable across Android versions, so we treat the
+  command as failed when it could not run at all or its output contains an error
+  marker (``Error:`` / ``unable to``).
+  """
+  if returncode == -1:
+    return True
+  text = '\n'.join(list(stdout) + list(stderr)).lower()
+  return 'error' in text or 'unable to' in text
+
+
 def open_app_info(serial_num: str, package_name: str) -> bool:
   """Open the app details settings page for the package with fallbacks.
 
-  Returns True if the start command was issued; fallbacks are attempted if
-  the ACTION-based command appears to error out.
+  Returns True when either the primary or the legacy ``am start`` is accepted.
+  Only returns False when both invocations report an error.
   """
   primary = adb_commands.cmd_open_app_info(serial_num, package_name)
-  out = common.run_command(primary)
-  text = '\n'.join(out).lower()
-  if 'error' in text or 'unable to' in text:
-    legacy = adb_commands.cmd_open_app_info_legacy(serial_num, package_name)
-    _ = common.run_command(legacy)
+  returncode, stdout, stderr = common.run_command_with_status(primary)
+  if not _am_start_reported_error(returncode, stdout, stderr):
+    return True
+
+  legacy = adb_commands.cmd_open_app_info_legacy(serial_num, package_name)
+  returncode, stdout, stderr = common.run_command_with_status(legacy)
+  if _am_start_reported_error(returncode, stdout, stderr):
+    logger.error('open_app_info failed for %s/%s', serial_num, package_name)
+    return False
   return True
 
 
@@ -1171,14 +1065,14 @@ def _get_device_manufacturer_info(serial_num: str) -> dict:
   try:
     # Get manufacturer property
     manufacturer_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.manufacturer')
-    manufacturer_result = common.run_command(manufacturer_cmd, 10)
+    manufacturer_result = common.run_command(manufacturer_cmd, timeout=10)
     manufacturer = ''
     if manufacturer_result and isinstance(manufacturer_result, list):
       manufacturer = ' '.join(str(item) for item in manufacturer_result).strip()
 
     # Get model property for additional context
     model_cmd = adb_commands._build_getprop_command(serial_num, 'ro.product.model')
-    model_result = common.run_command(model_cmd, 10)
+    model_result = common.run_command(model_cmd, timeout=10)
     model = ''
     if model_result and isinstance(model_result, list):
       model = ' '.join(str(item) for item in model_result).strip()
@@ -1204,12 +1098,12 @@ def _check_bug_report_permissions(serial_num: str) -> bool:
   try:
     # Test with a simple shell command that requires similar permissions
     test_cmd = adb_commands._build_adb_shell_command(serial_num, 'echo "permission_test"')
-    result = common.run_command(test_cmd, 5)
+    result = common.run_command(test_cmd, timeout=5)
 
     if result and 'permission_test' in str(result):
       # Try to access a system service that bug reports need
       service_cmd = adb_commands._build_adb_shell_command(serial_num, 'service list | head -1')
-      service_result = common.run_command(service_cmd, 10)
+      service_result = common.run_command(service_cmd, timeout=10)
 
       if service_result and len(service_result) > 0:
         return True
@@ -1444,13 +1338,19 @@ def get_bluetooth_manager_state_summary(serial_num: str) -> str:
 
 
 def get_android_version(serial_num):
+  """Return ro.build.version.release verbatim (e.g. '13', '13.0', '12L').
+
+  Previously only integer releases were kept and everything else became 0
+  ('Android 0'); the release is a free-form string, so return it as-is and fall
+  back to 'Unknown' when unavailable (finding #34).
+  """
   cmd = adb_commands.cmd_get_android_version(serial_num)
   result = common.run_command(cmd)
   if result:
-    data = str(result[0])
-    if data.isnumeric():
-      return int(data)
-  return 0
+    data = str(result[0]).strip()
+    if data:
+      return data
+  return 'Unknown'
 
 
 def get_android_api_level(serial_num):
@@ -1800,9 +1700,9 @@ def install_split_apk(
 
   try:
     cmd = adb_commands.cmd_adb_install_multiple(serial, apk_paths)
-    output = common.run_command(cmd)
+    output = common.run_command(cmd, timeout=ADBConstants.INSTALL_COMMAND_TIMEOUT)
 
-    output_str = str(output) if output else ''
+    output_str = output if isinstance(output, str) else ('\n'.join(output) if output else '')
     error_code = adb_models.ApkInstallErrorCode.from_output(output_str)
     success = error_code == adb_models.ApkInstallErrorCode.SUCCESS
 
@@ -1926,10 +1826,10 @@ def install_apk(
       else:
         cmd = adb_commands.cmd_adb_install(serial, apk_path)
 
-      output = common.run_command(cmd)
+      output = common.run_command(cmd, timeout=ADBConstants.INSTALL_COMMAND_TIMEOUT)
 
       # Parse result
-      output_str = str(output) if output else ''
+      output_str = output if isinstance(output, str) else ('\n'.join(output) if output else '')
       error_code = adb_models.ApkInstallErrorCode.from_output(output_str)
       success = error_code == adb_models.ApkInstallErrorCode.SUCCESS
 
@@ -2130,8 +2030,17 @@ def list_device_directory(serial_num: str, remote_path: str) -> adb_models.Devic
   return listing
 
 
-def pull_device_paths(serial_num: str, remote_paths: list[str], output_path: str) -> list[str]:
-  """Pull multiple remote paths from a device into a local output directory."""
+def pull_device_paths(serial_num: str, remote_paths: list[str], output_path: str) -> list[dict]:
+  """Pull multiple remote paths from a device into a local output directory.
+
+  Returns one result dict per requested path:
+  ``{'remote_path': str, 'success': bool, 'output': str}``. ``success`` is
+  determined by whether the file/directory was actually written to the host,
+  not by the adb output text (which is unreliable: ``adb pull`` writes its
+  summary to stderr and the runner returns no output on a non-zero exit). This
+  lets callers report partial/failed downloads instead of always claiming
+  success.
+  """
 
   if not remote_paths:
     logger.info('No remote paths supplied for pull_device_paths')
@@ -2141,15 +2050,32 @@ def pull_device_paths(serial_num: str, remote_paths: list[str], output_path: str
   final_output = common.make_gen_dir_path(base_output)
 
   commands: list[str] = []
+  normalized_remotes: list[str] = []
   for remote_path in remote_paths:
     normalized_remote = _normalize_remote_path(remote_path)
+    normalized_remotes.append(normalized_remote)
     commands.append(
         adb_commands.cmd_pull_device_file(serial_num, normalized_remote, final_output)
     )
 
   logger.info('Pulling %d paths for device %s into %s', len(commands), serial_num, final_output)
   native_results = _execute_commands_parallel_native(commands, 'pull_device_paths')
-  return ['\n'.join(result) if result else '' for result in native_results]
+
+  results: list[dict] = []
+  for remote_path, normalized_remote, native_result in zip(
+      remote_paths, normalized_remotes, native_results
+  ):
+    output_text = '\n'.join(native_result) if native_result else ''
+    local_target = os.path.join(final_output, os.path.basename(normalized_remote.rstrip('/')))
+    success = os.path.exists(local_target)
+    if not success:
+      logger.error(
+          'Download verification failed for %s (expected %s)', remote_path, local_target
+      )
+    results.append(
+        {'remote_path': remote_path, 'success': success, 'output': output_text}
+    )
+  return results
 
 
 def pull_device_file_preview(serial_num: str, remote_path: str) -> str:
@@ -2241,55 +2167,14 @@ def pull_devices_hsv(serial_nums: list[str], output_path: str) -> list[str]:
     return result
 
 
-def _capture_screenshot_for_device(serial: str, file_name: str, output_path: str) -> None:
-  remote_path = f'/sdcard/{serial}_screenshot_{file_name}.png'
-  logger.info('📸 [SCREENSHOT] Processing device %s -> %s', serial, remote_path)
-
-  capture_cmd = adb_commands.cmd_screencap_capture(serial, remote_path)
-  pull_cmd = adb_commands.cmd_pull_device_file(serial, remote_path, output_path)
-  cleanup_cmd = adb_commands.cmd_remove_device_file(serial, remote_path)
-
-  for stage, command in (
-      ('capture', capture_cmd),
-      ('pull', pull_cmd),
-      ('cleanup', cleanup_cmd),
-  ):
-    logger.debug('📸 [SCREENSHOT] %s command for %s: %s', stage, serial, command)
-    result = common.run_command(command)
-    logger.debug('📸 [SCREENSHOT] %s result for %s: %s', stage, serial, result)
-
-
-def start_to_screen_shot(
-    serial_nums: list[str], file_name: str, output_path: str
-) -> None:
-  """Capture screenshots for the provided devices."""
-
-  if not serial_nums:
-    logger.info('No devices supplied for start_to_screen_shot')
-    return
-
-  logger.info('Start to screen shot.')
-  output_path = common.make_gen_dir_path(output_path)
-  worker_count = _determine_worker_count(len(serial_nums))
-
-  if worker_count <= 0:
-    logger.info('No workers scheduled for screenshot capture (worker_count=%s)', worker_count)
-    return
-
-  futures: dict[concurrent.futures.Future, str] = {}
-  with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-    for serial in serial_nums:
-      future = executor.submit(_capture_screenshot_for_device, serial, file_name, output_path)
-      futures[future] = serial
-
-    for future in concurrent.futures.as_completed(futures):
-      serial = futures[future]
-      try:
-        future.result()
-      except Exception as exc:
-        logger.error('Error capturing screenshot for %s: %s', serial, exc)
-
-  logger.info('Start to screen shot completed for %s device(s)', len(serial_nums))
+# Screenshot capture domain moved to utils.adb.screenshot; re-exported so all
+# existing ``adb_tools.start_to_screen_shot`` / ``take_screenshot_single_device``
+# references keep resolving (#63).
+from utils.adb.screenshot import (  # noqa: E402
+    _capture_screenshot_for_device,
+    start_to_screen_shot,
+    take_screenshot_single_device,
+)
 
 
 def start_to_record_android_devices(
@@ -2758,26 +2643,6 @@ def stop_screen_record_device(serial: str) -> None:
     raise
 
 
-def take_screenshot_single_device(serial: str, output_path: str, filename: str) -> bool:
-  """Take screenshot for a single device (wrapper function).
-
-  Args:
-    serial: Device serial number
-    output_path: Output directory path
-    filename: Screenshot filename
-
-  Returns:
-    True if screenshot was taken successfully
-  """
-  try:
-    logger.info(f'Taking screenshot for device {serial}, file: {filename}')
-    start_to_screen_shot([serial], filename, output_path)
-    return True
-  except Exception as e:
-    logger.error(f'Error taking screenshot for {serial}: {e}')
-    return False
-
-
 def _verify_recording_started(serial_nums: List[str]) -> bool:
   """Verify that screen recording has started on devices.
 
@@ -2820,13 +2685,13 @@ def _is_screenrecord_running(serial: str) -> bool:
 
   for command in pid_commands:
     cmd = adb_commands._build_adb_shell_command(serial, command)
-    result = common.run_command(cmd, 3)
+    result = common.run_command(cmd, timeout=3)
     if result and any(str(line).strip() for line in result):
       return True
 
   # Fallback to ps listing
   cmd = adb_commands._build_adb_shell_command(serial, 'ps -A')
-  result = common.run_command(cmd, 3)
+  result = common.run_command(cmd, timeout=3)
   if result and any('screenrecord' in str(line) for line in result):
     return True
 

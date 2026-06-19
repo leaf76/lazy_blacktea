@@ -132,6 +132,7 @@ class AppShell(QWidget):
         self._sidebar = self._build_sidebar()
         self._stack = QStackedWidget(self._top_frame)
         self._stack.setObjectName("appShellStack")
+        self._stack.setAccessibleName("Workspace")
         self._inspector_frame = self._build_inspector_frame()
 
         top_layout.addWidget(self._sidebar)
@@ -197,8 +198,13 @@ class AppShell(QWidget):
         self._pane_order.append(name)
 
         self._stack.addWidget(widget)
+        # Accessible label so screen readers announce the pane on switch (#23).
+        widget.setAccessibleName(label)
         item = QListWidgetItem(self._format_label(label))
         item.setData(Qt.ItemDataRole.UserRole, name)
+        # Keep the full label for screen readers even when the sidebar collapses
+        # to a single letter (#25).
+        item.setData(Qt.ItemDataRole.AccessibleTextRole, label)
         item.setToolTip(label)
         self._sidebar_list.addItem(item)
         self._refresh_badge_for(name)
@@ -359,6 +365,7 @@ class AppShell(QWidget):
         self._sidebar_collapse_btn.setObjectName("appShellSidebarToggle")
         self._sidebar_collapse_btn.setText("\u2630")  # ☰
         self._sidebar_collapse_btn.setToolTip("Collapse sidebar (Ctrl+B)")
+        self._sidebar_collapse_btn.setAccessibleName("Toggle sidebar")
         self._sidebar_collapse_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._sidebar_collapse_btn.setAutoRaise(True)
         self._sidebar_collapse_btn.clicked.connect(self.toggle_sidebar)
@@ -387,6 +394,7 @@ class AppShell(QWidget):
     def _build_inspector_frame(self) -> QFrame:
         frame = QFrame(self)
         frame.setObjectName("appShellInspector")
+        frame.setAccessibleName("Inspector")
         frame.setFrameShape(QFrame.Shape.NoFrame)
         frame.setFixedWidth(INSPECTOR_DEFAULT_WIDTH)
         layout = QVBoxLayout(frame)
@@ -446,6 +454,7 @@ class AppShell(QWidget):
             if record is None:
                 continue
             item.setText(self._format_label(record.label))
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, record.label)
             item.setToolTip(self._format_label(record.label, include_badge=True))
         if emit:
             self.sidebar_toggled.emit(expanded)
@@ -458,6 +467,7 @@ class AppShell(QWidget):
             item = self._sidebar_list.item(row)
             if item and item.data(Qt.ItemDataRole.UserRole) == name:
                 item.setText(self._format_label(record.label))
+                item.setData(Qt.ItemDataRole.AccessibleTextRole, record.label)
                 item.setToolTip(self._format_label(record.label, include_badge=True))
                 break
 

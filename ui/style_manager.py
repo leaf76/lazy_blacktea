@@ -466,6 +466,11 @@ class StyleManager:
                     ("color", "{text_primary}"),
                 ),
             ),
+            (
+                # Visible keyboard-focus ring (finding #19; interaction.md §6.1).
+                "QLineEdit:focus",
+                (("border", "2px solid {secondary}"),),
+            ),
         ),
         "search_label": (
             (
@@ -601,7 +606,9 @@ class StyleManager:
                     ("padding", "8px"),
                     ("border", "2px solid transparent"),
                     ("border-radius", "6px"),
-                    ("background-color", "rgba(240, 240, 240, 0.3)"),
+                    # Theme-neutral base so the row colour shows through; :hover
+                    # still applies a distinct overlay (finding #24).
+                    ("background-color", "transparent"),
                     ("margin", "2px"),
                 ),
             ),
@@ -633,8 +640,9 @@ class StyleManager:
                     ("width", "16px"),
                     ("height", "16px"),
                     ("border-radius", "3px"),
-                    ("border", "2px solid #666"),
-                    ("background-color", "white"),
+                    # Theme tokens so the indicator isn't a white chip in dark mode (#24).
+                    ("border", "2px solid {input_border}"),
+                    ("background-color", "{input_background}"),
                 ),
             ),
             (

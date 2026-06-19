@@ -13,9 +13,15 @@ class DummySignal(QObject):
     def __init__(self):
         super().__init__()
         self._callbacks = []
+        self.emitted = []
 
     def connect(self, callback):  # pragma: no cover - Qt compatibility shim
         self._callbacks.append(callback)
+
+    def emit(self, *args):
+        self.emitted.append(args)
+        for callback in self._callbacks:
+            callback(*args)
 
 
 class RecordingControllerTests(unittest.TestCase):
@@ -49,6 +55,9 @@ class RecordingControllerTests(unittest.TestCase):
             recording_stopped_signal=DummySignal(),
             recording_state_cleared_signal=DummySignal(),
             recording_progress_signal=DummySignal(),
+            operation_finished_signal=DummySignal(),
+            _on_operation_started=MagicMock(),
+            _on_operation_finished=MagicMock(),
             device_recordings={},
             device_operations={},
             _task_dispatcher=self.dispatcher,
@@ -122,6 +131,55 @@ class RecordingControllerTests(unittest.TestCase):
         self.assertIs(submitted.__func__, self.controller._stop_screen_record_task.__func__)
         serials_snapshot = self.dispatcher.submit.call_args[0][1]
         self.assertEqual(serials_snapshot, ('SER12345',))
+
+    def test_recording_completion_with_string_duration_emits_signals(self) -> None:
+        """Regression: RecordingManager passes a preformatted duration string.
+
+        Applying ``{duration:.1f}`` to it raised ValueError, which was swallowed
+        and left the device stuck in the recording state. The completion handler
+        must tolerate the string and fire all completion signals.
+        """
+        from ui.signal_payloads import (
+            DeviceOperationEvent,
+            OperationType,
+            OperationStatus,
+        )
+
+        event = DeviceOperationEvent.create(
+            device_serial='SER12345',
+            operation_type=OperationType.RECORDING,
+            device_name='Pixel 7 Pro',
+            message='Starting recording...',
+        )
+        operation_events = {'SER12345': event}
+
+        # Duration as produced by RecordingManager._format_duration.
+        self.controller._handle_recording_completed(
+            operation_events,
+            'Pixel 7 Pro',
+            'SER12345',
+            '00:00:45',
+            'video',
+            '/tmp/records',
+        )
+
+        self.assertEqual(len(self.window.recording_stopped_signal.emitted), 1)
+        self.assertEqual(len(self.window.recording_state_cleared_signal.emitted), 1)
+        self.assertEqual(len(self.window.operation_finished_signal.emitted), 1)
+
+        finished_event = self.window.operation_finished_signal.emitted[0][0]
+        self.assertEqual(finished_event.status, OperationStatus.COMPLETED)
+        self.assertIn('00:00:45', finished_event.message)
+
+    def test_emit_operation_finished_prefers_signal_over_direct_call(self) -> None:
+        """Completion runs on a worker thread, so it must marshal via a signal."""
+        self.window._on_operation_finished = MagicMock()
+        sentinel = object()
+
+        self.controller._emit_operation_finished(sentinel)
+
+        self.assertEqual(self.window.operation_finished_signal.emitted, [(sentinel,)])
+        self.window._on_operation_finished.assert_not_called()
 
 
 if __name__ == '__main__':

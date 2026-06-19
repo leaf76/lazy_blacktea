@@ -188,6 +188,16 @@ class AsyncDeviceWorker(QObject):
             # 使用新的快速設備列表函數
             basic_device_infos = adb_tools.get_devices_list_fast()
 
+            # Only emit basic info for the serials this discovery actually
+            # requested, so progress (loaded/len(device_serials)) stays consistent
+            # and we don't surface devices that will never get detailed info (#47).
+            requested = set(self.device_serials or [])
+            if requested:
+                basic_device_infos = [
+                    info for info in basic_device_infos
+                    if info.device_serial_num in requested
+                ]
+
             loaded_count = 0
             for device_info in basic_device_infos:
                 if self.stop_requested:
@@ -500,6 +510,10 @@ class AsyncDeviceManager(QObject):
         self._pending_discovery_timer = QTimer(self)
         self._pending_discovery_timer.setSingleShot(True)
         self._pending_discovery_timer.timeout.connect(self._process_pending_discovery)
+        # Exponential backoff for repeated enumeration failures (e.g. adb server
+        # down) so we don't retry every 1s forever and flood the log (#60).
+        self._enumeration_failure_count = 0
+        self.MAX_ENUMERATION_RETRY_MS = 30000
 
         # 設置
         self.max_cache_size = 50  # 最大緩存設備數
@@ -571,6 +585,8 @@ class AsyncDeviceManager(QObject):
                 # 快速獲取設備列表（不包含詳細信息）
                 basic_device_serials = self._get_basic_device_serials()
 
+            # Enumeration succeeded — reset the failure backoff (#60).
+            self._enumeration_failure_count = 0
             self.last_discovered_serials = set(basic_device_serials)
 
             if not basic_device_serials:
@@ -708,8 +724,20 @@ class AsyncDeviceManager(QObject):
         if self._pending_discovery is None:
             self._pending_discovery = (True, True, None)
         if not self._pending_discovery_timer.isActive():
-            # Retry enumeration shortly to recover once adb becomes available again
-            self._pending_discovery_timer.start(1000)
+            # Exponential backoff (1s, 2s, 4s … capped) so a persistent failure
+            # such as a downed adb server stops retrying every second (#60). The
+            # counter resets on the next successful enumeration.
+            self._enumeration_failure_count += 1
+            delay_ms = min(
+                1000 * (2 ** (self._enumeration_failure_count - 1)),
+                self.MAX_ENUMERATION_RETRY_MS,
+            )
+            logger.warning(
+                'Retrying device enumeration in %dms (consecutive failure #%d)',
+                delay_ms,
+                self._enumeration_failure_count,
+            )
+            self._pending_discovery_timer.start(delay_ms)
 
     def _normalize_tracker_serial(self, serial: str) -> str:
         sanitized = (serial or '').strip()

@@ -145,7 +145,12 @@ class DeviceOperationEvent:
         if self.status == OperationStatus.RUNNING and self.progress is not None:
             return f"{int(self.progress * 100)}%"
         if self.status == OperationStatus.FAILED and self.error_message:
-            return f"Failed: {self.error_message[:30]}"
+            # Visible label stays compact; the full message is shown as a tooltip
+            # by the operation status widget (#16).
+            snippet = self.error_message[:60]
+            if len(self.error_message) > 60:
+                snippet += "…"
+            return f"Failed: {snippet}"
         return self.status.value.capitalize()
 
     def with_status(

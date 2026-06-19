@@ -112,6 +112,11 @@ class CollapsiblePanel(QWidget):
             }}
         """)
 
+    def refresh_theme(self) -> None:
+        """Re-apply theme-derived styles after a light/dark switch (#9)."""
+        self._apply_toggle_button_style()
+        self._apply_content_container_style()
+
     def _on_toggled(self) -> None:
         self._collapsed = not self._toggle_btn.isChecked()
         self._apply_collapsed_state()

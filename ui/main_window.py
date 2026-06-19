@@ -120,6 +120,7 @@ from ui.shell.palette_providers import (
     StaticPaletteAction,
     build_default_palette_providers,
 )
+from ui.components.device_inspector import DeviceInspectorWidget
 
 # Import new utils modules
 from utils.screenshot_utils import take_screenshots_batch, validate_screenshot_path
@@ -148,6 +149,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     DEVICE_FILE_BROWSER_DEFAULT_PATH = PanelText.PLACEHOLDER_DEVICE_FILE_PATH
     PANE_DEVICES = "devices"
     PANE_TOOLS = "tools"
+    PANE_GROUPS = "device_groups"
     PANE_LOGCAT = "logcat"
     PANE_FILES = "files"
     PANE_APPS = "apps"
@@ -159,6 +161,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
     )  # device_name, device_serial, duration, filename, output_path
     recording_state_cleared_signal = pyqtSignal(str)  # device_serial
     recording_progress_signal = pyqtSignal(object)  # RecordingProgressEvent payload
+    # Emitted from worker threads to finish an operation on the GUI thread.
+    operation_finished_signal = pyqtSignal(object)  # DeviceOperationEvent
     screenshot_completed_signal = pyqtSignal(
         str, int, list
     )  # output_path, device_count, device_models
@@ -359,6 +363,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.recording_stopped_signal.connect(self._on_recording_stopped)
         self.recording_state_cleared_signal.connect(self._on_recording_state_cleared)
         self.recording_progress_signal.connect(self._on_recording_progress_event)
+        self.operation_finished_signal.connect(self._on_operation_finished)
         self.screenshot_completed_signal.connect(self._on_screenshot_completed)
         self.file_generation_completed_signal.connect(
             self._on_file_generation_completed
@@ -542,6 +547,8 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self.select_none_btn = device_components.get("select_none_btn")
         # New components for modern UI
         self.device_list = device_components.get("device_list")
+        self.selection_action_bar = device_components.get("selection_action_bar")
+        self.search_field = device_components.get("search_field")
         self.filter_bar = device_components.get("filter_bar")
         self.subtitle_label = device_components.get("subtitle_label")
         self.single_mode_action = device_components.get("single_mode_action")
@@ -556,6 +563,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         # Create AppShell panes via controller-backed widgets.
         self.tools_workspace = self.tools_panel_controller.create_tools_workspace()
+        self.device_groups_pane = self.tools_panel_controller.create_device_groups_pane()
         files_widget = self.tools_panel_controller.create_files_pane()
         apps_widget = self.tools_panel_controller.create_apps_pane()
         self.tasks_pane = TasksPane(self.device_operation_status_manager, self)
@@ -570,6 +578,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self._register_app_shell_panes(
             devices=devices_widget,
             tools=self.tools_workspace,
+            groups=self.device_groups_pane,
             logcat=self.logcat_pane,
             files=files_widget,
             apps=apps_widget,
@@ -640,6 +649,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         *,
         devices: QWidget,
         tools: QWidget,
+        groups: QWidget,
         logcat: QWidget,
         files: QWidget,
         apps: QWidget,
@@ -650,11 +660,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         if self.app_shell is None:
             return
 
+        # Active-device summary fills the inspector for the Devices pane (#13).
+        self.device_inspector = DeviceInspectorWidget()
         self.app_shell.add_pane(
             self.PANE_DEVICES,
             "Devices",
             devices,
             icon_name="smartphone",
+            inspector_widget=self.device_inspector,
             badge_text_provider=self._device_badge_text,
         )
         self.app_shell.add_pane(
@@ -662,6 +675,13 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             "Tools",
             tools,
             icon_name="wrench",
+        )
+        # Device Groups promoted to a first-class pane (was buried in Tools, #57).
+        self.app_shell.add_pane(
+            self.PANE_GROUPS,
+            "Device Groups",
+            groups,
+            icon_name="layers",
         )
         self.app_shell.add_pane(
             self.PANE_LOGCAT,
@@ -820,6 +840,16 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             mod_label="Ctrl",
         ):
             palette.register_provider(provider)
+
+        # Domain providers the palette placeholder already advertises (#14):
+        # type a device model/serial, or jump to a recent task.
+        from ui.shell.domain_palette_providers import (
+            DevicesPaletteProvider,
+            RecentTasksPaletteProvider,
+        )
+        palette.register_provider(DevicesPaletteProvider(self))
+        palette.register_provider(RecentTasksPaletteProvider(self))
+
         palette.set_theme(getattr(self, "_current_theme", "light"))
 
         shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
@@ -875,42 +905,11 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                     PanelText.TAB_SHELL_COMMANDS
                 ),
             ),
-            StaticPaletteAction(
-                title="Open Device Files",
-                subtitle="Open the Files pane",
-                section="Navigate",
-                keywords=("files", "device", "browser"),
-                invoke=lambda: self.app_shell.set_active_pane(self.PANE_FILES)
-                if self.app_shell is not None
-                else None,
-            ),
-            StaticPaletteAction(
-                title="Open Apps",
-                subtitle="Open the Apps pane",
-                section="Navigate",
-                keywords=("apps", "packages", "applications"),
-                invoke=lambda: self.app_shell.set_active_pane(self.PANE_APPS)
-                if self.app_shell is not None
-                else None,
-            ),
-            StaticPaletteAction(
-                title="Open Device Groups",
-                subtitle="Focus the Device Groups tool page",
-                section="Navigate",
-                keywords=("groups", "devices", "selection"),
-                invoke=lambda: self._focus_tools_tab_by_label(
-                    PanelText.TAB_DEVICE_GROUPS
-                ),
-            ),
-            StaticPaletteAction(
-                title="Open Tasks",
-                subtitle="Open active and recent operations",
-                section="Navigate",
-                keywords=("tasks", "operations", "status"),
-                invoke=lambda: self.app_shell.set_active_pane(self.PANE_TASKS)
-                if self.app_shell is not None
-                else None,
-            ),
+            # "Open Device Files"/"Open Apps"/"Open Tasks" are provided by the
+            # NavigationPaletteProvider (one entry per shell pane), so the
+            # duplicate static entries were removed to de-noise the palette (#52).
+            # "Open Device Groups" is now covered by the NavigationPaletteProvider
+            # since Device Groups is a first-class pane (#57).
             StaticPaletteAction(
                 title="Preferences",
                 subtitle="Open application preferences",
@@ -1324,6 +1323,27 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Show error message box."""
         self.dialog_manager.show_error(title, message)
 
+    def show_toast(self, message: str, style: str = "success") -> None:
+        """Show a non-blocking toast for routine, low-importance feedback.
+
+        Used instead of a blocking modal for successful fire-and-forget
+        operations so multi-device batches don't interrupt the user (#11). A
+        single ToastNotification is lazily created and reused.
+        """
+        from ui.toast_notification import ToastNotification
+
+        if getattr(self, "_toast", None) is None:
+            self._toast = ToastNotification(parent=self)
+        style_map = {
+            "success": ToastNotification.STYLE_SUCCESS,
+            "info": ToastNotification.STYLE_INFO,
+            "warning": ToastNotification.STYLE_WARNING,
+            "error": ToastNotification.STYLE_ERROR,
+        }
+        self._toast.show_toast(
+            message, style=style_map.get(style, ToastNotification.STYLE_INFO)
+        )
+
     def open_scrcpy_settings_dialog(self) -> None:
         """Open Preferences focused on scrcpy settings."""
         self.open_preferences_dialog("scrcpy")
@@ -1674,9 +1694,14 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         self._update_selected_devices_bar()
 
     def _update_selected_devices_bar(self) -> None:
+        serials = self.device_selection_manager.get_selected_serials()
+        # Sticky batch-action bar in the Devices pane (#15): visible when >0.
+        action_bar = getattr(self, "selection_action_bar", None)
+        if action_bar is not None:
+            action_bar.set_selection_count(len(serials))
+
         if not hasattr(self, "selected_devices_bar"):
             return
-        serials = self.device_selection_manager.get_selected_serials()
         devices = [self._device_dict.get(s) for s in serials if s in self._device_dict]
         devices = [d for d in devices if d is not None]
         self.selected_devices_bar.update_devices(devices)
@@ -1830,6 +1855,17 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
 
         active_serial = self.device_selection_manager.get_active_serial()
         device = self.device_dict.get(active_serial) if active_serial else None
+
+        # Keep the inspector summary in sync with the active device (#13).
+        inspector = getattr(self, "device_inspector", None)
+        if inspector is not None:
+            inspector.set_device(device, active_serial)
+            if (
+                device is not None
+                and self.app_shell is not None
+                and self.app_shell.active_pane() == self.PANE_DEVICES
+            ):
+                self.app_shell.show_inspector()
 
         if device is None:
             widget.set_overview(None, None, None)
@@ -2296,10 +2332,41 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         logger.info("Killing ADB server...")
 
     # ADB Tools methods
+    @staticmethod
+    def _build_reboot_confirm_message(device_count: int) -> str:
+        """Build the reboot confirmation body, including the multi-device note."""
+        message = PanelText.CONFIRM_REBOOT_MESSAGE
+        if device_count > 1:
+            message += PanelText.CONFIRM_REBOOT_MULTI.format(count=device_count)
+        return message
+
+    def _confirm_reboot(self, device_count: int) -> bool:
+        """Ask the user to confirm a (multi-)device reboot.
+
+        Returns ``True`` when the user chooses to proceed. Centralising this here
+        ensures right-click reboot paths can no longer bypass confirmation.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self,
+            PanelText.CONFIRM_REBOOT_TITLE,
+            self._build_reboot_confirm_message(device_count),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
     @ensure_devices_selected
     def reboot_device(self):
-        """Reboot selected devices."""
+        """Reboot selected devices (after explicit confirmation)."""
         devices = self.get_checked_devices()
+
+        # Confirm before this destructive, uncancellable action. This guard lives
+        # here so every entry point (Tools panel, device-list right-click, and the
+        # single-device context menu) is covered by a single prompt.
+        if devices and not self._confirm_reboot(len(devices)):
+            return
 
         operation_events = {}
         for device in devices:
@@ -2459,30 +2526,43 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         # Remove the progress notification - user will see the completion notification only
 
         # Use new screenshot utils with callback
-        def screenshot_callback(output_path, device_count, device_models):
+        def screenshot_callback(output_path, device_count, device_models, results=None):
+            # ``results`` maps device_serial -> bool (did the screenshot actually
+            # save?). This callback runs on a worker thread, so operation-finished
+            # events are marshalled onto the GUI thread via operation_finished_signal.
+            results = results or {}
             logger.info(
-                f"🔧 [CALLBACK RECEIVED] Screenshot callback called with output_path={output_path}, device_count={device_count}, device_models={device_models}"
-            )
-            # Use signal emission to safely execute in main thread instead of QTimer
-            logger.info(
-                f"🔧 [CALLBACK RECEIVED] About to emit screenshot_completed_signal"
+                f"🔧 [CALLBACK RECEIVED] Screenshot callback called with output_path={output_path}, results={results}"
             )
             try:
-                # Complete operation events for all devices
+                succeeded_models: List[str] = []
                 for device in devices:
-                    event = operation_events[device.device_serial_num]
-                    completed_event = event.with_status(
-                        OperationStatus.COMPLETED, message="Screenshot saved"
-                    )
-                    self._on_operation_finished(completed_event)
+                    serial = device.device_serial_num
+                    event = operation_events[serial]
+                    if results.get(serial, False):
+                        succeeded_models.append(device.device_model)
+                        finished_event = event.with_status(
+                            OperationStatus.COMPLETED, message="Screenshot saved"
+                        )
+                    else:
+                        finished_event = event.with_status(
+                            OperationStatus.FAILED,
+                            error_message="Screenshot was not saved (capture or pull failed)",
+                        )
+                    self.operation_finished_signal.emit(finished_event)
 
-                # Only use the signal to avoid duplicate notifications
-                self.screenshot_completed_signal.emit(
-                    output_path, device_count, device_models
-                )
-                logger.info(
-                    f"🔧 [CALLBACK RECEIVED] screenshot_completed_signal emitted successfully"
-                )
+                succeeded_count = len(succeeded_models)
+                if succeeded_count:
+                    # Report the real number saved so the dialog can't claim success
+                    # for devices that failed.
+                    self.screenshot_completed_signal.emit(
+                        output_path, succeeded_count, succeeded_models
+                    )
+                else:
+                    self.console_output_signal.emit(
+                        "❌ No screenshots were saved (capture or pull failed on all devices)."
+                    )
+
                 # Clean up device operation status
                 for device in devices:
                     self.device_manager.clear_device_operation_status(
@@ -2504,7 +2584,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                     failed_event = event.with_status(
                         OperationStatus.FAILED, error_message=str(signal_error)
                     )
-                    self._on_operation_finished(failed_event)
+                    self.operation_finished_signal.emit(failed_event)
 
         take_screenshots_batch(devices, validated_path, screenshot_callback)
 
@@ -3042,16 +3122,23 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         """Execute a single command using commands facade."""
         self.commands_facade.execute_single_command(command)
 
-    def log_command_results(self, command, serials, results):
-        """Log command results to console with proper formatting."""
+    def log_command_results(self, command, serials, results, returncodes=None):
+        """Log command results to console with proper formatting.
+
+        ``returncodes`` (optional) is a per-device exit-code list aligned with
+        ``serials``: ``0`` succeeds, ``None`` means the adb process never
+        started, any other value is a failure. When omitted (legacy callers),
+        success is inferred from whether the device produced any output.
+        """
         if not results:
             self.write_to_console(f"❌ No results for command: {command}")
             return
 
         # Convert results to list if it's not already
         results_list = list(results) if not isinstance(results, list) else results
+        codes = list(returncodes) if returncodes else []
 
-        for serial, result in zip(serials, results_list):
+        for index, (serial, result) in enumerate(zip(serials, results_list)):
             # Get device name for better display
             device_name = serial
             if hasattr(self, "device_dict") and serial in self.device_dict:
@@ -3065,9 +3152,20 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
                 for line in result:
                     if line and line.strip():
                         self.write_to_console(f"  {line.strip()}")
+
+            rc = codes[index] if index < len(codes) else None
+            if rc is None and not codes:
+                # Legacy path: no exit codes — classify by output presence.
+                if result and len(result) > 0:
+                    self.write_to_console(f"✅ [{device_name}] Completed")
+                else:
+                    self.write_to_console(f"❌ [{device_name}] No output")
+            elif rc == 0:
                 self.write_to_console(f"✅ [{device_name}] Completed")
+            elif rc is None:
+                self.write_to_console(f"❌ [{device_name}] Failed to start")
             else:
-                self.write_to_console(f"❌ [{device_name}] No output")
+                self.write_to_console(f"❌ [{device_name}] Failed (exit {rc})")
 
         self.write_to_console("─" * 40)
 
@@ -3460,6 +3558,25 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             logger.warning(f"Could not load config: {e}")
             self.error_handler.handle_error(ErrorCode.CONFIG_LOAD_FAILED, str(e))
 
+    def _refresh_custom_painted_themes(self) -> None:
+        """Re-style widgets that paint themselves outside StyleManager.reapply_theme.
+
+        Such widgets (CollapsiblePanel, SelectedDevicesBar, DeviceOverviewWidget)
+        expose a ``refresh_theme()`` method; without this they kept stale colours
+        after a light/dark switch until restart (finding #9).
+        """
+        from PyQt6.QtWidgets import QWidget
+
+        for widget in self.findChildren(QWidget):
+            refresh = getattr(widget, "refresh_theme", None)
+            if callable(refresh):
+                try:
+                    refresh()
+                except Exception as exc:  # pragma: no cover - one bad widget mustn't break theming
+                    logger.warning(
+                        "refresh_theme failed for %s: %s", type(widget).__name__, exc
+                    )
+
     def register_theme_actions(self, actions: Dict[str, QAction]) -> None:
         """Register menu actions used for theme selection."""
         self.theme_actions = actions
@@ -3485,6 +3602,7 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
         StyleManager.apply_global_stylesheet(self)
         StyleManager.reapply_theme(self)
         self._sync_shell_theme(resolved)
+        self._refresh_custom_painted_themes()
 
         if not initial:
             self._update_theme_actions()
@@ -3533,6 +3651,22 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             logger.error(f"Could not save config: {e}")
             self.error_handler.handle_error(ErrorCode.CONFIG_INVALID, str(e))
 
+    def persist_device_groups(self) -> None:
+        """Persist device groups to disk immediately after a mutation.
+
+        Groups were previously only written by save_config() on app close, so a
+        crash or force-quit silently lost newly created/edited groups even though
+        the UI showed "Group saved". We merge into the existing legacy config so
+        other keys written by save_config() are preserved.
+        """
+        try:
+            config = json_utils.read_config_json() or {}
+            config["device_groups"] = self.device_groups
+            json_utils.save_config_json(config)
+        except Exception as exc:
+            # Do not crash the UI, but never silently swallow a persistence failure.
+            logger.error("Failed to persist device groups: %s", exc)
+
     def persist_logcat_settings(self, settings: Dict[str, int]) -> None:
         """Persist logcat performance settings through the config manager."""
         if not isinstance(settings, dict):
@@ -3570,6 +3704,47 @@ class WindowMain(QMainWindow, OperationLoggingMixin):
             logger.info("Logcat performance settings persisted: %s", update_payload)
         except Exception as exc:
             logger.error("Failed to persist logcat settings: %s", exc)
+
+    def keyPressEvent(self, event):  # noqa: N802 (Qt API)
+        """Keyboard-first shortcuts that bubble up when no text input has focus.
+
+        Because text widgets consume their own key events, '/' and '?' only reach
+        here when focus is elsewhere — so they never disrupt typing (#30/#31).
+        """
+        key = event.key()
+        if key == Qt.Key.Key_Slash and not event.modifiers():
+            if self._focus_device_search():
+                event.accept()
+                return
+        elif key == Qt.Key.Key_Question:
+            self._show_shortcuts_overlay()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _focus_device_search(self) -> bool:
+        """Focus the device search field; returns True if it exists."""
+        search = getattr(self, "search_field", None)
+        if search is not None:
+            search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            try:
+                search.selectAll()
+            except Exception:
+                pass
+            return True
+        return False
+
+    def _show_shortcuts_overlay(self) -> None:
+        """Show the read-only keyboard-shortcuts reference (? key)."""
+        from ui.shortcuts_overlay import ShortcutsOverlay
+
+        overlay = getattr(self, "_shortcuts_overlay", None)
+        if overlay is None:
+            overlay = ShortcutsOverlay(self)
+            self._shortcuts_overlay = overlay
+        overlay.show()
+        overlay.raise_()
+        overlay.activateWindow()
 
     def closeEvent(self, event):
         """Handle window close event with immediate response."""

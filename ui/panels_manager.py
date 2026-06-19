@@ -15,6 +15,8 @@ from ui.style_manager import PanelButtonVariant, StyleManager
 from ui.device_table_widget import DeviceTableWidget
 from ui.components.filter_bar import FilterBar
 from ui.components.expandable_device_list import ExpandableDeviceList
+from ui.components.empty_state import EmptyStateWidget
+from ui.components.selection_action_bar import SelectionActionBar
 
 
 class PanelsManager(QObject):
@@ -582,12 +584,35 @@ class PanelsManager(QObject):
         if hasattr(main_window, 'show_device_list_context_menu'):
             device_list.list_context_menu_requested.connect(main_window.show_device_list_context_menu)
 
-        # Empty state label (hidden inside stack)
-        no_devices_label = QLabel('No devices found')
-        no_devices_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        no_devices_label.setWordWrap(True)
-        no_devices_label.setObjectName('device_list_empty_state_label')
-        no_devices_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Rich empty state inside the stack: first-run guidance + no-match clear (#37).
+        def _clear_device_filters():
+            search_field.clear()  # triggers on_search_changed('') -> refresh
+            filter_bar.clear_all()  # emits filter_changed -> refresh
+
+        def _open_adb_guide():
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl('https://developer.android.com/tools/adb'))
+
+        no_devices_label = EmptyStateWidget(
+            on_refresh=lambda: main_window.refresh_device_list(),
+            on_clear=_clear_device_filters,
+            on_open_guide=_open_adb_guide,
+        )
+
+        # Sticky batch-action bar shown when ≥1 device is selected (#15).
+        def _run_shell_workspace():
+            focus = getattr(main_window, '_focus_tools_tab_by_label', None)
+            if callable(focus):
+                focus(PanelText.TAB_SHELL_COMMANDS)
+
+        selection_action_bar = SelectionActionBar(
+            on_screenshot=lambda: main_window.take_screenshot(),
+            on_record=lambda: main_window.start_screen_record(),
+            on_shell=_run_shell_workspace,
+            on_clear=lambda: main_window.select_no_devices(),
+        )
+        device_layout.addWidget(selection_action_bar)
 
         device_stack = QStackedWidget()
         device_stack.setObjectName('device_list_stack')
@@ -641,6 +666,7 @@ class PanelsManager(QObject):
             'subtitle_label': subtitle_label,
             'filter_bar': filter_bar,
             'device_list': device_list,
+            'selection_action_bar': selection_action_bar,
             'search_field': search_field,
             'refresh_btn': refresh_btn,
             'expand_btn': expand_btn,

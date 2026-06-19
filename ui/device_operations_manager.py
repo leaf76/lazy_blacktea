@@ -681,11 +681,16 @@ class DeviceOperationsManager(QObject):
             failures = len(failure_serials)
             title = summary_title or operation.replace("_", " ").title()
 
+            # Routine success is reported via a non-blocking toast so batch
+            # operations don't stack modal dialogs the user must dismiss (#11).
             if successes and success_message_builder:
-                self._show_info(title, success_message_builder(successes, total))
+                self._show_toast(
+                    success_message_builder(successes, total), fallback_title=title
+                )
             elif successes and successes == total:
-                self._show_info(
-                    title, f"Operation succeeded on {successes}/{total} device(s)."
+                self._show_toast(
+                    f"Operation succeeded on {successes}/{total} device(s).",
+                    fallback_title=title,
                 )
 
             if failures:
@@ -1193,6 +1198,14 @@ class DeviceOperationsManager(QObject):
             self.parent_window.show_info(title, message)
         else:
             QMessageBox.information(self.parent_window, title, message)
+
+    def _show_toast(self, message: str, *, style: str = "success", fallback_title: str = "") -> None:
+        """Non-blocking success feedback; falls back to a dialog if unavailable."""
+        toast = getattr(self.parent_window, "show_toast", None)
+        if callable(toast):
+            toast(message, style)
+        else:
+            self._show_info(fallback_title, message)
 
     def _show_warning(self, title: str, message: str):
         """顯示警告對話框"""
